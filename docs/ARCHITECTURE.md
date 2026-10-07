@@ -378,6 +378,10 @@ positionally by `src/scene.js`:
 | kind | what | columns used |
 | --- | --- | --- |
 | 1 | the visible faces of a model (world or brush model) | entity id, origin, `lst` = face ids joined with commas |
+
+`frame_all(mode, last_sound, last_fx, want_speakers [, vx, vy, vz, vyaw, vpitch])`: the five optional
+parameters are the eye to use instead of the player's (the page passes its interpolated view); the
+Node scripts leave them out.
 | 8 | (mode 1) one projected vertex | face id, screen x y z, s t u v, colour |
 | 2 | an entity to draw (MD3 item, sprite, player model) | id, model, frame, weapon, effects, pose, legs and torso clocks, `pmodel/skin`, `legs_anim,torso_anim,health,classname` |
 | 4 | a sound event newer than `last_sound` | id, name, position, volume, attenuation, entity |
@@ -448,13 +452,24 @@ page to be cross-origin isolated; `public/coi-serviceworker.js` adds the COOP/CO
 Pages), fetch `./pak/pak0.pk3` (or take the user's file), `inflateAll`, `createSchema` (the SQL files
 are imported as text by esbuild), `loadResources`, make the renderer from the settings, `startMap`.
 
-The loop (`frame`) runs on `requestAnimationFrame` with a 60 ms `setTimeout` fallback: it computes
-how many 50 ms tics are due (one or two), calls `q3_tic` with the input (`readInput`: WASD or arrows,
-mouse look with pointer lock on the `#screen-wrap`, Ctrl or click fires, Space jumps, Shift walks,
-1–9 weapons, `/` or the wheel cycles, Enter or H uses the holdable, Tab shows the scoreboard, G gives
-everything, P pauses; touch: the left half moves, the right half looks, a tap fires), then `frame_all`,
-then hands the rows to `scene.js` and `audio.js`, paints, and, while the waypoint graph is incomplete,
-runs `buildWaypoints(db, 3, 2)`. `document.hidden` pauses it.
+The loop (`frame`) runs on `requestAnimationFrame` with a 60 ms `setTimeout` fallback, at the
+display's rate; the game runs at 20 Hz inside it. When a 50 ms tic is due (one or two at most, so a
+slow machine plays in slow motion rather than stalling) it calls `q3_tic` with the input (`readInput`:
+WASD or arrows, mouse look with pointer lock on the `#screen-wrap`, Ctrl or click fires, Space jumps,
+Shift walks, 1–9 weapons, `/` or the wheel cycles, Enter or H uses the holdable, Tab shows the
+scoreboard, G gives everything, P pauses; touch: the left half moves, the right half looks, a tap
+fires) and keeps the previous tic's row and poses. Every frame, ticked or not, is painted *between
+the last two tics* (`CG_CalcEntityLerpPositions`): `viewRow` interpolates the eye's position and the
+clock by how far the frame sits into the current tic and applies the mouse's and the turn keys'
+pending deltas to the angles, so the look never waits for a tic; `frame_all` is called with that
+view (its `vx … vpitch` parameters override the player's eye in `view_setup`, so the face list is
+culled for the view actually painted); `interpolateFrame` moves the entities, the brush models'
+origins and their angles back toward the previous tic's poses by the same fraction, snapping
+instead when something jumped more than 200 units (a teleport). The result is one tic (50 ms) of
+latency on positions and none on the view, as in the original's client. The rows then go to
+`scene.js` and `audio.js`; on ticked frames the loop also refreshes the scoreboard and, while the
+waypoint graph is incomplete, runs `buildWaypoints`. `document.hidden` pauses it. The stats line
+shows frames and tics per second separately.
 
 Settings (map, bots, skill, detail 640×480 / 320×240 / 160×120, brightness, renderer fast / sql /
 gl, sound and music volumes) persist in `localStorage`. The SQL console runs any statement against
@@ -510,8 +525,9 @@ Measured in Node on the author's machine (the browser's Worker is within 20 perc
 | `wp_route` | 1 to 4 ms |
 | waypoint grid scan / edges | 3–7 s / 2–6 s, spread over frames |
 
-The live site runs at about 11 fps with the software painter and is tic-bound (the 20 Hz tic, the
-frame query and the paint are sequential in one Worker round trip each) with WebGL.
+The painter runs at the display's rate with the frame query (3 to 8 ms in the Worker) and the paint
+per frame, and the tic on top every third frame or so: about 60 fps with WebGL and 30 to 40 with the
+software painter at 320×240 on a 2020s laptop, where before interpolation every frame carried a tic.
 
 ---
 

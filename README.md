@@ -157,6 +157,12 @@ and the SQL console.
 
 ### JavaScript only paints (`src/renderer.js`, `src/renderer-gl.js`, `src/scene.js`)
 
+The game runs at 20 Hz; the painter runs at the display's rate. A frame between two tics is drawn
+between the two states, the entities and the brush models interpolated, the eye's position too, with
+the mouse's pending turn applied live, and the frame query is asked for that view, so the face list
+is culled for what is actually painted. One tic of latency on positions, none on the look, as in the
+original's client.
+
 Two painters take the same rows; the page's **Renderer** menu picks one. **WebGL: a port of Quake III's
 renderer** does what tr_bsp.c and tr_shade.c did: the world's vertices sit on the card once, each frame
 the faces Firebird selected are grouped by shader and lightmap page and drawn with one call per group, a

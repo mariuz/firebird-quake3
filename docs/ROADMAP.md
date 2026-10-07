@@ -13,7 +13,7 @@ is a bug report; it is the gap between a 20 Hz SQL deathmatch and the 1999 game.
 
 | Gap | Quake III | Here | Where it would go |
 | --- | --- | --- | --- |
-| **Frame interpolation** | the client interpolates entities and the view between 20 Hz snapshots, so 60 fps looks like 60 fps | every frame draws the last tic's state; movement and the bots step at 20 Hz however fast the painter is | `main.js`/`scene.js`: keep the previous `q3_tic` row and the previous entity poses, lerp by the time since the tic; the view angles can be applied at frame rate from the mouse without waiting for the tic |
+| **Local player prediction** | the client predicts its own movement so there is no latency on it | the view angles are live and the frame is interpolated between the last two tics (done 2026-10-07), which leaves 50 ms of latency on your own position; predicting it would mean running the player's move in JavaScript against the same collision, or extrapolating from the velocity | `main.js` `viewRow`: extrapolate the eye with the last tic's displacement, clamped by a trace |
 | **Crouch** | `PM_CheckDuck`: box 16 high, view 12, speed ×0.25, crouch-sliding | none (no key, no ducked box) | `player.sql` `player_think`, a `ducked` column, `trace_move` with the small box; C key in `main.js`; the bots never crouch |
 | **Timelimit, intermission, map rotation** | `timelimit`, the intermission camera (`info_player_intermission`), the final scoreboard, awards, the next map | frag limit only; `exit_kind` 3 restarts the same arena | `score_frag`/`q3_tic` for the clock, `init_map` for the rotation, `hud.js` for the intermission screen |
 | **View kicks** | damage kicks the view toward the attacker (`CG_DamageFeedback`), landing dips, weapon recoil bob | screen tint on damage, a land dip; no directional kick | `player.dmg_*` already records where it came from; apply in `scene.js` |
@@ -109,7 +109,7 @@ fuzzy logic from the botfiles. What that leaves out:
 
 | Gap | Notes |
 | --- | --- |
-| Frame rate | tic-bound: the tic (6 ms), the frame query (3 ms) and the paint are three Worker round trips in series; batching `q3_tic` and `frame_all` into one procedure would save a round trip, interpolation (§1) would make the painter's rate matter |
+| Frame rate | the painter runs at the display's rate since the interpolation; a frame is the frame query (3 to 8 ms) plus the paint, and the tic (6 ms) lands on every third frame. Batching `q3_tic` and `frame_all` into one procedure would save a round trip on those; the software painter at 640×480 is paint-bound |
 | Bigger maps | the full game's maps have 2 to 4× the faces and brushes of the demo's; `mark_faces` per cluster and the trace cost scale with leaf size, untested beyond the four demo arenas |
 | Load time | 1.3 s for q3dm1, the pak's inflate and the JPEGs dominate in the browser; the waypoint graph is already spread over frames |
 | Memory | the engine is `memory://`; nothing persists between page loads (settings aside) |
@@ -125,7 +125,8 @@ powerups and two holdables; the nine weapons with Quake III's spreads, speeds, d
 times; damage, knockback, gibs, corpses, obituaries; the player model animation system with
 `animation.cfg`, tags and skins; the HUD, scoreboard, announcer, lead state, frag limit; bots with
 five skill levels, weapon choice, strafing, health runs, item pickup, and the waypoint graph with pad
-and teleporter edges; the PVS, frustum and back-face culling in SQL; lightmaps with the overbright
+and teleporter edges; the PVS, frustum and back-face culling in SQL for the view actually painted, frames interpolated
+between tics with live mouse look; lightmaps with the overbright
 shift, the light grid for models, sky cloud layers, blend/add/filter surfaces, scroll/scale/turb
 tcMods, animMap, two-sided surfaces; the software and WebGL painters; positional sound, loops,
 speakers, music; touch controls; the SQL console.

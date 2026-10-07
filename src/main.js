@@ -34,6 +34,9 @@ const TIC_MS = 50;
 let db, pak, res, renderer, hud;
 let map = null;          // { name, bsp }
 let last = null;         // last Q3_TIC row
+let prev = null;         // the one before: the frame between two tics is painted between the two states
+let prevPose = null, curPose = null;   // the entities' and brush models' poses at those tics
+let frameAt = 0;         // when the last frame was painted
 let running = false;
 let paused = false;
 let lastTic = 0;
@@ -175,7 +178,8 @@ async function startMap(name) {
   setStatus('');
   $('mapname').textContent = name;
   $('map').value = name;
-  lastTic = performance.now();
+  lastTic = performance.now() - TIC_MS;
+  prev = null; prevPose = null; curPose = null; frameAt = 0;
   running = true;
 }
 
@@ -189,6 +193,58 @@ function nextFrame() {
 
 const arr = { rowMode: 'array' };
 
+// ── between two tics ─────────────────────────────────────────────────────
+// The game runs at 20 Hz; the painter runs at the display's rate. A frame between two tics shows the
+// world interpolated between the last two states (CG_CalcEntityLerpPositions), one tic behind, with the
+// view angles live from the mouse so the look never waits for a tic.
+const lerp = (a, b, k) => a + (b - a) * k;
+const lerpAngle = (a, b, k) => a + (((b - a + 540) % 360) - 180) * k;
+const SNAP = 200;   // a jump this long in one tic is a teleport, not a move
+
+/** The poses of a tic's frame: entity id → [x, y, z, pitch, yaw, roll]; brush models by their origin and angles. */
+function poseOf(fr) {
+  const ents = new Map(), brush = new Map(), rot = new Map();
+  for (const e of fr.ents) ents.set(e.id, [e.x, e.y, e.z, e.pitch, e.yaw, e.roll]);
+  for (const f of fr.faces) if (f[1] && !brush.has(f[1])) brush.set(f[1], [f[2], f[3], f[4]]);
+  for (const [id, a] of state.brushAngles) rot.set(id, a);
+  return { ents, brush, rot };
+}
+
+/** Move this frame's entities back toward where they were at the previous tic, by 1 − alpha. */
+function interpolateFrame(fr, alpha) {
+  if (!prevPose || alpha >= 1) return;
+  for (const e of fr.ents) {
+    const p = prevPose.ents.get(e.id);
+    if (!p || Math.hypot(e.x - p[0], e.y - p[1], e.z - p[2]) > SNAP) continue;
+    e.x = lerp(p[0], e.x, alpha); e.y = lerp(p[1], e.y, alpha); e.z = lerp(p[2], e.z, alpha);
+    e.pitch = lerpAngle(p[3], e.pitch, alpha); e.yaw = lerpAngle(p[4], e.yaw, alpha); e.roll = lerpAngle(p[5], e.roll, alpha);
+  }
+  if (!fr.sqlProjected) for (const f of fr.faces) {
+    const p = f[1] && prevPose.brush.get(f[1]);
+    if (!p || Math.hypot(f[2] - p[0], f[3] - p[1], f[4] - p[2]) > SNAP) continue;
+    f[2] = lerp(p[0], f[2], alpha); f[3] = lerp(p[1], f[3], alpha); f[4] = lerp(p[2], f[4], alpha);
+  }
+  for (const [id, a] of state.brushAngles) {
+    const p = prevPose.rot.get(id);
+    if (p) state.brushAngles.set(id, [lerpAngle(p[0], a[0], alpha), lerpAngle(p[1], a[1], alpha), lerpAngle(p[2], a[2], alpha)]);
+  }
+}
+
+/** The tic row as the painter sees it this frame: the position between the two tics, the angles live. */
+function viewRow(alpha, now) {
+  const k = (c) => keys.has(c);
+  const frac = Math.min(1, (now - lastTic) / TIC_MS);
+  const yawLive = mouseYaw + ((k('ArrowLeft') ? 1 : 0) - (k('ArrowRight') ? 1 : 0)) * 7 * frac;
+  const pitchLive = mousePitch + ((k('PageDown') ? 1 : 0) - (k('PageUp') ? 1 : 0)) * 5 * frac;
+  const v = { ...last, YAW: (last.YAW + yawLive) % 360, PITCH: Math.max(-89, Math.min(89, last.PITCH + pitchLive)) };
+  if (prev && alpha < 1 && Math.hypot(last.PX - prev.PX, last.PY - prev.PY, last.PZ - prev.PZ) < SNAP) {
+    v.PX = lerp(prev.PX, last.PX, alpha); v.PY = lerp(prev.PY, last.PY, alpha); v.PZ = lerp(prev.PZ, last.PZ, alpha);
+    v.VIEW_Z = lerp(prev.VIEW_Z, last.VIEW_Z, alpha);
+    v.TIME_ = lerp(prev.TIME_, last.TIME_, alpha);
+  }
+  return v;
+}
+
 async function frame() {
   if (!running || paused || document.hidden) {
     lastTic = performance.now();
@@ -198,36 +254,46 @@ async function frame() {
   }
   try {
     const now = performance.now();
-    const tics = Math.max(1, Math.min(2, Math.round((now - lastTic) / TIC_MS)));   // at most two tics a frame: better slow motion than a stall
-    lastTic += tics * TIC_MS;
-    if (now - lastTic > 200) lastTic = now;
-
-    let t = performance.now();
-    last = (await db.query('SELECT * FROM q3_tic(?, ?, ?, ?, ?, ?, ?, ?, ?)', readInput(tics), { rowMode: 'object' })).rows[0];
-    perf.tic = performance.now() - t;
-
-    if (last.EXIT_KIND === 3) {
-      await startMap(map.name);
-      nextFrame();
-      return;
+    const dt = frameAt ? Math.min(0.1, (now - frameAt) / 1000) : 0.016;
+    frameAt = now;
+    let ticked = 0, t;
+    if (now - lastTic >= TIC_MS) {
+      const tics = Math.min(2, Math.floor((now - lastTic) / TIC_MS));   // at most two tics a frame: better slow motion than a stall
+      lastTic += tics * TIC_MS;
+      if (now - lastTic > 200) lastTic = now;
+      t = performance.now();
+      prev = last;
+      last = (await db.query('SELECT * FROM q3_tic(?, ?, ?, ?, ?, ?, ?, ?, ?)', readInput(tics), { rowMode: 'object' })).rows[0];
+      perf.tic = performance.now() - t;
+      ticked = tics;
+      if (last.EXIT_KIND === 3) {
+        await startMap(map.name);
+        nextFrame();
+        return;
+      }
     }
+    const alpha = Math.max(0, Math.min(1, (now - lastTic) / TIC_MS));
+    const view = viewRow(alpha, now);
 
     t = performance.now();
-    // one round trip: every row is tagged with what it is (see FRAME_ALL in sql/render.sql)
+    // one round trip: every row is tagged with what it is (see FRAME_ALL in sql/render.sql); the view is this frame's
     const wantSpeakers = ++frameNo % 10 === 0;
-    const rows = (await db.query(`SELECT * FROM frame_all(${settings.renderer === 'sql' ? 1 : 0}, ${lastSoundId}, ${lastFxId}, ${wantSpeakers ? 1 : 0})`, [], arr)).rows;
+    const rows = (await db.query(`SELECT * FROM frame_all(${settings.renderer === 'sql' ? 1 : 0}, ${lastSoundId}, ${lastFxId}, ${wantSpeakers ? 1 : 0}, ${view.PX}, ${view.PY}, ${view.VIEW_Z}, ${view.YAW}, ${view.PITCH})`, [], arr)).rows;
     const fr = state.parse(rows);
+    fr.sqlProjected = settings.renderer === 'sql';
+    if (ticked) { prevPose = curPose; curPose = poseOf(fr); }
+    interpolateFrame(fr, alpha);
     if (fr.speakers) audio.setSpeakersOn(fr.speakers);
     perf.faces = performance.now() - t;
     perf.rows = fr.faces.length;
-    const listener = { x: last.PX, y: last.PY, z: last.VIEW_Z, yaw: last.YAW };
+    const listener = { x: view.PX, y: view.PY, z: view.VIEW_Z, yaw: view.YAW };
     if (fr.sounds.length) { lastSoundId = fr.sounds[fr.sounds.length - 1][0]; audio.playEvents(fr.sounds, listener); }
     audio.update(listener);
     audio.setLoop('weapon', last.WEAPON === 32 ? 'sound/weapons/lightning/lg_hum.wav' : last.WEAPON === 64 ? 'sound/weapons/railgun/rg_hum.wav' : null, !last.DEAD && (last.WEAPON === 32 || last.WEAPON === 64));
-    if (fr.fx.length) { lastFxId = fr.fx[fr.fx.length - 1][0]; state.handleFx(renderer, fr.fx, last.TIME_); }
-    if ((scoreboard || last.MATCH_OVER) && frameNo % 10 === 0) scores = (await db.query('SELECT * FROM scoreboard', [], arr)).rows;
-    // the bots learn the arena while we play: a few grid columns, then a few nodes' edges, a frame (sql/waypoints.sql)
-    if (map.unlinked > 0) {
+    if (fr.fx.length) { lastFxId = fr.fx[fr.fx.length - 1][0]; state.handleFx(renderer, fr.fx, view.TIME_); }
+    if (ticked && (scoreboard || last.MATCH_OVER) && frameNo % 10 === 0) scores = (await db.query('SELECT * FROM scoreboard', [], arr)).rows;
+    // the bots learn the arena while we play: a few grid columns, then a few nodes' edges, a tic (sql/waypoints.sql)
+    if (ticked && map.unlinked > 0) {
       t = performance.now();
       map.unlinked = await buildWaypoints(db, perf.graph > 40 ? 1 : 3, perf.graph > 40 ? 1 : 2);   // smaller bites when a chunk ran long (q3dm7's 500 nodes)
       perf.graph = performance.now() - t;
@@ -235,10 +301,10 @@ async function frame() {
     }
 
     t = performance.now();
-    const tint = drawScene(renderer, hud, res, map.bsp, last, fr, { fov: settings.fov, sqlProjected: settings.renderer === 'sql', state, dt: tics * 0.05, scoreboard, scores });
+    const tint = drawScene(renderer, hud, res, map.bsp, view, fr, { fov: settings.fov, sqlProjected: fr.sqlProjected, state, dt, scoreboard, scores });
     renderer.present(tint);
     perf.draw = performance.now() - t;
-    updateStats();
+    updateStats(ticked);
   } catch (err) {
     console.error(err);
     setStatus(`Error: ${err.message}`, true);
@@ -248,12 +314,12 @@ async function frame() {
   nextFrame();
 }
 
-let fpsT = performance.now(), fpsN = 0, fps = 0;
-function updateStats() {
-  fpsN++;
+let fpsT = performance.now(), fpsN = 0, fps = 0, ticN = 0, tps = 0;
+function updateStats(ticked) {
+  fpsN++; ticN += ticked;
   const now = performance.now();
-  if (now - fpsT > 500) { fps = (fpsN * 1000) / (now - fpsT); fpsT = now; fpsN = 0; }
-  statsEl.textContent = `${fps.toFixed(1)} fps · q3_tic ${perf.tic.toFixed(0)} ms · frame query ${perf.faces.toFixed(0)} ms (${perf.rows} faces) · paint ${perf.draw.toFixed(0)} ms · ${renderer.particles.length} particles${map?.unlinked > 0 ? ` · bots mapping the arena (${map.unlinked} to go, ${perf.graph.toFixed(0)} ms)` : ''}`;
+  if (now - fpsT > 500) { fps = (fpsN * 1000) / (now - fpsT); tps = (ticN * 1000) / (now - fpsT); fpsT = now; fpsN = 0; ticN = 0; }
+  statsEl.textContent = `${fps.toFixed(1)} fps · ${tps.toFixed(0)} tics/s · q3_tic ${perf.tic.toFixed(0)} ms · frame query ${perf.faces.toFixed(0)} ms (${perf.rows} faces) · paint ${perf.draw.toFixed(0)} ms · ${renderer.particles.length} particles${map?.unlinked > 0 ? ` · bots mapping the arena (${map.unlinked} to go, ${perf.graph.toFixed(0)} ms)` : ''}`;
 }
 
 // ── SQL console ─────────────────────────────────────────────────────────

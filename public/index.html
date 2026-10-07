@@ -88,7 +88,7 @@
         <button data-sql="SELECT FIRST 40 * FROM frame_faces_fast">frame_faces_fast</button>
         <button data-sql="SELECT FIRST 40 * FROM frame_faces">frame_faces</button>
         <button data-sql="SELECT * FROM frame_ents">frame_ents</button>
-        <button data-sql="SELECT * FROM view_setup">view_setup</button>
+        <button data-sql="SELECT * FROM view_setup(NULL, NULL, NULL, NULL, NULL)">view_setup</button>
         <button data-sql="SELECT COUNT(*) brushes, (SELECT COUNT(*) FROM brushes WHERE facet = 1) patch_facets, (SELECT COUNT(*) FROM brushsides) sides, (SELECT COUNT(*) FROM leaves) leaves, (SELECT COUNT(*) FROM faces) faces, (SELECT COUNT(*) FROM face_verts) verts FROM brushes">geometry</button>
         <button data-sql="EXECUTE PROCEDURE player_impulse(99)">give all</button>
         <button data-sql="SELECT * FROM spawn_bot('Visor')">add Visor</button>
