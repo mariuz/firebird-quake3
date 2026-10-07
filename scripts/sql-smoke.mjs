@@ -215,10 +215,15 @@ if (pad) {
   const cl = (await db.query(`SELECT cluster FROM leaves WHERE id = point_leaf(${clamped[6]}, ${clamped[7]}, ${clamped[8]})`)).rows[0].CLUSTER;
   assert(d < 3990 && cl >= 0, `an eye predicted through a wall stops inside the world (${d.toFixed(0)} of 4000 units, cluster ${cl})`);
   // the zoom: the page's field of view culls and projects (CG_CalcFov's cg_zoomFov)
-  const faces = async (mode, fov) => (await db.query(`SELECT * FROM frame_all(${mode}, 2147483647, 2147483647, 0, ${e.EX}, ${e.EY}, ${e.EZ}, 0, 0, ${fov})`, [], { rowMode: 'array' })).rows;
+  // (along the heading with the most to see: facing a wall close up, a narrow view keeps every face)
+  let yaw = 0;
+  const faces = async (mode, fov) => (await db.query(`SELECT * FROM frame_all(${mode}, 2147483647, 2147483647, 0, ${e.EX}, ${e.EY}, ${e.EZ}, ${yaw}, 0, ${fov})`, [], { rowMode: 'array' })).rows;
   const count = (rows) => rows.filter((r) => r[0] === 1).reduce((n, r) => n + r[16].split(',').length, 0);
+  let best = 0, bestYaw = 0;
+  for (yaw of [0, 90, 180, 270]) { const n = count(await faces(0, 90)); if (n > best) { best = n; bestYaw = yaw; } }
+  yaw = bestYaw;
   const wide = count(await faces(0, 90)), narrow = count(await faces(0, 22.5));
-  assert(narrow > 0 && narrow < wide, `zoomed to 22.5 degrees, fewer faces pass the frustum (${narrow} of ${wide})`);
+  assert(narrow > 0 && narrow < wide, `zoomed to 22.5 degrees, fewer faces pass the frustum (${narrow} of ${wide}, heading ${yaw})`);
   // the same vertex, projected in SQL at both: about tan 45° / tan 11.25° = 5.03 times as far from the centre
   const w = (await db.query('SELECT w FROM viewcfg')).rows[0].W;
   const at = (rows) => new Map(rows.filter((r) => r[0] === 8 && r[6] > 16).map((r) => [`${r[1]}:${r[2]}`, r[9] - w / 2]));   // in front of the eye: the ones behind are left for the painter to clip
