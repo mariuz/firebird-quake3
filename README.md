@@ -108,9 +108,13 @@ BFG10K are g_weapon.c and g_missile.c with Quake III's numbers; damage, knockbac
 obituaries ("was railed by", "almost dodged … rocket", "does a back flip into the lava") are g_combat.c.
 
 The bots are a small AI in the spirit of the arena: `BOT_THINK` at 10 Hz finds the nearest player or
-bot in sight, chooses a weapon for the distance, chases through `MOVE_TO_GOAL` and `NEW_CHASE_DIR`,
-circle-strafes when close, aims with a scatter that shrinks with the skill level, picks up what it walks
-over, and, when nothing is in sight, wanders toward items. They die into corpses or gibs, respawn after
+bot it notices, chooses a weapon for the distance, chases through `MOVE_TO_GOAL` and `NEW_CHASE_DIR`,
+circle-strafes when close, goes for a health item when hurt, picks up what it walks over, and, when
+nothing is in sight, wanders toward items. The five skill levels are the characteristics of the
+original's bot files boiled down into `BOT_CHAR`: the reaction time before the first shot at a newly
+seen enemy (2 s at "I can win", 0.15 s at "Nightmare"), the aim's scatter, how far and how wide a bot
+notices things, how fast it turns, how often it sidesteps, hesitates, and pauses between bursts, and
+whether it leads its rockets; every bot runs a little slower than you at the two lowest levels. They die into corpses or gibs, respawn after
 a few seconds, and frag each other as happily as they frag you; the scoreboard, the "fight!", the lead
 announcements and the frag limit are in `SCORE_FRAG`. Everything the simulation wants heard is a row
 in `sound_events`; temp entities are rows in `fx_events`; the console's lines are in `messages`.
