@@ -36,7 +36,7 @@ kbd {
 }
 
 .screen-wrap { position: relative; }
-#screen {
+#screen, #glscreen {
   display: block;
   width: 100%;
   aspect-ratio: 4 / 3;
@@ -46,6 +46,15 @@ kbd {
   outline: none;
   touch-action: none;
 }
+#overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  image-rendering: pixelated;
+  pointer-events: none;
+}
+#overlay[hidden], #screen[hidden], #glscreen[hidden] { display: none; }
 .status {
   position: absolute;
   inset: auto 12px 12px 12px;

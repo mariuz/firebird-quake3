@@ -17,8 +17,10 @@
 
   <main>
     <section class="game">
-      <div class="screen-wrap">
+      <div class="screen-wrap" id="screen-wrap">
         <canvas id="screen" width="320" height="240" tabindex="0" aria-label="Quake III Arena view rendered from Firebird query results"></canvas>
+        <canvas id="glscreen" width="320" height="240" hidden aria-label="Quake III Arena view, drawn with WebGL from Firebird query results"></canvas>
+        <canvas id="overlay" width="320" height="240" hidden aria-hidden="true"></canvas>
         <div id="status" class="status">Loading…</div>
       </div>
       <div id="stats" class="stats">&nbsp;</div>
@@ -51,9 +53,10 @@
           <option value="3">×3</option>
           <option value="4">×4</option>
         </select></label>
-        <label title="How much of the renderer runs in SQL">Renderer <select id="renderer">
-          <option value="fast">SQL picks faces, JS projects (fast)</option>
-          <option value="sql">SQL projects every vertex</option>
+        <label title="How much of the renderer runs in SQL, and who paints: the software rasteriser or the WebGL port of Quake III's renderer">Renderer <select id="renderer">
+          <option value="fast">Software: SQL picks faces, JS projects</option>
+          <option value="sql">Software: SQL projects every vertex</option>
+          <option value="gl">WebGL: a port of Quake III's renderer</option>
         </select></label>
         <label title="Sound effects volume">Sound <input id="sfxvol" type="range" min="0" max="100" step="5"></label>
         <label title="The map's music from the pak when it has it (the demo has none), or a synthesised drone">Music <select id="music">
@@ -124,7 +127,7 @@
           result set carries the MD3 entities in the PVS with their pose and animations, the sounds, effects and console
           lines of the tic: one round trip per frame. The other renderer mode, <code>FRAME_FACES</code>, projects every
           vertex in SQL as well.</li>
-        <li><b>JavaScript only paints.</b> A 32-bit framebuffer and a z-buffer; perspective-correct spans, divided every 16
+        <li><b>JavaScript only paints.</b> Two painters share the same rows. The WebGL one is a port of Quake III's renderer: the world's vertices sit on the card, a shader multiplies the texture by the lightmap page and adds the glow stages with the stage's blendFunc and tcMods, the sky is the shader's cloud layers by pixel direction, the MD3 models are lit from the light grid in the vertex shader. The software one is a 32-bit framebuffer and a z-buffer; perspective-correct spans, divided every 16
           pixels, that multiply the texture by the lightmap page; triangle lists for the patches and meshes; MD3 models lit
           from the light grid, the player parts hung on their tags; the sky's cloud layers by pixel direction; additive and
           alpha blended surfaces; the status bar from the game's own pictures. Sounds are rows in <code>SOUND_EVENTS</code>,

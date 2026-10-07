@@ -16,12 +16,16 @@ import renderSql from '../sql/render.sql';
 import { Pk3 } from './pk3.js';
 import { createSchema, loadResources, loadMap, setView } from './loader.js';
 import { Renderer } from './renderer.js';
+import { GLRenderer } from './renderer-gl.js';
 import { Hud } from './hud.js';
 import { FrameState, drawScene } from './scene.js';
 import { Q3Audio } from './audio.js';
 
 const $ = (id) => document.getElementById(id);
 const canvas = $('screen');
+const glCanvas = $('glscreen');
+const overlayCanvas = $('overlay');
+const wrap = $('screen-wrap');   // the mouse and touch act on the wrapper: whichever canvas is showing
 const statusEl = $('status');
 const statsEl = $('stats');
 const TIC_MS = 50;
@@ -79,29 +83,29 @@ window.addEventListener('keydown', (e) => {
 });
 window.addEventListener('keyup', (e) => { keys.delete(e.code); if (e.code === 'Tab') scoreboard = false; });
 window.addEventListener('blur', () => keys.clear());
-canvas.addEventListener('click', () => {
-  if (running && document.pointerLockElement !== canvas) canvas.requestPointerLock?.()?.catch?.(() => {});
+wrap.addEventListener('click', () => {
+  if (running && document.pointerLockElement !== wrap) wrap.requestPointerLock?.()?.catch?.(() => {});
 });
-canvas.addEventListener('mousedown', (e) => { if (document.pointerLockElement === canvas && e.button === 0) fireClick = true; });
+wrap.addEventListener('mousedown', (e) => { if (document.pointerLockElement === wrap && e.button === 0) fireClick = true; });
 window.addEventListener('mouseup', () => { fireClick = false; });
 window.addEventListener('mousemove', (e) => {
-  if (document.pointerLockElement === canvas) {
+  if (document.pointerLockElement === wrap) {
     mouseYaw -= e.movementX * 0.15;
     mousePitch += e.movementY * 0.15;
   }
 });
-window.addEventListener('wheel', (e) => { if (document.pointerLockElement === canvas) impulse = e.deltaY > 0 ? 12 : 14; });
+window.addEventListener('wheel', (e) => { if (document.pointerLockElement === wrap) impulse = e.deltaY > 0 ? 12 : 14; });
 // touch: left half moves, right half looks, tap fires
 const touch = { move: null, look: null };
-canvas.addEventListener('touchstart', (e) => {
-  const r = canvas.getBoundingClientRect();
+wrap.addEventListener('touchstart', (e) => {
+  const r = wrap.getBoundingClientRect();
   for (const t of e.changedTouches) {
     const rec = { id: t.identifier, x: t.clientX, y: t.clientY, dx: 0, dy: 0, t: performance.now() };
     if (t.clientX - r.left < r.width / 2) touch.move = rec; else touch.look = rec;
   }
   e.preventDefault();
 }, { passive: false });
-canvas.addEventListener('touchmove', (e) => {
+wrap.addEventListener('touchmove', (e) => {
   for (const t of e.changedTouches) for (const k of ['move', 'look']) {
     const rec = touch[k];
     if (rec && rec.id === t.identifier) {
@@ -111,7 +115,7 @@ canvas.addEventListener('touchmove', (e) => {
   }
   e.preventDefault();
 }, { passive: false });
-canvas.addEventListener('touchend', (e) => {
+wrap.addEventListener('touchend', (e) => {
   for (const t of e.changedTouches) for (const k of ['move', 'look']) {
     const rec = touch[k];
     if (rec && rec.id === t.identifier) {
@@ -155,8 +159,10 @@ async function startMap(name) {
   map = { name, bsp };
   renderer.setResources(res);
   renderer.particles = [];
+  renderer.meshCache?.clear();
   state.explosions = []; state.beams = [];
   const g = (await db.query('SELECT sky, music FROM game')).rows[0];
+  map.sky = g.SKY;
   renderer.setSky(g.SKY);
   const speakers = (await db.query("SELECT id, x, y, z, noise1, speed, height, count_ FROM ents WHERE classname = 'target_speaker' AND BIN_AND(spawnflags, 3) <> 0 AND noise1 IS NOT NULL", [], arr)).rows;
   audio.setSpeakers(speakers);
@@ -289,6 +295,20 @@ async function openDatabase() {
   return instance;
 }
 
+// the painter: the software rasteriser, or the WebGL port of Quake III's renderer (the HUD then goes on the overlay canvas)
+function makeRenderer() {
+  const gl = settings.renderer === 'gl';
+  try { renderer = gl ? new GLRenderer(glCanvas, res, overlayCanvas) : new Renderer(canvas, res); }
+  catch (err) { setStatus(err.message, true); settings.renderer = 'fast'; $('renderer').value = 'fast'; renderer = new Renderer(canvas, res); }
+  const isGl = renderer instanceof GLRenderer;
+  overlayCanvas.hidden = !isGl; glCanvas.hidden = !isGl; canvas.hidden = isGl;
+  renderer.setSize(viewWidth(), viewHeight());
+  renderer.setBrightness(settings.brightness);
+  renderer.setResources(res);
+  if (map) renderer.setSky(map.sky);
+  hud = new Hud(pak, renderer);
+}
+
 async function usePak(buffer, label) {
   running = false;
   setStatus(`Opening ${label}…`);
@@ -298,10 +318,7 @@ async function usePak(buffer, label) {
   pak.inflateAll((n) => !/^(demos|video|vm|botfiles|menu|levelshots)\//.test(n) && !n.endsWith('.aas'));
   setStatus(`Copying ${label} models into Firebird…`);
   res = await loadResources(db, pak, { width: viewWidth(), height: viewHeight(), fov: settings.fov });
-  renderer = new Renderer(canvas, res);
-  renderer.setSize(viewWidth(), viewHeight());
-  renderer.setBrightness(settings.brightness);
-  hud = new Hud(pak, renderer);
+  makeRenderer();
   audio.setPak(pak);
   $('map').innerHTML = maps.map((m) => `<option>${m}</option>`).join('');
   $('pakname').textContent = label;
@@ -337,7 +354,11 @@ $('detail').addEventListener('change', async (e) => {
   renderer.setSize(viewWidth(), viewHeight());
 });
 $('renderer').value = settings.renderer;
-$('renderer').addEventListener('change', (e) => { settings.renderer = e.target.value; saveSettings(); });
+$('renderer').addEventListener('change', (e) => {
+  const wasGl = settings.renderer === 'gl';
+  settings.renderer = e.target.value; saveSettings();
+  if (res && (wasGl || settings.renderer === 'gl')) { renderer = null; makeRenderer(); }
+});
 $('brightness').value = String(settings.brightness);
 $('brightness').addEventListener('change', (e) => { settings.brightness = Number(e.target.value); saveSettings(); if (renderer) renderer.setBrightness(settings.brightness); });
 $('skill').value = String(settings.skill);

@@ -15,9 +15,9 @@ import { SURF } from './bsp.js';
 const LIGHTMAP_SIZE = 128;
 
 export class Renderer {
-  constructor(canvas, res) {
+  constructor(canvas, res, opts = {}) {
     this.canvas = canvas;
-    this.ctx = canvas.getContext('2d', { alpha: false });
+    this.ctx = canvas.getContext('2d', { alpha: !!opts.alpha });   // alpha: the HUD overlay above the WebGL canvas
     this.res = res;
     this.pak = res.pak;
     this.textures = new Map();      // image name → { w, h, data, wm, hm, hasAlpha }

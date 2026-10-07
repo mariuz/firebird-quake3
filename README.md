@@ -132,9 +132,17 @@ rotation, the view transform and the projection in the select list — slow, wit
 adding up to some fifteen thousand rows). `FRAME_FACES_FAST` and `FRAME_ENTS` expose the rows for scripts
 and the SQL console.
 
-### JavaScript only paints (`src/renderer.js`, `src/scene.js`)
+### JavaScript only paints (`src/renderer.js`, `src/renderer-gl.js`, `src/scene.js`)
 
-A 32-bit framebuffer and a z-buffer. Polygons are scan-converted with perspective-correct spans — the
+Two painters take the same rows; the page's **Renderer** menu picks one. **WebGL: a port of Quake III's
+renderer** does what tr_bsp.c and tr_shade.c did: the world's vertices sit on the card once, each frame
+the faces Firebird selected are grouped by shader and lightmap page and drawn with one call per group, a
+fragment shader multiplies the texture by the lightmap (with the overbright shift baked into the page) and
+adds the glow stages with their `blendFunc` and `tcMod`s, the sky is the shader's cloud layers by pixel
+direction, and the MD3 models are lit from the light grid in the vertex shader. The HUD is painted by the
+software painter onto a transparent canvas laid over it. It paints a frame in about a millisecond.
+
+The **software** painter is the one the headless screenshots and the tests use: a 32-bit framebuffer and a z-buffer. Polygons are scan-converted with perspective-correct spans — the
 texel coordinates are divided out every 16 pixels and stepped linearly between, as `D_DrawSpans16`
 did — that multiply the texture (at the mip level the polygon's texel density calls for) by the 128×128
 lightmap page, with the overbright shift of `R_ColorShiftLightingBytes` applied to the page once.
