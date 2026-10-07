@@ -11,7 +11,8 @@ SET TERM ^ ;
 CREATE OR ALTER PROCEDURE t_damage (targ INTEGER, inflictor INTEGER, attacker INTEGER, damage INTEGER, knockback INTEGER, dflags INTEGER, mod_ SMALLINT) AS BEGIN END^
 CREATE OR ALTER PROCEDURE use_targets (eid INTEGER, activator INTEGER) AS BEGIN END^
 CREATE OR ALTER PROCEDURE bot_die (eid INTEGER, attacker INTEGER, mod_ SMALLINT) AS BEGIN END^
-CREATE OR ALTER PROCEDURE bot_pain (eid INTEGER, attacker INTEGER, damage INTEGER) AS BEGIN END^
+CREATE OR ALTER PROCEDURE bot_pain (eid INTEGER, attacker INTEGER, damage INTEGER, mod_ SMALLINT) AS BEGIN END^
+CREATE OR ALTER PROCEDURE bot_chat_event (eid INTEGER, ev VARCHAR(16), other INTEGER, mod_ SMALLINT) AS BEGIN END^
 CREATE OR ALTER PROCEDURE player_die (attacker INTEGER, mod_ SMALLINT) AS BEGIN END^
 CREATE OR ALTER PROCEDURE door_use (eid INTEGER, activator INTEGER) AS BEGIN END^
 CREATE OR ALTER PROCEDURE plat_go_down (eid INTEGER) AS BEGIN END^
@@ -1058,6 +1059,9 @@ BEGIN
     EXECUTE PROCEDURE killed(targ, inflictor, attacker, mod_);
     EXIT;
   END
+  -- a bot that hurts someone without killing them may say so (BotChat_HitNoKill)
+  IF (attacker IS NOT NULL AND attacker <> targ AND cls IN ('player', 'bot') AND EXISTS (SELECT 1 FROM ents a WHERE a.id = :attacker AND a.classname = 'bot')) THEN
+    EXECUTE PROCEDURE bot_chat_event(attacker, 'hit_nokill', targ, mod_);
   IF (cls = 'player') THEN
   BEGIN
     SELECT p.pain_finished FROM player p WHERE p.id = 1 INTO pf;
@@ -1068,7 +1072,7 @@ BEGIN
     END
     EXIT;
   END
-  IF (cls = 'bot') THEN EXECUTE PROCEDURE bot_pain(targ, attacker, take);
+  IF (cls = 'bot') THEN EXECUTE PROCEDURE bot_pain(targ, attacker, take, mod_);
 END^
 
 -- G_RadiusDamage

@@ -53,12 +53,7 @@ export class Hud {
     if (hud.MATCH_OVER) {
       // the intermission (CG_DrawIntermission): the scoreboard, the console lines, and the way on
       this.drawScoreboard(hud, opts.scores ?? this.lastScores, k);
-      let iy = Math.round(4 * k);
-      for (const m of messages) {
-        if (time - m.time > 5) continue;
-        r.drawString(this.font, m.text, Math.round(4 * k), iy, Math.max(7, Math.round(10 * k)), [1, 1, 1]);
-        iy += Math.max(7, Math.round(10 * k)) + 1;
-      }
+      this.drawConsole(messages, time, k);
       if (time > hud.OVER_TIME + 5) this.drawCenter(hud.NEXT_MAP ? `fire for ${hud.NEXT_MAP}` : 'fire to play again', Math.floor(h * 0.82), Math.round(12 * k));
       return;
     }
@@ -106,16 +101,29 @@ export class Hud {
     if (hud.MSG) r.drawString(this.font, hud.MSG, (w - hud.MSG.length * cs) >> 1, h - Math.round(120 * k), cs, [1, 1, 1]);
     if (hud.CPRINT) this.drawCenter(hud.CPRINT, Math.floor(h * 0.32), Math.round(16 * k));
     // the console lines of the last seconds
-    let cy = Math.round(4 * k);
-    for (const m of messages) {
-      if (time - m.time > 5) continue;
-      r.drawString(this.font, m.text, Math.round(4 * k), cy, Math.max(7, Math.round(10 * k)), [1, 1, 1]);
-      cy += Math.max(7, Math.round(10 * k)) + 1;
-    }
+    this.drawConsole(messages, time, k);
     // crosshair
     if (!hud.DEAD && this.crosshair) { const cz = Math.round(24 * k); r.drawPic(this.crosshair, (w - cz) >> 1, (h - cz) >> 1, cz, cz); }
     if (hud.DEAD && time - hud.DEAD_TIME_ > 0) this.drawCenter('press fire to respawn', Math.floor(h * 0.6), Math.round(12 * k));
     if (opts.scoreboard) this.drawScoreboard(hud, opts.scores ?? this.lastScores, k);
+  }
+
+  /** The console lines of the last five seconds, top left, wrapped at the screen's edge (the bots talk at length). */
+  drawConsole(messages, time, k) {
+    const r = this.r, cs = Math.max(7, Math.round(10 * k)), x = Math.round(4 * k);
+    const per = Math.max(10, Math.floor((r.w - 2 * x) / cs));
+    let y = Math.round(4 * k);
+    for (const m of messages) {
+      if (time - m.time > 5) continue;
+      let text = String(m.text), first = true;
+      while (text.length) {
+        let cut = text.length <= per ? text.length : text.lastIndexOf(' ', per);
+        if (cut <= 0) cut = per;
+        r.drawString(this.font, (first ? '' : '  ') + text.slice(0, cut).trimEnd(), x, y, cs, [1, 1, 1]);
+        text = text.slice(cut).trimStart();
+        y += cs + 1; first = false;
+      }
+    }
   }
 
   drawCenter(msg, y, size) {

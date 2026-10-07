@@ -98,15 +98,36 @@ if (item) {
   await db.exec(`UPDATE ents SET respawn_time = 0, health = 1 WHERE classname = 'bot' AND id <> ${b}`);
 }
 
+// the chat files are in, and a line comes out whole (variables filled, random strings drawn, no marks left)
+{
+  const n = (await q('SELECT (SELECT COUNT(*) FROM bot_chat) c, (SELECT COUNT(*) FROM bot_rnd) r, (SELECT COUNT(*) FROM bot_chatchar) k FROM rdb$database'))[0];
+  assert(n.C > 500 && n.R > 1000 && n.K > 100, `the bots' chat files are loaded (${n.C} lines, ${n.R} random strings, ${n.K} characteristics)`);
+  const bot = (await q("SELECT FIRST 1 id, bot FROM ents WHERE classname = 'bot' ORDER BY id"))[0];
+  const lines = [];
+  for (const type of ['game_enter', 'level_start', 'kill_insult', 'death_praise', 'random_misc', 'random_insult', 'level_end_victory', 'hit_nokill']) {
+    for (let i = 0; i < 4; i++) {
+      await db.exec(`EXECUTE PROCEDURE bot_say(${bot.ID}, '${type}', 'Visor', 'Grunt', NULL, 'Major', 'Arena Gate', 'Railgun')`);
+      lines.push((await q('SELECT FIRST 1 msg FROM messages ORDER BY id DESC'))[0].MSG);
+    }
+  }
+  const bad = lines.filter((l) => !l.startsWith(bot.BOT.trim() + ': ') || /[{}~^]/.test(l));
+  assert(bad.length === 0, `${lines.length} lines said whole, e.g. "${lines[0]}" (bad: ${bad.slice(0, 2).join(' | ') || 'none'})`);
+}
+let chats = 0;
+const talkers = new RegExp(`^(${bots.map((b) => b.BOT.trim()).join('|')}): `);
+let lastMsg = 0;
+
 // a minute of play: the bots keep fragging each other, nobody is stuck in the void
 const padEdges = (await q('SELECT COUNT(*) n FROM wp_edges WHERE kind = 1'))[0].N;
 let flew = 0;
 let t0 = performance.now();
 for (let i = 0; i < 600; i++) {
   await tic(2);
+  if (i % 3 === 0) for (const m of await q(`SELECT id, msg FROM messages WHERE id > ${lastMsg} ORDER BY id`)) { lastMsg = m.ID; if (talkers.test(m.MSG)) { chats++; if (chats <= 3) console.log('chat', m.MSG); } }
   if (padEdges && i % 2 === 0) flew += (await q("SELECT COUNT(*) n FROM ents WHERE classname = 'bot' AND health > 0 AND vz > 450 AND BIN_AND(flags, 512) = 0"))[0].N;
 }
 console.log(`1200 tics in ${(performance.now() - t0).toFixed(0)} ms`);
+assert(chats > 0, `the bots talked during the minute (${chats} lines)`);
 if (padEdges >= 6) assert(flew > 0, `the bots took the jump pads (${padEdges} pad edges, airborne with upward speed ${flew} times)`);
 const board = await q('SELECT * FROM scoreboard');
 console.log('scores', board.map((r) => `${r.NAME.trim()} ${r.FRAGS}/${r.DEATHS}`).join(', '));

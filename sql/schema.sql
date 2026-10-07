@@ -272,6 +272,7 @@ CREATE TABLE ents (
   noise3     VARCHAR(64),                   -- end / close sound
   -- players and bots
   bot        VARCHAR(16),                   -- bots: the bot's name
+  last_chat  DOUBLE PRECISION DEFAULT -100 NOT NULL,   -- bots: when it last said something (25 s between)
   pmodel     VARCHAR(16),                   -- the player model (sarge, grunt …)
   pskin      VARCHAR(16),
   legs_anim  INTEGER DEFAULT 22 NOT NULL,   -- LEGS_IDLE
@@ -354,6 +355,7 @@ CREATE TABLE player (
   flight_finished DOUBLE PRECISION DEFAULT 0 NOT NULL,
   holdable        SMALLINT DEFAULT 0 NOT NULL,            -- 1 teleporter 2 medkit
   jump_released   SMALLINT DEFAULT 1 NOT NULL,
+  name            VARCHAR(32) DEFAULT 'Player' NOT NULL,  -- what the bots call you
   ducked          SMALLINT DEFAULT 0 NOT NULL,            -- PMF_DUCKED: the box 16 high instead of 32, the eye at 12 instead of 26
   fly_sound_time  DOUBLE PRECISION DEFAULT 0 NOT NULL,
   step_time       DOUBLE PRECISION DEFAULT 0 NOT NULL,
@@ -424,4 +426,28 @@ CREATE TABLE bot_defs (
   model  VARCHAR(16) NOT NULL,
   skin   VARCHAR(16) DEFAULT 'default' NOT NULL,
   skill  SMALLINT DEFAULT 2 NOT NULL
+);
+
+-- the bots' chat (botlib's be_ai_chat.c, read from the pak by src/botchat.js): each bot's lines by type,
+-- the random strings of rnd.c they draw from, and the chat characteristics of its character file by
+-- skill. A message is a template: {0} … {7} the variables, {r:NAME} a random string of BOT_RND
+CREATE TABLE bot_chat (
+  bot    VARCHAR(16) NOT NULL,
+  ctype  VARCHAR(32) NOT NULL,
+  idx    INTEGER NOT NULL,
+  msg    VARCHAR(600) NOT NULL,
+  PRIMARY KEY (bot, ctype, idx)
+);
+CREATE TABLE bot_rnd (
+  name   VARCHAR(40) NOT NULL,
+  idx    INTEGER NOT NULL,
+  msg    VARCHAR(600) NOT NULL,
+  PRIMARY KEY (name, idx)
+);
+CREATE TABLE bot_chatchar (
+  bot    VARCHAR(16) NOT NULL,
+  skill  SMALLINT NOT NULL,
+  ckey   VARCHAR(24) NOT NULL,              -- kill, death, insult, misc, random, startendlevel, …
+  val    DOUBLE PRECISION NOT NULL,
+  PRIMARY KEY (bot, skill, ckey)
 );

@@ -8,6 +8,183 @@ SET TERM ^ ;
 CREATE OR ALTER PROCEDURE run_think (eid INTEGER, think VARCHAR(24)) AS BEGIN END^
 CREATE OR ALTER PROCEDURE mover_blocked (eid INTEGER, other INTEGER) AS BEGIN END^
 
+-- ── the bots' chat (ai_chat.c, be_ai_chat.c) ─────────────────────────────
+-- what the bots call someone: a bot's name, or the player's
+CREATE OR ALTER FUNCTION chat_name (eid INTEGER) RETURNS VARCHAR(32)
+AS
+DECLARE n VARCHAR(32);
+BEGIN
+  SELECT IIF(e.classname = 'player', (SELECT p.name FROM player p WHERE p.id = 1), e.bot) FROM ents e WHERE e.id = :eid INTO n;
+  RETURN COALESCE(n, 'someone');
+END^
+
+-- BotRandomOpponentName: anyone in the arena but the bot itself
+CREATE OR ALTER FUNCTION chat_opponent (eid INTEGER) RETURNS VARCHAR(32)
+AS
+DECLARE n INTEGER; DECLARE k INTEGER; DECLARE o INTEGER;
+BEGIN
+  SELECT COUNT(*) FROM ents e WHERE e.classname IN ('player', 'bot') AND e.id <> :eid INTO n;
+  IF (n = 0) THEN RETURN '[invalid var]';
+  k = CAST(FLOOR(RAND() * n) AS INTEGER);
+  SELECT FIRST 1 SKIP (:k) e.id FROM ents e WHERE e.classname IN ('player', 'bot') AND e.id <> :eid ORDER BY e.id INTO o;
+  RETURN chat_name(o);
+END^
+
+-- BotWeaponNameForMeansOfDeath
+CREATE OR ALTER FUNCTION chat_weapon (mod_ SMALLINT) RETURNS VARCHAR(24)
+AS
+BEGIN
+  RETURN TRIM(CASE mod_ WHEN 1 THEN 'Gauntlet' WHEN 2 THEN 'Machinegun' WHEN 3 THEN 'Shotgun' WHEN 4 THEN 'Grenade Launcher' WHEN 5 THEN 'Grenade Launcher'
+    WHEN 6 THEN 'Rocket Launcher' WHEN 7 THEN 'Rocket Launcher' WHEN 8 THEN 'Plasmagun' WHEN 9 THEN 'Plasmagun' WHEN 16 THEN 'Lightning Gun'
+    WHEN 17 THEN 'Railgun' WHEN 18 THEN 'BFG10K' WHEN 19 THEN 'BFG10K' ELSE '[unknown weapon]' END);
+END^
+
+-- a chat characteristic of the bot's character at its skill (CHARACTERISTIC_CHAT_*)
+CREATE OR ALTER FUNCTION chat_char (eid INTEGER, k VARCHAR(24)) RETURNS DOUBLE PRECISION
+AS
+DECLARE v DOUBLE PRECISION;
+BEGIN
+  SELECT c.val FROM ents e JOIN bot_defs b ON b.name = e.bot JOIN bot_chatchar c ON c.bot = e.bot AND c.skill = b.skill AND c.ckey = :k
+   WHERE e.id = :eid INTO v;
+  RETURN COALESCE(v, 0);
+END^
+
+-- BotAI_BotInitialChat and BotExpandChatMessage: a random line of the type from the bot's chat file,
+-- its random strings drawn from rnd.c until none is left (they nest), the variables put in, the
+-- tildes (words kept from the synonyms) and the colour codes taken out; said to everyone, with the
+-- talk sound. Returns nothing when the bot's file has no line of the type, as botlib does
+CREATE OR ALTER PROCEDURE bot_say (eid INTEGER, ctype VARCHAR(32), v0 VARCHAR(40), v1 VARCHAR(40), v2 VARCHAR(40), v3 VARCHAR(40), v4 VARCHAR(64), v5 VARCHAR(40))
+AS
+DECLARE bname VARCHAR(16); DECLARE n INTEGER; DECLARE k INTEGER; DECLARE msg VARCHAR(2000); DECLARE pick VARCHAR(600);
+DECLARE p INTEGER; DECLARE q INTEGER; DECLARE rname VARCHAR(40); DECLARE guard INTEGER = 0;
+BEGIN
+  SELECT e.bot FROM ents e WHERE e.id = :eid INTO bname;
+  IF (bname IS NULL) THEN EXIT;
+  SELECT COUNT(*) FROM bot_chat c WHERE c.bot = :bname AND c.ctype = :ctype INTO n;
+  IF (n = 0) THEN EXIT;
+  k = CAST(FLOOR(RAND() * n) AS INTEGER);
+  SELECT FIRST 1 SKIP (:k) c.msg FROM bot_chat c WHERE c.bot = :bname AND c.ctype = :ctype ORDER BY c.idx INTO msg;
+  p = POSITION('{r:', msg);
+  WHILE (p > 0 AND guard < 24) DO
+  BEGIN
+    q = POSITION('}', msg, p);
+    IF (q = 0) THEN LEAVE;
+    rname = SUBSTRING(msg FROM p + 3 FOR q - p - 3);
+    SELECT COUNT(*) FROM bot_rnd r WHERE r.name = :rname INTO n;
+    pick = '';
+    IF (n > 0) THEN
+    BEGIN
+      k = CAST(FLOOR(RAND() * n) AS INTEGER);
+      SELECT FIRST 1 SKIP (:k) r.msg FROM bot_rnd r WHERE r.name = :rname ORDER BY r.idx INTO pick;
+    END
+    msg = SUBSTRING(msg FROM 1 FOR p - 1) || pick || SUBSTRING(msg FROM q + 1);
+    guard = guard + 1;
+    p = POSITION('{r:', msg);
+  END
+  msg = REPLACE(REPLACE(REPLACE(msg, '{0}', COALESCE(v0, '[invalid var]')), '{1}', COALESCE(v1, '[invalid var]')), '{2}', COALESCE(v2, '[invalid var]'));
+  msg = REPLACE(REPLACE(REPLACE(msg, '{3}', COALESCE(v3, '[invalid var]')), '{4}', COALESCE(v4, '[invalid var]')), '{5}', COALESCE(v5, '[invalid var]'));
+  msg = REPLACE(REPLACE(REPLACE(msg, '{6}', '[invalid var]'), '{7}', '[invalid var]'), '~', '');
+  p = POSITION('^', msg);
+  WHILE (p > 0) DO
+  BEGIN
+    msg = SUBSTRING(msg FROM 1 FOR p - 1) || SUBSTRING(msg FROM p + 2);
+    p = POSITION('^', msg);
+  END
+  EXECUTE PROCEDURE say(SUBSTRING(bname || ': ' || TRIM(msg) FROM 1 FOR 200));
+  EXECUTE PROCEDURE snd_local('sound/player/talk.wav');
+  UPDATE ents e SET e.last_chat = now_() WHERE e.id = :eid;
+END^
+
+-- the BotChat_* functions of ai_chat.c: when a bot says what, with which variables, how likely by its
+-- character, and no more than once every 25 seconds (TIME_BETWEENCHATTING) except at the start and
+-- the end of a level. `other` is the one the event is about (the killer, the victim, the shooter)
+CREATE OR ALTER PROCEDURE bot_chat_event (eid INTEGER, ev VARCHAR(16), other INTEGER, mod_ SMALLINT)
+AS
+DECLARE t DOUBLE PRECISION; DECLARE lc DOUBLE PRECISION; DECLARE ctype VARCHAR(32); DECLARE me VARCHAR(32); DECLARE mine INTEGER;
+DECLARE v0 VARCHAR(40); DECLARE v1 VARCHAR(40); DECLARE v3 VARCHAR(40); DECLARE v4 VARCHAR(64); DECLARE v5 VARCHAR(40);
+DECLARE pf INTEGER; DECLARE top INTEGER; DECLARE low INTEGER; DECLARE first_ VARCHAR(32); DECLARE last_ VARCHAR(32);
+BEGIN
+  t = now_();
+  SELECT e.last_chat, e.frags FROM ents e WHERE e.id = :eid AND e.classname = 'bot' INTO lc, mine;
+  IF (lc IS NULL) THEN EXIT;
+  me = chat_name(eid);
+  SELECT g.level_msg FROM game g WHERE g.id = 1 INTO v4;
+  IF (ev = 'level_start') THEN
+  BEGIN
+    IF (RAND() > chat_char(eid, 'startendlevel')) THEN EXIT;
+    ctype = 'level_start'; v0 = me;
+  END
+  ELSE IF (ev = 'game_enter') THEN
+  BEGIN
+    IF (RAND() > chat_char(eid, 'enterexitgame')) THEN EXIT;
+    ctype = 'game_enter'; v0 = me; v1 = chat_opponent(eid);
+  END
+  ELSE IF (ev = 'level_end') THEN
+  BEGIN
+    IF (RAND() > chat_char(eid, 'startendlevel')) THEN EXIT;
+    -- the rankings: the player and the bots by frags
+    SELECT p.frags, p.name FROM player p WHERE p.id = 1 INTO pf, first_;
+    SELECT MAX(e.frags), MIN(e.frags) FROM ents e WHERE e.classname = 'bot' INTO top, low;
+    last_ = first_;
+    IF (top > pf) THEN SELECT FIRST 1 e.bot FROM ents e WHERE e.classname = 'bot' ORDER BY e.frags DESC INTO first_;
+    IF (low < pf) THEN SELECT FIRST 1 e.bot FROM ents e WHERE e.classname = 'bot' ORDER BY e.frags INTO last_;
+    top = MAXVALUE(top, pf); low = MINVALUE(low, pf);
+    IF (mine = top) THEN BEGIN ctype = 'level_end_victory'; v3 = last_; END
+    ELSE IF (mine = low) THEN BEGIN ctype = 'level_end_lose'; v3 = first_; END
+    ELSE BEGIN ctype = 'level_end'; v3 = first_; END
+    v0 = me; v1 = chat_opponent(eid);
+  END
+  ELSE
+  BEGIN
+    IF (t - lc < 25) THEN EXIT;
+    IF (ev = 'death') THEN
+    BEGIN
+      IF (RAND() > chat_char(eid, 'death')) THEN EXIT;
+      ctype = TRIM(CASE WHEN mod_ = 21 THEN 'death_drown' WHEN mod_ = 15 THEN 'death_slime' WHEN mod_ = 14 THEN 'death_lava' WHEN mod_ = 13 THEN 'death_cratered'
+                        WHEN other IS NULL OR other <= 0 OR other = eid OR mod_ IN (11, 12, 20) THEN 'death_suicide' WHEN mod_ = 10 THEN 'death_telefrag' ELSE '' END);
+      IF (ctype <> '') THEN v0 = chat_opponent(eid);
+      ELSE
+      BEGIN
+        v0 = chat_name(other); v1 = chat_weapon(mod_);
+        IF (mod_ IN (1, 17, 18, 19) AND RAND() < 0.5e0) THEN ctype = TRIM(CASE WHEN mod_ = 1 THEN 'death_gauntlet' WHEN mod_ = 17 THEN 'death_rail' ELSE 'death_bfg' END);
+        ELSE ctype = TRIM(IIF(RAND() < chat_char(eid, 'insult'), 'death_insult', 'death_praise'));
+      END
+    END
+    ELSE IF (ev = 'kill') THEN
+    BEGIN
+      IF (RAND() > chat_char(eid, 'kill')) THEN EXIT;
+      v0 = chat_name(other);
+      ctype = TRIM(CASE WHEN mod_ = 1 THEN 'kill_gauntlet' WHEN mod_ = 17 THEN 'kill_rail' WHEN mod_ = 10 THEN 'kill_telefrag'
+                        WHEN RAND() < chat_char(eid, 'insult') THEN 'kill_insult' ELSE 'kill_praise' END);
+    END
+    ELSE IF (ev = 'enemy_suicide') THEN
+    BEGIN
+      IF (RAND() > chat_char(eid, 'enemysuicide')) THEN EXIT;
+      ctype = 'enemy_suicide'; v0 = chat_name(other);
+    END
+    ELSE IF (ev = 'hit_nodeath') THEN
+    BEGIN
+      IF (RAND() > chat_char(eid, 'hitnodeath')) THEN EXIT;
+      ctype = 'hit_nodeath'; v0 = chat_name(other); v1 = chat_weapon(mod_);
+    END
+    ELSE IF (ev = 'hit_nokill') THEN
+    BEGIN
+      IF (RAND() > chat_char(eid, 'hitnokill') * 0.5e0) THEN EXIT;
+      ctype = 'hit_nokill'; v0 = chat_name(other); v1 = chat_weapon(mod_);
+    END
+    ELSE IF (ev = 'random') THEN
+    BEGIN
+      IF (RAND() > chat_char(eid, 'random')) THEN EXIT;
+      ctype = TRIM(IIF(RAND() < chat_char(eid, 'misc'), 'random_misc', 'random_insult'));
+      v0 = chat_opponent(eid); v1 = me;
+      v5 = chat_weapon(CAST(TRIM(CASE CAST(FLOOR(RAND() * 8) AS INTEGER) WHEN 0 THEN '1' WHEN 1 THEN '2' WHEN 2 THEN '3' WHEN 3 THEN '4' WHEN 4 THEN '6' WHEN 5 THEN '8' WHEN 6 THEN '16' ELSE '17' END) AS SMALLINT));
+    END
+    ELSE EXIT;
+  END
+  EXECUTE PROCEDURE bot_say(eid, ctype, v0, v1, NULL, v3, v4, v5);
+END^
+
+
 -- ── player model animation ───────────────────────────────────────────────
 -- the legs and torso animations of a player or bot (animNumber_t), restarted when they change
 CREATE OR ALTER PROCEDURE set_anims (eid INTEGER, legs INTEGER, torso INTEGER)
@@ -311,7 +488,7 @@ BEGIN
 END^
 
 -- ── pain, death, respawn ─────────────────────────────────────────────────
-CREATE OR ALTER PROCEDURE bot_pain (eid INTEGER, attacker INTEGER, damage INTEGER)
+CREATE OR ALTER PROCEDURE bot_pain (eid INTEGER, attacker INTEGER, damage INTEGER, mod_ SMALLINT)
 AS
 DECLARE pf DOUBLE PRECISION; DECLARE hp INTEGER; DECLARE pm VARCHAR(16); DECLARE enemy INTEGER; DECLARE skill SMALLINT;
 BEGIN
@@ -321,6 +498,9 @@ BEGIN
     UPDATE ents e SET e.enemy_id = :attacker, e.search_time = now_() + bot_char(:skill, 'search'), e.st = 'run',
            e.ideal_yaw = vectoyaw((SELECT a.x FROM ents a WHERE a.id = :attacker) - e.x, (SELECT a.y FROM ents a WHERE a.id = :attacker) - e.y),
            e.attack_finished = IIF(:enemy IS DISTINCT FROM :attacker, MAXVALUE(e.attack_finished, now_() + bot_char(:skill, 'reaction') * 0.5e0), e.attack_finished) WHERE e.id = :eid;
+  -- hit and still standing: it may say something about it (BotChat_HitNoDeath)
+  IF (attacker > 0 AND attacker <> eid AND EXISTS (SELECT 1 FROM ents a WHERE a.id = :attacker AND a.classname IN ('player', 'bot'))) THEN
+    EXECUTE PROCEDURE bot_chat_event(eid, 'hit_nodeath', attacker, mod_);
   IF (pf > now_()) THEN EXIT;
   UPDATE ents e SET e.pain_finished = now_() + 0.7e0 WHERE e.id = :eid;
   EXECUTE PROCEDURE snd(eid, 2, 'sound/player/' || pm || '/pain' || TRIM(CASE WHEN hp < 25 THEN '25' WHEN hp < 50 THEN '50' WHEN hp < 75 THEN '75' ELSE '100' END) || '_1.wav', 1, 1);
@@ -334,6 +514,7 @@ BEGIN
   SELECT e.health, e.pmodel, e.pskin FROM ents e WHERE e.id = :eid INTO hp, pm, ps;
   EXECUTE PROCEDURE say(obituary(eid, attacker, mod_));
   EXECUTE PROCEDURE score_frag(attacker, eid, mod_);
+  EXECUTE PROCEDURE bot_chat_event(eid, 'death', attacker, mod_);   -- BotChat_Death
   UPDATE ents e SET e.deadflag = 1, e.st = 'dead', e.solid = 0, e.movetype = 0, e.takedamage = 0, e.alpha = 1, e.enemy_id = NULL, e.goal_id = NULL,
          e.respawn_time = :t + 2.5e0 + RAND() * 2, e.deaths = e.deaths + 1, e.vx = 0, e.vy = 0, e.vz = 0, e.quad_finished = 0, e.nextthink = :t + 0.5e0 WHERE e.id = :eid;
   IF (hp < -40) THEN
@@ -496,6 +677,8 @@ BEGIN
        ORDER BY ABS(g.x - :x) + ABS(g.y - :y) + ABS(g.z - :z) * 2 + RAND() * 1200 - IIF(i.kind IN ('W', 'P', 'A'), 400, 0) INTO goal;
       UPDATE ents e SET e.goal_id = :goal WHERE e.id = :eid;
     END
+    -- nothing to do but roam: now and then a word (BotChat_Random, a chance in a hundred a think, then the character's)
+    IF (RAND() < 0.005e0) THEN EXECUTE PROCEDURE bot_chat_event(eid, 'random', NULL, 0);
     IF (BIN_AND(flags, 512) <> 0 AND tt < t AND hesitate = 0) THEN
     BEGIN
       IF (goal IS NOT NULL) THEN
@@ -540,6 +723,7 @@ BEGIN
          e.think = 'bot_think', e.nextthink = :t + 0.5e0 + RAND() * 0.5e0, e.attack_finished = :t + 2 WHERE e.id = :id;
   EXECUTE PROCEDURE link_ent(id);
   EXECUTE PROCEDURE say(bname || ' entered the game');
+  IF ((SELECT g.tic FROM game g WHERE g.id = 1) > 0) THEN EXECUTE PROCEDURE bot_chat_event(id, 'game_enter', NULL, 0);   -- BotChat_EnterGame
   SUSPEND;
 END^
 
@@ -587,7 +771,7 @@ END^
 -- the match is over: who won, the next arena of the rotation, and the intermission
 CREATE OR ALTER PROCEDURE end_match (wname VARCHAR(32))
 AS
-DECLARE t DOUBLE PRECISION; DECLARE cur VARCHAR(32); DECLARE nm VARCHAR(32);
+DECLARE t DOUBLE PRECISION; DECLARE cur VARCHAR(32); DECLARE nm VARCHAR(32); DECLARE b INTEGER;
 BEGIN
   IF (EXISTS (SELECT 1 FROM game g WHERE g.id = 1 AND g.match_over = 1)) THEN EXIT;
   t = now_();
@@ -598,6 +782,8 @@ BEGIN
   EXECUTE PROCEDURE cprint(IIF(wname = 'You', 'You win!', wname || ' wins'));
   EXECUTE PROCEDURE snd_local(IIF(wname = 'You', 'music/win.wav', 'music/loss.wav'));
   EXECUTE PROCEDURE begin_intermission;
+  -- the bots have their say about it (BotChat_EndLevel)
+  FOR SELECT e.id FROM ents e WHERE e.classname = 'bot' ORDER BY e.id INTO b DO EXECUTE PROCEDURE bot_chat_event(b, 'level_end', NULL, 0);
 END^
 
 -- CheckExitRules, every tic: the time limit with its warnings (CG_CheckLocalSounds) and sudden death
@@ -646,7 +832,7 @@ END^
 CREATE OR ALTER PROCEDURE score_frag (attacker INTEGER, victim INTEGER, mod_ SMALLINT)
 AS
 DECLARE pe INTEGER; DECLARE t DOUBLE PRECISION; DECLARE pf INTEGER; DECLARE bf INTEGER; DECLARE lead SMALLINT; DECLARE oldlead SMALLINT; DECLARE lim INTEGER;
-DECLARE lk DOUBLE PRECISION; DECLARE wname VARCHAR(32); DECLARE top INTEGER; DECLARE left_ INTEGER;
+DECLARE lk DOUBLE PRECISION; DECLARE wname VARCHAR(32); DECLARE top INTEGER; DECLARE left_ INTEGER; DECLARE bot_ INTEGER;
 BEGIN
   pe = player_ent();
   t = now_();
@@ -669,6 +855,15 @@ BEGIN
   BEGIN
     UPDATE ents e SET e.frags = e.frags + 1 WHERE e.id = :attacker;
     IF (victim = pe AND mod_ = 1) THEN EXECUTE PROCEDURE snd_local('sound/feedback/humiliation.wav');
+  END
+  -- the bots' say: the killer about the kill (BotChat_Kill), or those after the victim about its suicide
+  IF (attacker > 0 AND attacker <> victim AND EXISTS (SELECT 1 FROM ents a WHERE a.id = :attacker AND a.classname = 'bot')) THEN
+    EXECUTE PROCEDURE bot_chat_event(attacker, 'kill', victim, mod_);
+  ELSE IF (attacker IS NULL OR attacker <= 0 OR attacker = victim) THEN
+  BEGIN
+    bot_ = NULL;
+    SELECT FIRST 1 e.id FROM ents e WHERE e.classname = 'bot' AND e.enemy_id = :victim AND e.id <> :victim INTO bot_;
+    IF (bot_ IS NOT NULL) THEN EXECUTE PROCEDURE bot_chat_event(bot_, 'enemy_suicide', victim, mod_);
   END
   -- the lead
   SELECT p.frags, p.lead_state FROM player p WHERE p.id = 1 INTO pf, oldlead;
@@ -1032,6 +1227,8 @@ BEGIN
     EXECUTE PROCEDURE spawn_bot(b) RETURNING_VALUES pe;
     i = i + 1;
   END
+  -- the bots' greetings (BotChat_StartLevel)
+  FOR SELECT e.id FROM ents e WHERE e.classname = 'bot' ORDER BY e.id INTO pe DO EXECUTE PROCEDURE bot_chat_event(pe, 'level_start', NULL, 0);
   -- the level name, and "fight"
   UPDATE player p SET p.cprint = (SELECT g.level_msg FROM game g WHERE g.id = 1), p.cprint_time = 3 WHERE p.id = 1;
   EXECUTE PROCEDURE snd_local('sound/feedback/fight.wav');

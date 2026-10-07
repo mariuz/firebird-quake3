@@ -13,7 +13,6 @@ is a bug report; it is the gap between a 20 Hz SQL deathmatch and the 1999 game.
 
 | Gap | Quake III | Here | Where it would go |
 | --- | --- | --- | --- |
-| **Bot chat** | the botfiles' chat lines on frags, deaths, taunts (`ai_chat.c`) | silent bots | a `bot_chat` table of lines per bot, `say` on the events |
 | **Awards and voices** | excellent, impressive, gauntlet, humiliation, the announcer's countdown | lead changes, "fight!", the frag limit | `score_frag` / `killed` |
 | **Spectating and warm-up** | free-floating spectator, the countdown before a match | you spawn and it starts | small |
 
@@ -80,7 +79,6 @@ fuzzy logic from the botfiles. What that leaves out:
 | **Weapon preferences per bot** | all bots use `bot_best_weapon`; the botfiles give each character its favourites |
 | **Fuzzy characteristics** | `bot_char` is five fixed skill levels; the botfiles have per-character values and the `w_*` weights |
 | **Team play, CTF roles** | no teams |
-| **Chat** | see §1 |
 | **AAS reachability kinds** | walk, step, jump down, pad, teleporter are here; swim, ladder (n/a), jump across, rocket jump, grapple, elevator (standing on a plat and waiting), func_bobbing are not: a bot on a plat does not wait for it |
 | **Graph quality** | the grid finds nodes where a column drops onto a floor; thin walkways between columns and the insides of doorways can lack nodes (q3dm7 has a few unreachable corners). A finer grid or nodes at face centres of walkable floor polygons would fill them |
 
@@ -113,7 +111,9 @@ Collision against brushes and patch facets, brush models with their own leaf, ro
 `PM_GroundTrace`, slide and step moves, water, crouching (`PM_CheckDuck`, the crouch animations, the
 smoothed eye; the bots never crouch); the first-person view's kick away from a hit, landing dips by the
 fall, the run's lean and the step bob, the gun's sway; the zoom to 22.5 degrees with the slower mouse; the view's hand playing the switch and the attack from
-the torso's frames (`CG_MapTorsoToWeaponFrame`), the bots' new gun coming up; doors with auto triggers, plats, buttons, trains,
+the torso's frames (`CG_MapTorsoToWeaponFrame`), the bots' new gun coming up; the bots' chat from their own chat files (botlib's random strings, variables
+and characteristics: level start and end, joining, deaths, kills, suicides, hits, idle talk; no synonyms,
+no typing delay, no replies); doors with auto triggers, plats, buttons, trains,
 bobbing, pendulum, rotating, static, timers, speakers; jump pads (`AimAtTarget`), teleporters, hurt
 and multiple triggers, `G_UseTargets` with delays and relays, `target_give/kill/print/teleporter/
 remove_powerups/score`; every item of `bg_itemlist` with its respawn, armour at 66 percent, the five

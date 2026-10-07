@@ -317,6 +317,40 @@ models and skins); the page's console has an "add Visor" button.
 
 ---
 
+**Chat** is botlib's, from the pak's own `botfiles/` (`src/botchat.js` reads them as `be_ai_chat.c`
+and `be_ai_char.c` do; the loader puts them in three tables):
+
+- `bot_rnd`: the random strings of `rnd.c` (`HELLO5 = { "Awright!! I OWN this arena!"; … }`, 2205 of them)
+- `bot_chat`: each bot's lines by type from its `_t.c` (762 for the six demo bots); the team chats of
+  `#include "teamplay.h"` are left out
+- `bot_chatchar`: the chat characteristics of its `_c.c` for skills 1 to 5, interpolated between the
+  skills the file defines (`BotInterpolateCharacters`)
+
+A message is a template: the file's comma-joined pieces become literal text, `{0}` … `{7}` for the
+numbered variables and `{r:NAME}` for a random string. `bot_say` picks a line of the type, draws the
+random strings until none is left (they nest: `fighter` inside `DEATH_INSULT2`), fills the variables,
+takes out the tildes and the `^n` colour codes, and says it ("Daemia: La venganza es dulce.") with
+`sound/player/talk.wav`. `bot_chat_event` is the `BotChat_*` functions of `ai_chat.c`: what each event
+says and with which variables, how likely by the bot's characteristic, and no more than once in 25
+seconds a bot (`TIME_BETWEENCHATTING`) except at a level's start and end:
+
+| Event | Hook | Types | Variables |
+| --- | --- | --- | --- |
+| a level starts | `init_map` | `level_start` | 0 own name |
+| a bot joins a running game | `spawn_bot` | `game_enter` | 0 own, 1 a random opponent, 4 the map's title |
+| the match ends | `end_match` | `level_end_victory` (first), `level_end_lose` (last), `level_end` | 0 own, 1 random opponent, 3 the last (victory) or the first, 4 map |
+| the bot dies | `bot_die` | `death_drown`, `_slime`, `_lava`, `_cratered`, `_suicide`, `_telefrag` (0 a random opponent); `death_gauntlet`, `_rail`, `_bfg` half the time for those weapons; else `death_insult` or `death_praise` by its insult characteristic | 0 killer, 1 weapon |
+| the bot kills | `score_frag` | `kill_gauntlet`, `kill_rail`, `kill_telefrag`, else `kill_insult` or `kill_praise` | 0 victim |
+| its enemy kills itself | `score_frag` | `enemy_suicide` | 0 enemy |
+| it is hit and lives | `bot_pain` | `hit_nodeath` | 0 shooter, 1 weapon |
+| it hits and does not kill | `t_damage` | `hit_nokill` (at half the characteristic) | 0 victim, 1 weapon |
+| nothing to fight | `bot_think`, one think in 200 | `random_misc` or `random_insult` | 0 random opponent, 1 own, 4 map, 5 a random weapon |
+
+The player is called by `player.name` (the page's *Name*, "Player" by default). Not done: the synonym
+substitution of `syn.c`, the typing delay (Quake III's bots stand still for the seconds it takes to type
+at their `CHAT_CPM`), the chat balloon and `hit_talking`, and replies to what the player says. The HUD
+wraps long console lines.
+
 ## 7. The waypoint graph: `waypoints.sql`
 
 Quake III's bots navigate an *area awareness system* (AAS) compiled offline from the map. This port

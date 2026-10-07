@@ -47,7 +47,7 @@ let lastFxId = 0;
 let frameNo = 0;
 let scores = [];
 const state = new FrameState();
-const settings = { map: 'q3dm1', detail: 'medium', sfx: 70, music: 40, musicMode: 'tracks', skill: 2, bots: 3, fov: 90, renderer: 'fast', brightness: 4, predict: true, fraglimit: 20, timelimit: 10, rotate: true };
+const settings = { map: 'q3dm1', detail: 'medium', sfx: 70, music: 40, musicMode: 'tracks', skill: 2, bots: 3, fov: 90, renderer: 'fast', brightness: 4, predict: true, fraglimit: 20, timelimit: 10, rotate: true, name: 'Player' };
 try { Object.assign(settings, JSON.parse(localStorage.getItem('firebird-quake3:settings') || '{}')); } catch { /* defaults */ }
 const saveSettings = () => { try { localStorage.setItem('firebird-quake3:settings', JSON.stringify(settings)); } catch { /* ignore */ } };
 const viewWidth = () => (settings.detail === 'high' ? 640 : settings.detail === 'low' ? 160 : 320);
@@ -175,6 +175,7 @@ async function startMap(name) {
   const t0 = performance.now();
   const bsp = await loadMap(db, pak, res, name, { skill: settings.skill, bots: settings.bots, link: false, fraglimit: settings.fraglimit, timelimit: settings.timelimit });
   map = { name, bsp, unlinked: 1 };
+  await setPlayerName();
   renderer.setResources(res);
   renderer.particles = [];
   renderer.meshCache?.clear();
@@ -485,6 +486,11 @@ $('renderer').addEventListener('change', (e) => {
 });
 $('brightness').value = String(settings.brightness);
 $('brightness').addEventListener('change', (e) => { settings.brightness = Number(e.target.value); saveSettings(); if (renderer) renderer.setBrightness(settings.brightness); });
+// the name the bots call you by
+const cleanName = (s) => String(s ?? '').replace(/[^\x20-\x7e]/g, '').replace(/'/g, '').trim().slice(0, 15) || 'Player';
+async function setPlayerName() { if (db) await db.exec(`UPDATE player SET name = '${cleanName(settings.name)}' WHERE id = 1`); }
+$('pname').value = settings.name;
+$('pname').addEventListener('change', (e) => { settings.name = cleanName(e.target.value); e.target.value = settings.name; saveSettings(); setPlayerName().catch((err) => console.error(err)); });
 // the limits apply at once, as Quake III's fraglimit and timelimit cvars do
 const setLimit = (key, col) => (e) => {
   settings[key] = Number(e.target.value); saveSettings();

@@ -10,6 +10,7 @@
 import { Bsp, parseVec, SURF, CONTENTS } from './bsp.js';
 import { Md3, parseAnimationCfg, parseSkin } from './md3.js';
 import { loadShaders, surfaceLook } from './shader.js';
+import { loadBotChat } from './botchat.js';
 import { ITEMS, BOTS } from './gamedata.js';
 
 const CHUNK = 30000;
@@ -137,6 +138,16 @@ export async function loadResources(db, pak, { width = 320, height = 240, fov = 
   const bots = BOTS.filter((b) => res.players.has(b.model)).map((b) => `INSERT INTO bot_defs (name, model, skin, skill) VALUES (${lit(b.name)}, ${lit(b.model)}, ${lit(b.skin)}, ${b.skill});`).join('\n');
   await db.exec(`SET TERM ^ ;\nEXECUTE BLOCK AS BEGIN\n${items}\n${bots}\nEND^\nSET TERM ; ^`);
   await db.exec('INSERT INTO game (id) VALUES (1); INSERT INTO player (id) VALUES (1)');
+  // the bots' chat files (src/botchat.js), in blocks of statements
+  const chat = loadBotChat(pak, BOTS.filter((b) => res.players.has(b.model)));
+  await db.exec('DELETE FROM bot_chat; DELETE FROM bot_rnd; DELETE FROM bot_chatchar');
+  const stmts = [
+    ...chat.rnd.map(([n, i, m]) => `INSERT INTO bot_rnd (name, idx, msg) VALUES (${lit(n)}, ${i}, ${lit(m)});`),
+    ...chat.chat.map(([b, ty, i, m]) => `INSERT INTO bot_chat (bot, ctype, idx, msg) VALUES (${lit(b)}, ${lit(ty)}, ${i}, ${lit(m)});`),
+    ...chat.chars.map(([b, s, k, v]) => `INSERT INTO bot_chatchar (bot, skill, ckey, val) VALUES (${lit(b)}, ${s}, ${lit(k)}, ${v});`),
+  ];
+  // (200 at a time: one statement may name tables at most 256 times)
+  for (let i = 0; i < stmts.length; i += 200) await db.exec(`SET TERM ^ ;\nEXECUTE BLOCK AS BEGIN\n${stmts.slice(i, i + 200).join('\n')}\nEND^\nSET TERM ; ^`);
   // the rotation: the pak's arenas in natural order (q3dm1, q3dm7, q3dm17, q3tourney2)
   const maps = pak.mapNames().slice().sort((a, b) => a.localeCompare(b, 'en', { numeric: true }));
   await db.exec('DELETE FROM map_list');

@@ -54,6 +54,7 @@ explosion sprites, beams) and nothing else. The renderers never query the databa
 | movers, triggers, targets, items, damage, projectiles, map spawning | `sql/game.sql` |
 | weapons, the player's think, respawn | `sql/player.sql` |
 | bot behaviour, skill characteristics (`bot_char`) | `sql/bots.sql` |
+| bot chat | `src/botchat.js` (the pak's botfiles into rows), `bot_say` and `bot_chat_event` at the top of `sql/bots.sql` |
 | bot navigation (nodes, edges, routing, incremental build) | `sql/waypoints.sql`, `bot_follow_route` in `sql/bots.sql` |
 | the tic entry point, think/physics dispatch, scoring, `init_map` | the end of `sql/bots.sql` |
 | what a frame returns | `sql/render.sql` (`frame_all`), read in `src/scene.js` `FrameState.parse` |
@@ -101,5 +102,7 @@ explosion sprites, beams) and nothing else. The renderers never query the databa
 - The smoke test plays in god mode, and god mode returns from `t_damage` before anything is
   recorded: a check that needs real damage drops the flag for that tic (and holds the bots' fire),
   or calls `t_damage` with dflags 8, which goes through it.
+- One statement may name tables at most 256 times ("Too many Contexts of Relation/Procedure/Views"):
+  an `EXECUTE BLOCK` of INSERTs goes in blocks of 200.
 - In CI the smoke test waits for the player to land (up to 60 tics) instead of counting tics; keep
   tests tolerant of timing, the engine is 10 to 20 percent slower there.
