@@ -159,7 +159,6 @@ export class Renderer {
     const [fx, fy, fz] = view.fwd, [rx, ry, rz] = view.right, [ux, uy, uz] = view.up;
     const near = 4, sc = view.scale, cx = view.cx, cy = view.cy;
     let lastEnt = -1, M = null;
-    const vv = this.vv;
     for (let ri = 0; ri < rows.length; ri++) {
       const row = rows[ri];
       const face = row[0], ent = row[1], ox = row[2], oy = row[3], oz = row[4];
@@ -171,6 +170,7 @@ export class Renderer {
       if (ent !== lastEnt) { lastEnt = ent; M = ent && entAngles.get(ent) ? angleMatrix(entAngles.get(ent)) : null; }
       const verts = f.verts, m = f.nverts;
       this.polyRoom(m);
+      const vv = this.vv;   // (after polyRoom: it may have grown)
       let behind = false;
       for (let k = 0; k < m; k++) {
         const vi = k * 10;
@@ -209,7 +209,6 @@ export class Renderer {
     const near = 4;
     let i = 0;
     const n = rows.length;
-    const vv = this.vv;
     while (i < n) {
       const face = rows[i][0], ent = rows[i][11];
       const info = this.faceInfo.get(face);
@@ -218,6 +217,7 @@ export class Renderer {
       if (!info || info.look.nodraw) continue;
       const m = i - j;
       this.polyRoom(m);
+      const vv = this.vv;
       let behind = false;
       for (let k = 0; k < m; k++) {
         const r = rows[j + k], o = k * 9;

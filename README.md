@@ -1,6 +1,7 @@
 # Firebird Quake III Arena
 
-![The Arena Gate rendered from Firebird query results](docs/screenshot-q3dm1-3.png) ![the courtyard of q3dm1](docs/screenshot-q3dm1-0.png)
+![The Arena Gate rendered from Firebird query results](docs/screenshot-q3dm1-3.png) ![the Temple of Retribution](docs/screenshot-q3dm7-3.png)
+![The Longest Yard](docs/screenshot-q3dm17-3.png) ![The Proving Grounds](docs/screenshot-q3tourney2-3.png)
 
 Quake III Arena, simulated and rendered inside the [Firebird](https://firebirdsql.org) SQL database,
 running entirely in your browser on Firebird 6 compiled to WebAssembly. The third of the series, after
@@ -167,6 +168,7 @@ change; bind as text; count the calls before timing the bodies). New here:
   flat floor it flickered tic by tic (no collision while sliding horizontally). Quake III's
   `PM_GroundTrace`, a quarter unit down each tic, costs 0.6 ms and makes friction and acceleration
   behave; the jump pad's launch is kept by not clamping an upward velocity when the box starts in solid.
+- **A scratch buffer that grows mid-frame is a buffer the loop no longer holds.** The painter's vertex scratch grew when the first big patch (81 vertices) came along, and the loop kept writing into the array it had taken a reference to before; every first frame came out black. Take the reference after the growth, each time.
 - **A bot's think is nine milliseconds** — two traces to step, a trace to see, a trace to aim — so the
   bots think at 10 Hz on staggered clocks and look for a new enemy once a second. A tic with three bots
   costs about 7 ms in Node; the frame's query 5 to 7 ms.
