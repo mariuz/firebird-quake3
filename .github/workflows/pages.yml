@@ -48,6 +48,10 @@ jobs:
       - name: SQL smoke test (q3dm17, the jump pads)
         run: node scripts/sql-smoke.mjs q3dm17
 
+      # The player's movement side by side with Quake III's bg_pmove.c at 8 ms
+      - name: The movement
+        run: npm run test:pmove
+
       # The first-person view: the kicks, the dips, the lean and the bob (no engine needed)
       - name: The view
         run: npm run test:view

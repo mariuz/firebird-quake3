@@ -521,6 +521,8 @@ DECLARE enviro DOUBLE PRECISION; DECLARE haste DOUBLE PRECISION; DECLARE regen D
 DECLARE grav DOUBLE PRECISION; DECLARE tt DOUBLE PRECISION; DECLARE legs INTEGER; DECLARE hdecay DOUBLE PRECISION; DECLARE rt DOUBLE PRECISION; DECLARE stept DOUBLE PRECISION;
 DECLARE mover SMALLINT; DECLARE pm VARCHAR(16); DECLARE match_done SMALLINT; DECLARE ducked SMALLINT; DECLARE maxz DOUBLE PRECISION; DECLARE wend DOUBLE PRECISION;
 DECLARE spec SMALLINT; DECLARE sfire SMALLINT; DECLARE fid INTEGER;
+DECLARE kb DOUBLE PRECISION; DECLARE upk DOUBLE PRECISION; DECLARE yaw0 DOUBLE PRECISION; DECLARE yk DOUBLE PRECISION; DECLARE ds DOUBLE PRECISION;
+DECLARE sxv DOUBLE PRECISION; DECLARE syv DOUBLE PRECISION; DECLARE szv DOUBLE PRECISION; DECLARE vz0 DOUBLE PRECISION; DECLARE wl2 DOUBLE PRECISION; DECLARE k INTEGER;
 BEGIN
   SELECT p.ent_id, p.jump_released, p.air_finished, p.dead_time, p.enviro_finished, p.haste_finished, p.regen_finished, p.next_drown_time, p.drown_dmg, p.health_decay, p.regen_time, p.step_time, p.ducked,
          p.spectator, p.spec_fire, p.follow_id
@@ -656,8 +658,14 @@ BEGIN
   flags = IIF(onground = 1, BIN_OR(flags, 512), BIN_AND(flags, BIN_NOT(512)));
   maxspd = IIF(run = 1, 320, 160);
   IF (haste > t) THEN maxspd = maxspd * 1.3e0;
-  -- PM_WalkMove: a crouching player walks at a quarter of the speed (pm_duckScale); in the air or the water, no change
-  IF (ducked = 1 AND onground = 1 AND wl < 2) THEN maxspd = maxspd * 0.25e0;
+  SELECT p.knockback_until FROM player p WHERE p.id = 1 INTO kb;
+  -- PM_CmdScale: the wish speed of the keys, the jump (or crouch) key among them: holding it in the air
+  -- takes some air control away; a jump held on the ground does not count (PMF_JUMP_HELD clears it)
+  upk = IIF(onground = 1 AND jump = 1 AND jr = 0, 0, ABS(jump));
+  wspd = IIF(ABS(fwd) + ABS(side) + upk = 0, 0,
+             maxspd * MAXVALUE(ABS(fwd), ABS(side), upk) * SQRT(fwd * fwd + side * side) / SQRT(fwd * fwd + side * side + upk * upk));
+  -- PM_WalkMove: a crouching player walks at a quarter of the speed at most (pm_duckScale)
+  IF (ducked = 1 AND onground = 1 AND wl < 2) THEN wspd = MINVALUE(wspd, maxspd * 0.25e0);
 
   -- PM_CheckJump
   IF (jump = 1) THEN
@@ -680,85 +688,91 @@ BEGIN
   END
   ELSE UPDATE player p SET p.jump_released = 1 WHERE p.id = 1;
 
-  -- PM_Friction: on the ground (not while a jump pad or teleporter has us) and in water
-  IF ((onground = 1 AND tt < t) OR wl >= 2) THEN
-  BEGIN
-    spd = IIF(wl >= 2, vlen(vx, vy, vz), vlen(vx, vy, 0));
-    IF (spd > 1) THEN
-    BEGIN
-      drop_ = 0;
-      IF (onground = 1 AND wl < 2) THEN
-      BEGIN
-        control = IIF(spd < 100, 100, spd);
-        drop_ = drop_ + control * 6 * dt;
-      END
-      IF (wl >= 2) THEN drop_ = drop_ + spd * 1 * wl * dt;
-      ns = MAXVALUE(0, spd - drop_) / spd;
-      vx = vx * ns; vy = vy * ns;
-      IF (wl >= 2) THEN vz = vz * ns;
-    END
-  END
-
-  -- the wish direction
-  fx_ = COS(yaw * 0.0174532925e0); fy = SIN(yaw * 0.0174532925e0);
-  rx = fy; ry = -fx_;
   IF (wl >= 2) THEN
   BEGIN
-    -- PM_WaterMove: the forward vector follows the pitch; sink slowly when idle; half speed
+    -- PM_WaterMove: water friction, the forward vector follows the pitch, sink slowly when idle, half speed
+    spd = vlen(vx, vy, vz);
+    IF (spd > 1) THEN
+    BEGIN
+      ns = MAXVALUE(0, spd - spd * wl * dt) / spd;
+      vx = vx * ns; vy = vy * ns; vz = vz * ns;
+    END
+    fx_ = COS(yaw * 0.0174532925e0); fy = SIN(yaw * 0.0174532925e0);
+    rx = fy; ry = -fx_;
     fz = -SIN(pitch * 0.0174532925e0);
     fx_ = fx_ * COS(pitch * 0.0174532925e0); fy = fy * COS(pitch * 0.0174532925e0);
     wx = fx_ * fwd * maxspd + rx * side * maxspd; wy = fy * fwd * maxspd + ry * side * maxspd; wz = fz * fwd * maxspd;
     IF (fwd = 0 AND side = 0 AND jump = 0) THEN wz = wz - 60;
     ELSE IF (jump = 1) THEN wz = wz + 200;
     ELSE IF (jump = -1) THEN wz = wz - 200;
-    wspd = vlen(wx, wy, wz);
-    IF (wspd > maxspd) THEN BEGIN wx = wx * maxspd / wspd; wy = wy * maxspd / wspd; wz = wz * maxspd / wspd; wspd = maxspd; END
-    wspd = wspd * 0.5e0;
-    IF (wspd > 0) THEN
+    wl2 = vlen(wx, wy, wz);
+    IF (wl2 > maxspd) THEN BEGIN wx = wx * maxspd / wl2; wy = wy * maxspd / wl2; wz = wz * maxspd / wl2; wl2 = maxspd; END
+    IF (wl2 > 0) THEN
     BEGIN
-      cur = (vx * wx + vy * wy + vz * wz) / vlen(wx, wy, wz);
-      add_ = wspd - cur;
+      add_ = wl2 * 0.5e0 - (vx * wx + vy * wy + vz * wz) / wl2;
       IF (add_ > 0) THEN
       BEGIN
-        acc = MINVALUE(add_, 4 * wspd * dt);
-        vx = vx + acc * wx / vlen(wx, wy, wz); vy = vy + acc * wy / vlen(wx, wy, wz); vz = vz + acc * wz / vlen(wx, wy, wz);
+        acc = MINVALUE(add_, 4 * wl2 * 0.5e0 * dt);
+        vx = vx + acc * wx / wl2; vy = vy + acc * wy / wl2; vz = vz + acc * wz / wl2;
       END
     END
+    UPDATE ents e SET e.vx = :vx, e.vy = :vy, e.vz = :vz, e.flags = BIN_AND(:flags, BIN_NOT(512)) WHERE e.id = :pe;
+    EXECUTE PROCEDURE fly_move(pe, dt) RETURNING_VALUES tst, tid;
   END
   ELSE
   BEGIN
-    wx = fx_ * fwd * maxspd + rx * side * maxspd; wy = fy * fwd * maxspd + ry * side * maxspd;
-    wspd = vlen(wx, wy, 0);
-    IF (wspd > maxspd) THEN BEGIN wx = wx * maxspd / wspd; wy = wy * maxspd / wspd; wspd = maxspd; END
-    IF (wspd > 0 AND tt < t) THEN
+    -- the substeps: Quake III's client runs Pmove 125 times a second (pmove_fixed, 8 ms), so friction,
+    -- acceleration and gravity run six times a tic here, the yaw turning through it as the mouse did; the
+    -- collision move then runs once, with the average velocity of the six, and the velocity is the sixth's
+    -- with whatever the walls took off the average taken off it too
+    yaw0 = yaw - yaw_d;
+    ds = dt / 6;
+    sxv = 0; syv = 0; szv = 0;
+    k = 1;
+    WHILE (k <= 6) DO
     BEGIN
-      -- PM_Accelerate: 10 on the ground, 1 in the air (air control by the clipped wish direction)
-      cur = (vx * wx + vy * wy) / wspd;
-      add_ = wspd - cur;
-      IF (add_ > 0) THEN
+      -- PM_Friction: walking, unless a jump pad, a teleporter or a knock has us
+      IF (onground = 1 AND tt < t AND kb < t) THEN
       BEGIN
-        acc = MINVALUE(add_, IIF(onground = 1, 10, 1) * wspd * dt);
-        vx = vx + acc * wx / wspd; vy = vy + acc * wy / wspd;
+        spd = vlen(vx, vy, 0);
+        IF (spd < 1) THEN BEGIN vx = 0; vy = 0; END
+        ELSE
+        BEGIN
+          ns = MAXVALUE(0, spd - MAXVALUE(spd, 100) * 6 * ds) / spd;
+          vx = vx * ns; vy = vy * ns;
+        END
       END
-    END
-    IF (onground = 1 AND vz < 0 AND BIN_AND(flags, 512) <> 0) THEN
-    BEGIN
+      -- PM_Accelerate toward the wish direction of this moment: 10 walking, 1 in the air or knocked
+      IF (wspd > 0 AND tt < t) THEN
+      BEGIN
+        yk = (yaw0 + yaw_d * k / 6) * 0.0174532925e0;
+        wx = COS(yk) * fwd + SIN(yk) * side; wy = SIN(yk) * fwd - COS(yk) * side;
+        wl2 = vlen(wx, wy, 0);
+        IF (wl2 > 0) THEN
+        BEGIN
+          wx = wx / wl2; wy = wy / wl2;
+          add_ = wspd - (vx * wx + vy * wy);
+          IF (add_ > 0) THEN
+          BEGIN
+            acc = MINVALUE(add_, IIF(onground = 1 AND kb < t, 10, 1) * wspd * ds);
+            vx = vx + acc * wx; vy = vy + acc * wy;
+          END
+        END
+      END
       -- PM_WalkMove: slide along the ground plane rather than into it
-      EXECUTE PROCEDURE clip_velocity(vx, vy, vz, gnx, gny, gnz, 1.001e0) RETURNING_VALUES vx, vy, vz, cb;
+      IF (onground = 1 AND vz < 0 AND BIN_AND(flags, 512) <> 0) THEN
+        EXECUTE PROCEDURE clip_velocity(vx, vy, vz, gnx, gny, gnz, 1.001e0) RETURNING_VALUES vx, vy, vz, cb;
+      -- gravity, over the substep by its average (PM_SlideMove's endVelocity)
+      vz0 = vz;
+      IF (onground = 0) THEN vz = vz - grav * ds;
+      ELSE IF (mover = 0) THEN vz = MINVALUE(vz, 0);
+      sxv = sxv + vx; syv = syv + vy; szv = szv + (vz0 + vz) / 2;
+      k = k + 1;
     END
+    UPDATE ents e SET e.vx = :sxv / 6, e.vy = :syv / 6, e.vz = :szv / 6, e.flags = :flags WHERE e.id = :pe;
+    EXECUTE PROCEDURE walk_move(pe, dt);
+    UPDATE ents e SET e.vx = :vx + (e.vx - :sxv / 6), e.vy = :vy + (e.vy - :syv / 6), e.vz = :vz + (e.vz - :szv / 6) WHERE e.id = :pe;
   END
-  -- gravity
-  IF (onground = 0 AND wl < 2) THEN vz = vz - grav * dt;
-  ELSE IF (onground = 1 AND wl < 2 AND mover = 0) THEN vz = MINVALUE(vz, 0);
-  UPDATE ents e SET e.vx = :vx, e.vy = :vy, e.vz = :vz, e.flags = :flags WHERE e.id = :pe;
-
-  -- move
-  IF (wl >= 2) THEN
-  BEGIN
-    UPDATE ents e SET e.flags = BIN_AND(e.flags, BIN_NOT(512)) WHERE e.id = :pe;
-    EXECUTE PROCEDURE fly_move(pe, dt) RETURNING_VALUES tst, tid;
-  END
-  ELSE EXECUTE PROCEDURE walk_move(pe, dt);
   IF (NOT EXISTS (SELECT 1 FROM ents e WHERE e.id = :pe)) THEN EXIT;
   EXECUTE PROCEDURE link_ent(pe);
   -- smooth the view over steps

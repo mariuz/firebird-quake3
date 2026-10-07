@@ -925,9 +925,11 @@ DECLARE grav DOUBLE PRECISION; DECLARE wl SMALLINT; DECLARE wt INTEGER; DECLARE 
 BEGIN
   SELECT e.movetype, e.flags, e.vx, e.vy, e.vz, e.gravity, e.waterlevel FROM ents e WHERE e.id = :eid INTO mt, flags, vx, vy, vz, grav, owl;
   IF (BIN_AND(flags, 512) <> 0 AND mt <> 9) THEN EXIT;       -- resting on the ground
+  d = vz;
   IF (mt IN (6, 10)) THEN vz = vz - (SELECT g.gravity FROM game g WHERE g.id = 1) * COALESCE(NULLIF(grav, 0), 1) * dt;
   UPDATE ents e SET e.vz = :vz, e.yaw = MOD(e.yaw + e.avel_yaw * :dt + 360, 360), e.pitch = MOD(e.pitch + e.avel_pitch * :dt + 360, 360) WHERE e.id = :eid;
-  EXECUTE PROCEDURE push_entity(eid, vx * dt, vy * dt, vz * dt) RETURNING_VALUES f, nx, ny, nz, als, sts, hit, sfl;
+  -- moved by the average of the tic's vertical speeds: the parabola exactly (TR_GRAVITY)
+  EXECUTE PROCEDURE push_entity(eid, vx * dt, vy * dt, (d + vz) / 2 * dt) RETURNING_VALUES f, nx, ny, nz, als, sts, hit, sfl;
   IF (NOT EXISTS (SELECT 1 FROM ents e WHERE e.id = :eid)) THEN EXIT;
   IF (als = 1 AND mt IN (6, 10)) THEN
   BEGIN

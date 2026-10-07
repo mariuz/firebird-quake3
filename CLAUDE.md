@@ -18,7 +18,8 @@ explosion sprites, beams) and nothing else. The renderers never query the databa
   Firebird's error with the statement head; "Column unknown X" inside a procedure means a local used
   in a query without its colon.
 - `npm test` (q3dm1 smoke), `npm run test:dm17` (jump pads), `npm run test:bots` (bots and the
-  waypoint hunt), `npm run test:bots:dm17` (bots on the pads), `npm run test:view` (the first-person
+  waypoint hunt), `npm run test:bots:dm17` (bots on the pads), `npm run test:pmove` (the movement against Quake III's
+  `bg_pmove.c`), `npm run test:view` (the first-person
   view, seconds, no engine). All run against the real WASM engine in
   Node; CI runs all of them before deploying. Each takes one to two minutes.
 - The pak is `public/pak/pak0.pk3`, fetched by `npm run fetch-pak` (gitignored). Four arenas:
@@ -51,6 +52,7 @@ explosion sprites, beams) and nothing else. The renderers never query the databa
 | --- | --- |
 | a table or column | `sql/schema.sql` (and `TABLES` in `src/loader.js` for the bulk-loaded ones) |
 | collision, traces, slide/step moves | `sql/physics.sql` |
+| the player's movement (substeps, gravity, `PM_CmdScale`) | `player_think` in `sql/player.sql`; `scripts/pmove-test.mjs` holds it against `bg_pmove.c` |
 | movers, triggers, targets, items, damage, projectiles, map spawning | `sql/game.sql` |
 | weapons, the player's think, respawn | `sql/player.sql` |
 | bot behaviour, skill characteristics (`bot_char`) | `sql/bots.sql` |

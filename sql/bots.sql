@@ -1123,9 +1123,11 @@ BEGIN
     IF (mt = 4) THEN
     BEGIN
       -- a bot in the air: gravity and a slide, until it lands
-      UPDATE ents e SET e.vz = e.vz - (SELECT g.gravity FROM game g WHERE g.id = 1) * :dt, e.flags = BIN_AND(e.flags, BIN_NOT(512)) WHERE e.id = :eid;
+      -- (moved by the tic's average vertical speed, then given the tic's end: gravity as PM_SlideMove integrates it)
+      UPDATE ents e SET e.vz = e.vz - (SELECT g.gravity FROM game g WHERE g.id = 1) * :dt / 2, e.flags = BIN_AND(e.flags, BIN_NOT(512)) WHERE e.id = :eid;
       EXECUTE PROCEDURE fly_move(eid, dt) RETURNING_VALUES wl, tid;
       IF (NOT EXISTS (SELECT 1 FROM ents e WHERE e.id = :eid)) THEN CONTINUE;
+      UPDATE ents e SET e.vz = e.vz - (SELECT g.gravity FROM game g WHERE g.id = 1) * :dt / 2 WHERE e.id = :eid AND BIN_AND(e.flags, 512) = 0;
       IF (wl = 3) THEN UPDATE ents e SET e.flags = BIN_OR(e.flags, 512) WHERE e.id = :eid;   -- could not move at all: it is standing in the floor
       IF (EXISTS (SELECT 1 FROM ents e WHERE e.id = :eid AND BIN_AND(e.flags, 512) <> 0)) THEN
       BEGIN

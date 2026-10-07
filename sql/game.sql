@@ -1012,6 +1012,8 @@ BEGIN
     IF (dl > 0) THEN
     BEGIN
       kv = 1000e0 * knockback / MAXVALUE(50, mass);
+      -- for a while the knock carries: no ground friction (G_Damage's pm_time, PMF_TIME_KNOCKBACK)
+      IF (cls = 'player') THEN UPDATE player p SET p.knockback_until = MAXVALUE(p.knockback_until, now_() + MINVALUE(0.2e0, MAXVALUE(0.05e0, :knockback * 0.002e0))) WHERE p.id = 1;
       UPDATE ents e SET e.vx = e.vx + :dx / :dl * :kv, e.vy = e.vy + :dy / :dl * :kv, e.vz = e.vz + :dz / :dl * :kv,
              e.flags = IIF(:dz / :dl * :kv > 50, BIN_AND(e.flags, BIN_NOT(512)), e.flags) WHERE e.id = :targ;
     END

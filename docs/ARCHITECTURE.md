@@ -197,6 +197,21 @@ The player's numbers are Quake III's: run 320 units a second (walk 160 with Shif
 acceleration 10, air acceleration 1, friction 6, jump 270, gravity 800, step 18, box −15..15 by
 −24..32, view height 26; crouched, the box −24..16, the view 12, the walk ×0.25.
 
+The movement matches `bg_pmove.c` as its client runs it, at 8 ms a frame (`pmove_fixed`), although the
+tic is 50 ms. `player_think` runs friction, acceleration and gravity in six substeps a tic, the yaw
+turning through the tic as the mouse did. It then runs the collision move once, with the average
+velocity of the six (no more traces), and keeps the sixth's velocity with whatever the walls took off
+the average taken off it too. Gravity is integrated as `PM_SlideMove` does it, the step moved by its
+average speed (the trapezoid: Euler at 50 ms lost 6.5 units of every jump's 45.5 and made jump pads fall
+short of what `AimAtTarget` aimed at; the bots in the air and `toss_move` do the same now). The wish
+speed is `PM_CmdScale`'s, with the jump or crouch key among the keys (holding jump in the air takes air
+control away; a jump held on the ground does not count), the crouch's quarter speed a cap after it, and
+a knock (`t_damage` for the player) leaves 50 to 200 ms without ground friction and with air
+acceleration (`PMF_TIME_KNOCKBACK`), which is what carries a rocket jump. `scripts/pmove-test.mjs`
+checks all of it against a JavaScript reference of `bg_pmove`'s open-ground part at 8 ms, on q3dm17's
+open floor: start-up, stopping, standing, running, strafe and held-jump arcs, crouch-walking, a
+knock. Every quantity agrees within 0.2.
+
 ---
 
 ## 5. The game tic
@@ -622,6 +637,7 @@ passes in Node is what runs in the browser.
 | `npm run test:bots` | `bots-test.mjs`: four bots join, see, fire, die, respawn, pick up a weapon, a bot hunts the player from the farthest spawn over the graph, a minute of play scores frags and strands nobody |
 | `npm run test:bots:dm17` | the same on q3dm17, plus: the bots take the jump pads |
 | `npm run test:view` | `view-test.mjs`: the first-person view's kicks, dips, lean and bob from synthetic tic rows, no engine |
+| `npm run test:pmove` | `pmove-test.mjs`: the player's movement beside a reference of Quake III's `bg_pmove.c` at 8 ms, on q3dm17's open floor |
 | `npm run bench`, `bench:tic`, `bench:raster` | tic and frame timings, the software painter's time per frame |
 | `npm run screenshots` | headless PNGs of q3dm1 (`--at=x,y,z,yaw`, `--bright`, `--look=bot`, `--size`, `--bots`, `--sql`) into `docs/` |
 | `npm run inspect` | dumps what is in the pak |

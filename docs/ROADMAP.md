@@ -19,12 +19,12 @@ chat, the rewards and the countdown, and spectating are all in (see §8). What i
 
 | Gap | Notes |
 | --- | --- |
-| Strafe-jumping accuracy | `PM_AirMove` and `PM_Accelerate` are here with Quake III's numbers; the air control feel depends on the 20 Hz tic and on `wishspeed` clamping, worth a side-by-side check against `bg_pmove.c` |
 | Ladders | Quake III has none; nothing to do |
 | Swimming | `PM_WaterMove` is here (swim, drown, surface jump); underwater sound filtering and the bubble trail are not |
-| Fall damage | here (`player_think` on landing); the `EV_FALL_*` thresholds and the pain sound are close but not checked against `bg_pmove.c` |
+| Fall damage | here (`player_think` on landing, `EV_FALL_*`'s three sizes); the damage and the pain sound are close but not checked against `bg_pmove.c`'s `PM_CrashLand` |
+| Slopes | `PM_WalkMove` projects the wish direction onto the ground plane and keeps the speed going up and down a ramp; here the acceleration is horizontal and the step move climbs |
 | Proximity to movers | a mover pushes and crushes; standing on a rotating `func_rotating` does not rotate the player with it |
-| Knockback feel | `t_damage` applies Quake III's knockback; the self-knockback of a rocket jump works, the bots never use it |
+| Knockback feel | `t_damage` applies Quake III's knockback and its 50 to 200 ms without friction (`PMF_TIME_KNOCKBACK`); rocket jumps work for the player, the bots never use them |
 
 ## 3. The game: `game/` and `cgame/`
 
@@ -107,7 +107,9 @@ fuzzy logic from the botfiles. What that leaves out:
 ## 8. Already there (for the record)
 
 Collision against brushes and patch facets, brush models with their own leaf, rotated models;
-`PM_GroundTrace`, slide and step moves, water, crouching (`PM_CheckDuck`, the crouch animations, the
+`PM_GroundTrace`, slide and step moves, water, the open-ground movement matching `bg_pmove.c` at 8 ms
+(friction, acceleration and gravity in six substeps a tic, the trapezoid gravity, `PM_CmdScale` with
+the jump key, the knock's time without friction: `npm run test:pmove` checks it side by side), crouching (`PM_CheckDuck`, the crouch animations, the
 smoothed eye; the bots never crouch); the first-person view's kick away from a hit, landing dips by the
 fall, the run's lean and the step bob, the gun's sway; the zoom to 22.5 degrees with the slower mouse; the view's hand playing the switch and the attack from
 the torso's frames (`CG_MapTorsoToWeaponFrame`), the bots' new gun coming up; the bots' chat from their own chat files (botlib's random strings, variables

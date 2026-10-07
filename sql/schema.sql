@@ -370,6 +370,7 @@ CREATE TABLE player (
   spectator       SMALLINT DEFAULT 0 NOT NULL,            -- TEAM_SPECTATOR: out of the match, flying or following
   follow_id       INTEGER,                                -- SPECTATOR_FOLLOW: the bot whose eyes we see through
   spec_fire       SMALLINT DEFAULT 0 NOT NULL,            -- the attack button at the last tic (it cycles on the press)
+  knockback_until DOUBLE PRECISION DEFAULT 0 NOT NULL,    -- PMF_TIME_KNOCKBACK: no ground friction, air acceleration, until then
   ducked          SMALLINT DEFAULT 0 NOT NULL,            -- PMF_DUCKED: the box 16 high instead of 32, the eye at 12 instead of 26
   fly_sound_time  DOUBLE PRECISION DEFAULT 0 NOT NULL,
   step_time       DOUBLE PRECISION DEFAULT 0 NOT NULL,
