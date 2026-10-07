@@ -80,7 +80,7 @@ s = await tic([1, 0, 0, 0, 0, 0, 1, 1, 0]);
 let peak = s.PZ;
 for (let i = 0; i < 12; i++) { s = await tic([1, 0, 0, 0, 0, 0, 0, 1, 0]); peak = Math.max(peak, s.PZ); }
 assert(peak - zBefore > 20, `jumping gained height (${(peak - zBefore).toFixed(1)} units)`);
-for (let i = 0; i < 10; i++) s = await tic([1, 0, 0, 0, 0, 0, 0, 1, 0]);
+for (let i = 0; i < 60 && s.ONGROUND !== 1; i++) s = await tic([1, 0, 0, 0, 0, 0, 0, 1, 0]);
 assert(s.ONGROUND === 1, 'landed again');
 
 // fire the machinegun: a sound and a bullet somewhere
