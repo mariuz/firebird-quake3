@@ -156,9 +156,37 @@ s = await tic([1, 0, 0, 0, 0, 0, 0, 1, 5]);
 for (let i = 0; i < 12; i++) s = await tic([1, 0, 0, 0, 0, 0, 0, 1, 0]);
 assert(s.WEAPON === 16, `switched to the rocket launcher (weapon ${s.WEAPON})`);
 const hpBefore = s.HEALTH;
+// without god mode for this one (it would stop the splash), the bots holding their fire
+await db.exec("UPDATE ents SET nextthink = 1e9 WHERE classname = 'bot'");
+await db.exec("UPDATE ents SET flags = BIN_AND(flags, BIN_NOT(16)) WHERE classname = 'player'");
 s = await tic([1, 0, 0, 0, 85, 1, 0, 1, 0]);
 for (let i = 0; i < 20; i++) s = await tic([1, 0, 0, 0, 0, 0, 0, 1, 0]);
-assert(s.HEALTH < hpBefore, `rocket at our feet hurt us (health ${hpBefore} → ${s.HEALTH})`);
+await db.exec("UPDATE ents SET flags = BIN_OR(flags, 16) WHERE classname = 'player'");
+await db.exec("UPDATE ents SET nextthink = 0 WHERE classname = 'bot'");
+assert(hpBefore - s.HEALTH > 10, `rocket at our feet hurt us (health ${hpBefore} → ${s.HEALTH})`);
+assert(s.DMG_WORLD === 0, `and its splash came from where it blew up (${s.DMG_X.toFixed(0)}, ${s.DMG_Y.toFixed(0)}, ${s.DMG_Z.toFixed(0)})`);
+// a bot's hit (8: through god mode) is recorded with where it came from, for the view's kick
+{
+  const pe = (await db.query('SELECT ent_id e FROM player')).rows[0].E;
+  const b = (await db.query("SELECT FIRST 1 id, x, y, z + (minz + maxz) / 2 cz FROM ents WHERE classname = 'bot' ORDER BY id")).rows[0];
+  await db.exec(`EXECUTE PROCEDURE t_damage(${pe}, ${b.ID}, ${b.ID}, 10, 0, 8, 2)`);
+  const d = (await db.query('SELECT dmg_x, dmg_y, dmg_z, dmg_world FROM player')).rows[0];
+  assert(d.DMG_WORLD === 0 && Math.hypot(d.DMG_X - b.X, d.DMG_Y - b.Y, d.DMG_Z - b.CZ) < 0.01, `a bot's hit comes from the bot (${d.DMG_X.toFixed(0)}, ${d.DMG_Y.toFixed(0)}, ${d.DMG_Z.toFixed(0)})`);
+}
+// a far fall (PM_CrashLand): the view's dip is the far one, and the damage comes from no direction
+{
+  const pe = (await db.query('SELECT ent_id e FROM player')).rows[0].E;
+  for (let i = 0; i < 20 && s.ONGROUND !== 1; i++) s = await tic([1, 0, 0, 0, 0, 0, 0, 1, 0]);
+  // (for the one tic without god mode, the bots hold their fire and nothing is in flight)
+  await db.exec("UPDATE ents SET nextthink = 1e9 WHERE classname = 'bot'");
+  await db.exec("DELETE FROM ents WHERE classname IN ('rocket', 'grenade', 'plasma', 'bfg')");
+  await db.exec(`UPDATE ents SET vz = -900, flags = BIN_AND(flags, BIN_NOT(512 + 16)) WHERE id = ${pe}`);
+  s = await tic([1, 0, 0, 0, 0, 0, 0, 1, 0]);
+  await db.exec(`UPDATE ents SET flags = BIN_OR(flags, 16) WHERE id = ${pe}`);
+  await db.exec("UPDATE ents SET nextthink = 0 WHERE classname = 'bot'");
+  assert(s.LAND_CHANGE === -24 && s.TIME_ - s.LAND_TIME < 0.11, `landing at 900 units a second: the far dip (${s.LAND_CHANGE})`);
+  assert(s.DMG_WORLD === 1 && s.DMG_TAKE > 0, `the fall's damage comes from no direction (${s.DMG_TAKE} taken)`);
+}
 const boom = (await db.query("SELECT COUNT(*) n FROM fx_events WHERE kind = 2")).rows[0].N;
 assert(boom > 0, 'the explosion was reported to the browser');
 

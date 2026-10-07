@@ -18,7 +18,8 @@ explosion sprites, beams) and nothing else. The renderers never query the databa
   Firebird's error with the statement head; "Column unknown X" inside a procedure means a local used
   in a query without its colon.
 - `npm test` (q3dm1 smoke), `npm run test:dm17` (jump pads), `npm run test:bots` (bots and the
-  waypoint hunt), `npm run test:bots:dm17` (bots on the pads). All run against the real WASM engine in
+  waypoint hunt), `npm run test:bots:dm17` (bots on the pads), `npm run test:view` (the first-person
+  view, seconds, no engine). All run against the real WASM engine in
   Node; CI runs all of them before deploying. Each takes one to two minutes.
 - The pak is `public/pak/pak0.pk3`, fetched by `npm run fetch-pak` (gitignored). Four arenas:
   q3dm1 (the default, indoor, stairs), q3dm7 (big, many levels), q3dm17 (platforms over the void,
@@ -57,6 +58,7 @@ explosion sprites, beams) and nothing else. The renderers never query the databa
 | the tic entry point, think/physics dispatch, scoring, `init_map` | the end of `sql/bots.sql` |
 | what a frame returns | `sql/render.sql` (`frame_all`), read in `src/scene.js` `FrameState.parse` |
 | interpolation between tics, local prediction | `src/main.js`: `viewRow`, `interpolateFrame`, `poseOf`; the eye clamp in `view_setup` |
+| view kicks, landing dips, bob, gun sway | `src/scene.js` `firstPersonView` (tested by `npm run test:view`); the hit's source in `t_damage`, the fall's size in `impact` |
 | what gets drawn and how | `src/scene.js` (what), `src/renderer.js` and `src/renderer-gl.js` (how) |
 | HUD, icons, scoreboard | `src/hud.js` |
 | sounds, music | `src/audio.js`; events are rows in `sound_events` written by `snd`/`snd_at` |
@@ -96,5 +98,8 @@ explosion sprites, beams) and nothing else. The renderers never query the databa
 - The software painter's scratch buffers can grow mid-frame; take the reference after the growth.
 - The WebGL and 2D contexts need separate canvases (`#screen`, `#glscreen`, `#overlay`); the input
   listens on the wrapper.
+- The smoke test plays in god mode, and god mode returns from `t_damage` before anything is
+  recorded: a check that needs real damage drops the flag for that tic (and holds the bots' fire),
+  or calls `t_damage` with dflags 8, which goes through it.
 - In CI the smoke test waits for the player to land (up to 60 tics) instead of counting tics; keep
   tests tolerant of timing, the engine is 10 to 20 percent slower there.

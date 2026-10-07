@@ -342,7 +342,9 @@ CREATE TABLE player (
   dmg_take        INTEGER DEFAULT 0 NOT NULL,
   dmg_save        INTEGER DEFAULT 0 NOT NULL,
   dmg_time        DOUBLE PRECISION DEFAULT 0 NOT NULL,
-  dmg_x DOUBLE PRECISION DEFAULT 0 NOT NULL, dmg_y DOUBLE PRECISION DEFAULT 0 NOT NULL,   -- where the last hit came from (for the HUD)
+  dmg_x DOUBLE PRECISION DEFAULT 0 NOT NULL, dmg_y DOUBLE PRECISION DEFAULT 0 NOT NULL,   -- where the last hit came from (the view kicks away from it)
+  dmg_z DOUBLE PRECISION DEFAULT 0 NOT NULL,
+  dmg_world       SMALLINT DEFAULT 1 NOT NULL,            -- 1: from no direction (a fall, lava, slime, drowning, a crusher, a hurt trigger)
   bonus_time      DOUBLE PRECISION DEFAULT 0 NOT NULL,
   quad_finished   DOUBLE PRECISION DEFAULT 0 NOT NULL,
   haste_finished  DOUBLE PRECISION DEFAULT 0 NOT NULL,
@@ -370,6 +372,7 @@ CREATE TABLE player (
   oldz            DOUBLE PRECISION DEFAULT 0 NOT NULL,
   stepz           DOUBLE PRECISION DEFAULT 0 NOT NULL,
   land_time       DOUBLE PRECISION DEFAULT 0 NOT NULL,
+  land_change     DOUBLE PRECISION DEFAULT -8 NOT NULL,   -- how far the view dips on that landing: -8, -16, -24 (EV_FALL_SHORT, MEDIUM, FAR)
   weapon_sound    SMALLINT DEFAULT 0 NOT NULL,
   regen_time      DOUBLE PRECISION DEFAULT 0 NOT NULL,
   health_decay    DOUBLE PRECISION DEFAULT 0 NOT NULL,    -- health above the maximum counts down

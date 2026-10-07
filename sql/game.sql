@@ -961,6 +961,7 @@ DECLARE td SMALLINT; DECLARE cls VARCHAR(40); DECLARE flags INTEGER; DECLARE hp 
 DECLARE save INTEGER; DECLARE take INTEGER; DECLARE av INTEGER; DECLARE inv DOUBLE PRECISION; DECLARE dead SMALLINT;
 DECLARE dx DOUBLE PRECISION; DECLARE dy DOUBLE PRECISION; DECLARE dz DOUBLE PRECISION; DECLARE dl DOUBLE PRECISION; DECLARE kv DOUBLE PRECISION;
 DECLARE pe INTEGER; DECLARE qf DOUBLE PRECISION; DECLARE pf DOUBLE PRECISION; DECLARE acls VARCHAR(40);
+DECLARE sx DOUBLE PRECISION; DECLARE sy DOUBLE PRECISION; DECLARE sz DOUBLE PRECISION; DECLARE sworld SMALLINT;
 BEGIN
   SELECT e.takedamage, e.classname, e.flags, e.health, e.movetype, e.mass, e.deadflag FROM ents e WHERE e.id = :targ INTO td, cls, flags, hp, mt, mass, dead;
   IF (td IS NULL OR td = 0) THEN EXIT;
@@ -1022,8 +1023,18 @@ BEGIN
   take = damage - save;
   IF (cls = 'player') THEN
   BEGIN
-    SELECT e.x, e.y FROM ents e WHERE e.id = COALESCE(NULLIF(:attacker, 0), :inflictor) INTO dx, dy;
-    UPDATE player p SET p.dmg_take = p.dmg_take + :take, p.dmg_save = p.dmg_save + :save, p.dmg_time = now_(), p.dmg_x = COALESCE(:dx, 0), p.dmg_y = COALESCE(:dy, 0) WHERE p.id = 1;
+    -- where it came from (G_Damage's damage_from): the inflictor (a rocket where it blew up, the shooter of
+    -- a bullet), else the attacker; the world's damage (falling, lava, slime, drowning, crushing, a hurt
+    -- trigger) comes from no direction, and the view kicks straight up (damage_fromWorld)
+    sworld = 1; sx = NULL;
+    IF (mod_ NOT IN (11, 12, 13, 14, 15, 21)) THEN
+    BEGIN
+      SELECT e.x, e.y, e.z + (e.minz + e.maxz) / 2 FROM ents e WHERE e.id = :inflictor AND e.id <> :targ INTO sx, sy, sz;
+      IF (sx IS NULL) THEN SELECT e.x, e.y, e.z + (e.minz + e.maxz) / 2 FROM ents e WHERE e.id = :attacker AND e.id <> :targ INTO sx, sy, sz;
+      IF (sx IS NOT NULL) THEN sworld = 0;
+    END
+    UPDATE player p SET p.dmg_take = p.dmg_take + :take, p.dmg_save = p.dmg_save + :save, p.dmg_time = now_(),
+           p.dmg_x = COALESCE(:sx, 0), p.dmg_y = COALESCE(:sy, 0), p.dmg_z = COALESCE(:sz, 0), p.dmg_world = :sworld WHERE p.id = 1;
   END
   IF (take <= 0) THEN EXIT;
   -- the shooter hears a hit
@@ -1224,7 +1235,9 @@ BEGIN
     END
     ELSE EXECUTE PROCEDURE snd(e1, 2, 'sound/player/land1.wav', 1, 1);
     EXECUTE PROCEDURE set_anims(e1, 19, NULL);   -- LEGS_LAND
-    IF (e1 = player_ent()) THEN UPDATE player p SET p.land_time = now_() WHERE p.id = 1;
+    -- the view's dip (CG_EntityEvent: EV_FALL_FAR -24, EV_FALL_MEDIUM -16, EV_FALL_SHORT -8)
+    IF (e1 = player_ent()) THEN
+      UPDATE player p SET p.land_time = now_(), p.land_change = IIF(:vz * :vz * 0.0001e0 > 60, -24, IIF(:vz * :vz * 0.0001e0 > 40, -16, -8)) WHERE p.id = 1;
   END
   ELSE IF (c1 = 'gib' AND e2 = 0 AND vlen(vx, vy, vz) > 100) THEN
     EXECUTE PROCEDURE snd_at(x, y, z, 'sound/player/gibimp' || CAST(1 + FLOOR(RAND() * 3) AS INTEGER) || '.wav', 0.6e0, 1);

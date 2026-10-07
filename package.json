@@ -18,7 +18,8 @@
     "check": "node scripts/sql-check.mjs",
     "inspect": "node scripts/inspect.mjs",
     "bench:raster": "node scripts/raster-bench.mjs q3dm1 --at=212,2360,63,270",
-    "test:dm17": "node scripts/sql-smoke.mjs q3dm17"
+    "test:dm17": "node scripts/sql-smoke.mjs q3dm17",
+    "test:view": "node scripts/view-test.mjs"
   },
   "license": "MIT",
   "dependencies": {

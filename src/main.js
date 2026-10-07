@@ -19,7 +19,7 @@ import { createSchema, loadResources, loadMap, buildWaypoints, setView } from '.
 import { Renderer } from './renderer.js';
 import { GLRenderer } from './renderer-gl.js';
 import { Hud } from './hud.js';
-import { FrameState, drawScene } from './scene.js';
+import { FrameState, drawScene, firstPersonView } from './scene.js';
 import { Q3Audio } from './audio.js';
 
 const $ = (id) => document.getElementById(id);
@@ -307,13 +307,15 @@ async function frame() {
     t = performance.now();
     // one round trip: every row is tagged with what it is (see FRAME_ALL in sql/render.sql); the view is this frame's
     const wantSpeakers = ++frameNo % 10 === 0;
-    const rows = (await db.query(`SELECT * FROM frame_all(${settings.renderer === 'sql' ? 1 : 0}, ${lastSoundId}, ${lastFxId}, ${wantSpeakers ? 1 : 0}, ${view.PX}, ${view.PY}, ${view.VIEW_Z}, ${view.YAW}, ${view.PITCH})`, [], arr)).rows;
+    const fpv = firstPersonView(view, state, dt, settings.fov);   // the kicks, the dips, the bob: the view that is painted
+    const rows = (await db.query(`SELECT * FROM frame_all(${settings.renderer === 'sql' ? 1 : 0}, ${lastSoundId}, ${lastFxId}, ${wantSpeakers ? 1 : 0}, ${fpv.x}, ${fpv.y}, ${fpv.z}, ${fpv.yaw}, ${fpv.pitch})`, [], arr)).rows;
     const fr = state.parse(rows);
     fr.sqlProjected = settings.renderer === 'sql';
-    if (view.predicted && fr.eye) {
+    if (fr.eye) {
       // paint from the eye the faces were culled for (a prediction into a wall was clamped)
-      view.PZ += fr.eye[2] - view.VIEW_Z;
-      view.PX = fr.eye[0]; view.PY = fr.eye[1]; view.VIEW_Z = fr.eye[2];
+      const dz = fr.eye[2] - fpv.z;
+      fpv.x = fr.eye[0]; fpv.y = fr.eye[1]; fpv.z = fr.eye[2];
+      view.PX = fr.eye[0]; view.PY = fr.eye[1]; view.VIEW_Z += dz; view.PZ += dz;
     }
     if (ticked) { prevPose = curPose; curPose = poseOf(fr); }
     interpolateFrame(fr, alpha);
@@ -335,7 +337,7 @@ async function frame() {
     }
 
     t = performance.now();
-    const tint = drawScene(renderer, hud, res, map.bsp, view, fr, { fov: settings.fov, sqlProjected: fr.sqlProjected, state, dt, scoreboard, scores });
+    const tint = drawScene(renderer, hud, res, map.bsp, view, fr, { fov: settings.fov, sqlProjected: fr.sqlProjected, state, dt, scoreboard, scores, view: fpv });
     renderer.present(tint);
     perf.draw = performance.now() - t;
     updateStats(ticked);

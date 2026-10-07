@@ -426,12 +426,37 @@ with the item bob and rotation left to the painter.
 
 Both painters implement the same interface (`setSize`, `setResources`, `setSky`, `setBrightness`,
 `beginFrame`, `drawFaceList`, `drawMd3`, `drawPlayer`, `drawSprite`, `drawBeam`, particles, the 2D
-calls, `present(tint)`), and `src/scene.js` drives either: view bob from `move_speed` and the land
-time, the faces, the entities (items bob 4 units and rotate, as `CG_Item` does), the player models
+calls, `present(tint)`), and `src/scene.js` drives either: the first-person view, the faces, the entities (items bob 4 units and rotate, as `CG_Item` does), the player models
 hung on their tags (`tag_torso`, `tag_head`, `tag_weapon`), the sprites, the explosions and beams
 kept in `FrameState` from the effects of earlier frames, the view weapon from the `_hand.md3` with a
 minimum ambient light of 96 (`RF_MINLIGHT`) and the muzzle flash, and the screen tint from damage,
 powerups and water.
+
+**The first-person view** (`firstPersonView` in `src/scene.js`: `CG_OffsetFirstPersonView`,
+`CG_DamageFeedback`, `CG_CalculateWeaponPosition`) is what the view does on top of where the player
+is, cosmetic state kept in `FrameState.kick`:
+
+- *The kick of a hit.* `t_damage` records where a hit on the player came from in `player.dmg_x/y/z`
+  (the inflictor, a rocket where it blew up or the shooter of a bullet, else the attacker) and sets
+  `dmg_world` for damage from no direction (falling, lava, slime, drowning, crushing, hurt
+  triggers). When the tic row's `DMG_TIME` changes, the view swings by 5 to 10 degrees (more the
+  lower the health, `40 / health` of the damage): pitched up for a hit from the front, down from
+  behind, rolled toward the side it came from, straight up from the world; in over 100 ms and back
+  over 400.
+- *The dip of a landing.* `impact` sets `player.land_change` to −8, −16 or −24 by the fall
+  (`EV_FALL_SHORT`, `MEDIUM`, `FAR`); the eye drops that far in 150 ms and comes back in 300, the gun
+  a quarter as far.
+- *The lean of the run:* pitch with the forward speed (×0.002, `cg_runpitch`), roll against the
+  sideways one (×0.005, `cg_runroll`), from the tic row's `VX`, `VY`.
+- *The bob:* a phase that advances like `PM_Footsteps`' `bobCycle` (0.4 a millisecond running, 0.3
+  walking, 0.5 crouched, 128 to a step; held in the air, reset standing still) gives `bobfracsin`,
+  which tips the pitch and swings the roll a step each way (×0.002 of the speed, three times
+  crouched) and lifts the eye up to 6 units (×0.005).
+- *The gun* follows the view, kicks and all, swaying with the steps and drifting at rest.
+
+The page calls it before the frame query and passes the resulting eye and angles to `frame_all`, so
+the faces are culled for the view that is painted; the dead (rolled 40 degrees) and the intermission
+camera are left alone.
 
 **Software** (`src/renderer.js`): a 32-bit ABGR framebuffer and a float z-buffer. Faces are
 transformed, clipped against the near plane, and scan-converted into spans that interpolate 1/z, s/z
@@ -527,6 +552,7 @@ passes in Node is what runs in the browser.
 | `npm run test:dm7`, `test:dm17` | the smoke test on the other arenas (q3dm17 for the pads) |
 | `npm run test:bots` | `bots-test.mjs`: four bots join, see, fire, die, respawn, pick up a weapon, a bot hunts the player from the farthest spawn over the graph, a minute of play scores frags and strands nobody |
 | `npm run test:bots:dm17` | the same on q3dm17, plus: the bots take the jump pads |
+| `npm run test:view` | `view-test.mjs`: the first-person view's kicks, dips, lean and bob from synthetic tic rows, no engine |
 | `npm run bench`, `bench:tic`, `bench:raster` | tic and frame timings, the software painter's time per frame |
 | `npm run screenshots` | headless PNGs of q3dm1 (`--at=x,y,z,yaw`, `--bright`, `--look=bot`, `--size`, `--bots`, `--sql`) into `docs/` |
 | `npm run inspect` | dumps what is in the pak |

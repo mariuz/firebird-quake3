@@ -17,6 +17,7 @@ export class FrameState {
     this.explosions = [];     // { x, y, z, t0, frames, size, dur, blend }
     this.beams = [];          // { a, b, until, img, width, scroll }
     this.messages = [];       // [{ id, time, text }]
+    this.kick = { dmgSeen: null, at: -1e9, pitch: 0, roll: 0, bob: 0 };   // the first-person view's state
     this.extraModels = new Map();   // item model name → the other models of the item
     for (const it of ITEMS) {
       const ms = it.models.split(',');
@@ -70,18 +71,85 @@ export class FrameState {
   }
 }
 
+// ── the first-person view (CG_OffsetFirstPersonView, CG_DamageFeedback, CG_CalculateWeaponPosition) ──
+// What the view does on top of where the player is: the kick away from a hit, the dip of a landing, the
+// lean of the run, the bob of the steps; and the gun's sway with them. Cosmetic, so it lives here; the
+// tic row says when and from where. The page calls it before the frame query, so the faces are culled
+// for the view that is painted.
+const DAMAGE_DEFLECT = 0.1, DAMAGE_RETURN = 0.4, LAND_DEFLECT = 0.15, LAND_RETURN = 0.3;
+
+export function firstPersonView(last, state, dt = 0.05, fov = 90) {
+  const time = last.TIME_;
+  const view = { x: last.PX, y: last.PY, z: last.VIEW_Z, yaw: last.YAW, pitch: last.PITCH, roll: 0, fov, gun: { pitch: 0, yaw: 0, roll: 0, z: 0 } };
+  if (last.MATCH_OVER) return view;
+  if (last.DEAD) { view.roll = 40; return view; }
+  const k = state.kick;
+  const axis = anglesAxis(view.pitch, view.yaw, 0);   // forward 0..2, left 3..5, up 6..8
+
+  // a new hit: the view swings away from where it came from, harder the lower the health
+  if (last.DMG_TIME !== k.dmgSeen) {
+    k.dmgSeen = last.DMG_TIME;
+    const dmg = (last.DMG_TAKE ?? 0) + (last.DMG_SAVE ?? 0);
+    if (dmg > 0) {
+      const scale = last.HEALTH < 40 ? 1 : 40 / last.HEALTH;
+      const kick = Math.max(5, Math.min(10, dmg * scale));
+      if (last.DMG_WORLD) { k.pitch = -kick; k.roll = 0; }
+      else {
+        let dx = last.DMG_X - last.PX, dy = last.DMG_Y - last.PY, dz = (last.DMG_Z ?? last.VIEW_Z) - last.VIEW_Z;
+        const len = Math.hypot(dx, dy, dz) || 1;
+        dx /= len; dy /= len; dz /= len;
+        const front = dx * axis[0] + dy * axis[1] + dz * axis[2];
+        const left = dx * axis[3] + dy * axis[4] + dz * axis[5];
+        k.roll = kick * left;
+        k.pitch = -kick * front;
+      }
+      k.at = time;
+    }
+  }
+  const since = Math.max(0, time - k.at);
+  const kr = since < DAMAGE_DEFLECT ? since / DAMAGE_DEFLECT : 1 - (since - DAMAGE_DEFLECT) / DAMAGE_RETURN;
+  if (kr > 0) { view.pitch += kr * k.pitch; view.roll += kr * k.roll; }
+
+  // the lean of the run: pitch with the forward speed, roll against the sideways one
+  const vx = last.VX ?? 0, vy = last.VY ?? 0;
+  view.pitch += (vx * axis[0] + vy * axis[1]) * 0.002;   // cg_runpitch
+  view.roll -= (vx * axis[3] + vy * axis[4]) * 0.005;    // cg_runroll
+
+  // the bob: a cycle per pair of steps, as PM_Footsteps counts them (bobmove 0.4 running, 0.3 walking,
+  // 0.5 crouched; 128 to a step), still in the air, reset when standing
+  const speed = Math.hypot(vx, vy);
+  if (speed < 5) k.bob = 0;
+  else if (last.ONGROUND) k.bob += dt * (last.DUCKED ? 0.5 : speed > 200 ? 0.4 : 0.3) * 1000 / 128;
+  const fracsin = Math.abs(Math.sin(k.bob * Math.PI));
+  const odd = Math.floor(k.bob) & 1;
+  let delta = fracsin * 0.002 * Math.max(speed, 200) * (last.DUCKED ? 3 : 1);   // cg_bobpitch, cg_bobroll
+  view.pitch += delta;
+  view.roll += odd ? -delta : delta;
+  view.z += Math.min(6, fracsin * speed * 0.005);                                    // cg_bobup
+
+  // the landing: down by the fall's size in 150 ms, back in 300
+  const sinceLand = time - (last.LAND_TIME ?? -10);
+  const change = last.LAND_CHANGE ?? -8;
+  let land = 0;
+  if (sinceLand >= 0 && sinceLand < LAND_DEFLECT) land = sinceLand / LAND_DEFLECT;
+  else if (sinceLand >= LAND_DEFLECT && sinceLand < LAND_DEFLECT + LAND_RETURN) land = 1 - (sinceLand - LAND_DEFLECT) / LAND_RETURN;
+  view.z += change * land;
+
+  // the gun sways with the steps and drifts at rest, and drops a quarter as far on landing
+  const g = view.gun, sway = speed + 40, drift = Math.sin(time);
+  g.roll = sway * fracsin * 0.005 + sway * drift * 0.01;
+  g.yaw = sway * fracsin * 0.01 + sway * drift * 0.01;
+  g.pitch = speed * fracsin * 0.005 + sway * drift * 0.01;
+  g.z = change * 0.25 * land;
+  return view;
+}
+
 /** The whole picture of one frame into the renderer (not yet presented). Returns the screen tint. */
 export function drawScene(renderer, hud, res, bsp, last, frame, opts = {}) {
   const r = renderer;
   const time = last.TIME_;
   const state = opts.state ?? (opts.state = new FrameState());
-  const view = { x: last.PX, y: last.PY, z: last.VIEW_Z, yaw: last.YAW, pitch: last.PITCH, roll: last.DEAD ? 40 : 0, fov: opts.fov ?? 90 };
-  // the view bobs with the run (CG_OffsetFirstPersonView)
-  if (!last.DEAD && last.ONGROUND && last.MOVE_SPEED > 50) {
-    const cycle = time * 12;
-    view.z += Math.abs(Math.sin(cycle)) * Math.min(1, last.MOVE_SPEED / 320) * 2;
-    view.roll = Math.sin(cycle) * 0.6;
-  }
+  const view = opts.view ?? firstPersonView(last, state, opts.dt ?? 0.05, opts.fov ?? 90);
   r.beginFrame(view);
   if (frame.faces.length) {
     if (opts.sqlProjected) r.drawFaces(frame.faces, time);
@@ -135,14 +203,14 @@ export function drawScene(renderer, hud, res, bsp, last, frame, opts = {}) {
   r.drawAlphaPolys();
 
   // the weapon in hand: the hand model at the eye, the gun on its tag (CG_AddViewWeapon)
-  if (!last.DEAD && !last.MATCH_OVER && last.WEAPON && !opts.noWeapon) drawViewWeapon(r, res, bsp, last, time);
+  if (!last.DEAD && !last.MATCH_OVER && last.WEAPON && !opts.noWeapon) drawViewWeapon(r, res, bsp, last, time, view);
 
   // 2D
   if (hud) hud.draw(r, last, time, state.messages, opts);
   return screenTint(last, time);
 }
 
-function drawViewWeapon(r, res, bsp, last, time) {
+function drawViewWeapon(r, res, bsp, last, time, view) {
   const dir = WEAPON_DIR[last.WEAPON];
   if (!dir) return;
   const handId = res.byName.get(`models/weapons2/${dir}/${dir}_hand.md3`);
@@ -152,10 +220,11 @@ function drawViewWeapon(r, res, bsp, last, time) {
   const hand = handId ? res.models.get(handId).mdl : null;
   // the hand sits at the eye, facing the view; the switch animation lowers it
   const sw = last.WEAPONSTATE === 2 ? Math.min(1, (0.2 - (last.WEAPON_TIME - time)) / 0.2) : last.WEAPONSTATE === 3 ? Math.max(0, (last.WEAPON_TIME - time) / 0.25) : 0;
-  const bob = last.ONGROUND && last.MOVE_SPEED > 50 ? Math.sin(time * 12) * 0.7 : 0;
-  const axis = anglesAxis(last.PITCH, last.YAW, 0);
-  const gx = 4, gz = -sw * 20 + bob;   // cg_gun_x: a little forward; the switch lowers it
-  const org = [last.PX + axis[0] * gx + axis[6] * gz, last.PY + axis[1] * gx + axis[7] * gz, last.VIEW_Z + axis[2] * gx + axis[8] * gz + last.PUNCH * 0.5];
+  // the hand follows the view, kicks and all, with the gun's own sway on top (CG_CalculateWeaponPosition)
+  const g = view.gun;
+  const axis = anglesAxis(view.pitch + g.pitch, view.yaw + g.yaw, view.roll + g.roll);
+  const gx = 4, gz = -sw * 20;   // cg_gun_x: a little forward; the switch lowers it
+  const org = [view.x + axis[0] * gx + axis[6] * gz, view.y + axis[1] * gx + axis[7] * gz, view.z + g.z + axis[2] * gx + axis[8] * gz + last.PUNCH * 0.5];
   const light = bsp.lightGrid(last.PX, last.PY, last.PZ);
   light.ambient = light.ambient.map((v) => Math.max(v, 96));   // RF_MINLIGHT: the gun is never black
   let gunOrigin = org, gunAxis = axis;
