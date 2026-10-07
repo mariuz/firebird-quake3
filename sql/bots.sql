@@ -901,7 +901,9 @@ END^
 SET TERM ; ^
 CREATE GLOBAL TEMPORARY TABLE pushed (
   ent INTEGER NOT NULL PRIMARY KEY,
-  ox DOUBLE PRECISION NOT NULL, oy DOUBLE PRECISION NOT NULL, oz DOUBLE PRECISION NOT NULL
+  ox DOUBLE PRECISION NOT NULL, oy DOUBLE PRECISION NOT NULL, oz DOUBLE PRECISION NOT NULL,
+  oyaw DOUBLE PRECISION DEFAULT 0 NOT NULL,
+  rider SMALLINT DEFAULT 0 NOT NULL                -- standing on the pusher before it turned
 ) ON COMMIT DELETE ROWS;
 SET TERM ^ ;
 
@@ -915,6 +917,16 @@ DECLARE mnx DOUBLE PRECISION; DECLARE mny DOUBLE PRECISION; DECLARE mnz DOUBLE P
 DECLARE mxx DOUBLE PRECISION; DECLARE mxy DOUBLE PRECISION; DECLARE mxz DOUBLE PRECISION;
 DECLARE c INTEGER; DECLARE cmt SMALLINT; DECLARE cx DOUBLE PRECISION; DECLARE cy DOUBLE PRECISION; DECLARE cz DOUBLE PRECISION;
 DECLARE csolid SMALLINT; DECLARE pe INTEGER; DECLARE r INTEGER; DECLARE grow DOUBLE PRECISION;
+DECLARE cyaw DOUBLE PRECISION; DECLARE rider SMALLINT; DECLARE cmask INTEGER;
+DECLARE bmnx DOUBLE PRECISION; DECLARE bmny DOUBLE PRECISION; DECLARE bmnz DOUBLE PRECISION;
+DECLARE bmxx DOUBLE PRECISION; DECLARE bmxy DOUBLE PRECISION; DECLARE bmxz DOUBLE PRECISION;
+DECLARE tf DOUBLE PRECISION; DECLARE tx DOUBLE PRECISION; DECLARE ty DOUBLE PRECISION; DECLARE tz DOUBLE PRECISION;
+DECLARE tnx DOUBLE PRECISION; DECLARE tny DOUBLE PRECISION; DECLARE tnz DOUBLE PRECISION;
+DECLARE tsf INTEGER; DECLARE tct INTEGER; DECLARE tas SMALLINT; DECLARE tss SMALLINT; DECLARE thit INTEGER;
+DECLARE dx DOUBLE PRECISION; DECLARE dy DOUBLE PRECISION; DECLARE dz DOUBLE PRECISION;
+DECLARE m00 DOUBLE PRECISION; DECLARE m01 DOUBLE PRECISION; DECLARE m02 DOUBLE PRECISION;
+DECLARE m10 DOUBLE PRECISION; DECLARE m11 DOUBLE PRECISION; DECLARE m12 DOUBLE PRECISION;
+DECLARE m20 DOUBLE PRECISION; DECLARE m21 DOUBLE PRECISION; DECLARE m22 DOUBLE PRECISION;
 BEGIN
   SELECT e.vx, e.vy, e.vz, e.avel_pitch, e.avel_yaw, e.avel_roll, e.x, e.y, e.z, e.minx, e.miny, e.minz, e.maxx, e.maxy, e.maxz FROM ents e WHERE e.id = :eid
     INTO vx, vy, vz, ap, ay, ar, px, py, pz, mnx, mny, mnz, mxx, mxy, mxz;
@@ -925,26 +937,66 @@ BEGIN
   END
   pe = player_ent();
 
-  -- rotation: turn, then make sure nobody is caught inside
+  -- rotation (G_MoverPush with an amove): who stands on it before it turns (a short trace down hits it:
+  -- their groundEntityNum) is carried round its origin, and so is anything the turned pusher is now
+  -- inside; players and bots turn with it (delta_angles[YAW]). What cannot go stops it: everything
+  -- back where it was, the pusher too, and mover_blocked
   IF (ap <> 0 OR ay <> 0 OR ar <> 0) THEN
   BEGIN
-    UPDATE ents e SET e.pitch = e.pitch + :ap * :movetime, e.yaw = e.yaw + :ay * :movetime, e.roll = e.roll + :ar * :movetime, e.ltime = e.ltime + :movetime WHERE e.id = :eid;
     grow = MAXVALUE(mxx - mnx, MAXVALUE(mxy - mny, mxz - mnz));
-    FOR SELECT e.id, e.x, e.y, e.z FROM ents e
-         WHERE e.id <> :eid AND e.solid IN (2, 3) AND e.health > 0 AND e.movetype IN (3, 4, 5)
+    DELETE FROM pushed;
+    FOR SELECT e.id, e.x, e.y, e.z, e.yaw, e.minx, e.miny, e.minz, e.maxx, e.maxy, e.maxz, e.clipmask FROM ents e
+         WHERE e.id <> :eid AND e.movetype NOT IN (0, 7, 8) AND e.solid <> 0 AND e.health > -1
            AND e.x + e.maxx >= :px + :mnx - :grow AND e.x + e.minx <= :px + :mxx + :grow
            AND e.y + e.maxy >= :py + :mny - :grow AND e.y + e.miny <= :py + :mxy + :grow
            AND e.z + e.maxz >= :pz + :mnz - :grow AND e.z + e.minz <= :pz + :mxz + :grow
-          INTO c, cx, cy, cz
+          INTO c, cx, cy, cz, cyaw, bmnx, bmny, bmnz, bmxx, bmxy, bmxz, cmask
     DO
     BEGIN
-      IF (test_position(c, cx, cy, cz) = 1) THEN
+      EXECUTE PROCEDURE trace_move(c, bmnx, bmny, bmnz, bmxx, bmxy, bmxz, cx, cy, cz, cx, cy, cz - 1, cmask)
+        RETURNING_VALUES tf, tx, ty, tz, tnx, tny, tnz, tsf, tct, tas, tss, thit;
+      INSERT INTO pushed (ent, ox, oy, oz, oyaw, rider) VALUES (:c, :cx, :cy, :cz, :cyaw, IIF(:tf < 1 AND :thit = :eid AND :tnz > 0.7e0, 1, 0));
+    END
+    UPDATE ents e SET e.pitch = e.pitch + :ap * :movetime, e.yaw = e.yaw + :ay * :movetime, e.roll = e.roll + :ar * :movetime, e.ltime = e.ltime + :movetime WHERE e.id = :eid;
+    -- the turn of this move, as a matrix (G_CreateRotationMatrix transposed: model to world)
+    EXECUTE PROCEDURE angle_matrix(ap * movetime, ay * movetime, ar * movetime) RETURNING_VALUES m00, m01, m02, m10, m11, m12, m20, m21, m22;
+    FOR SELECT p.ent, p.ox, p.oy, p.oz, p.oyaw, p.rider FROM pushed p INTO c, cx, cy, cz, cyaw, rider DO
+    BEGIN
+      -- not on it and not in its way: left alone
+      IF (rider = 0 AND test_position(c, cx, cy, cz) = 0) THEN
       BEGIN
-        -- blocked: turn back
-        UPDATE ents e SET e.pitch = e.pitch - :ap * :movetime, e.yaw = e.yaw - :ay * :movetime, e.roll = e.roll - :ar * :movetime, e.ltime = e.ltime - :movetime WHERE e.id = :eid;
-        EXECUTE PROCEDURE mover_blocked(eid, c);
-        EXIT;
+        DELETE FROM pushed p WHERE p.ent = :c;
+        CONTINUE;
       END
+      dx = cx - px; dy = cy - py; dz = cz - pz;
+      tx = px + m00 * dx + m01 * dy + m02 * dz;
+      ty = py + m10 * dx + m11 * dy + m12 * dz;
+      tz = pz + m20 * dx + m21 * dy + m22 * dz;
+      UPDATE ents e SET e.x = :tx, e.y = :ty, e.z = :tz,
+             e.yaw = IIF(e.classname IN ('player', 'bot'), anglemod(e.yaw + :ay * :movetime), e.yaw) WHERE e.id = :c;
+      IF (test_position(c, tx, ty, tz) = 0) THEN
+      BEGIN
+        EXECUTE PROCEDURE link_ent(c);
+        IF (c = pe) THEN UPDATE player p SET p.mover_yaw = p.mover_yaw + :ay * :movetime, p.oldz = p.oldz + (:tz - :cz) WHERE p.id = 1;
+        CONTINUE;
+      END
+      -- the pusher may have turned out of it: then it stays
+      UPDATE ents e SET e.x = :cx, e.y = :cy, e.z = :cz, e.yaw = :cyaw WHERE e.id = :c;
+      IF (test_position(c, cx, cy, cz) = 0) THEN
+      BEGIN
+        DELETE FROM pushed p WHERE p.ent = :c;
+        CONTINUE;
+      END
+      -- blocked: everything back, the pusher too
+      FOR SELECT p.ent, p.ox, p.oy, p.oz, p.oyaw FROM pushed p WHERE p.ent <> :c INTO r, tx, ty, tz, cyaw DO
+      BEGIN
+        UPDATE ents e SET e.x = :tx, e.y = :ty, e.z = :tz, e.yaw = :cyaw WHERE e.id = :r;
+        EXECUTE PROCEDURE link_ent(r);
+      END
+      UPDATE player p SET p.mover_yaw = p.mover_yaw - :ay * :movetime WHERE p.id = 1 AND EXISTS (SELECT 1 FROM pushed q WHERE q.ent = :pe AND q.ent <> :c);
+      UPDATE ents e SET e.pitch = e.pitch - :ap * :movetime, e.yaw = e.yaw - :ay * :movetime, e.roll = e.roll - :ar * :movetime, e.ltime = e.ltime - :movetime WHERE e.id = :eid;
+      EXECUTE PROCEDURE mover_blocked(eid, c);
+      EXIT;
     END
     IF (vx = 0 AND vy = 0 AND vz = 0) THEN EXIT;
     UPDATE ents e SET e.ltime = e.ltime - :movetime WHERE e.id = :eid;   -- the translation below adds it back
@@ -1166,11 +1218,12 @@ RETURNS (
   fraglimit INTEGER, timelimit INTEGER, over_time DOUBLE PRECISION, next_map VARCHAR(64),
   dmg_z DOUBLE PRECISION, dmg_world SMALLINT, land_change DOUBLE PRECISION, vx DOUBLE PRECISION, vy DOUBLE PRECISION,
   warmup_end DOUBLE PRECISION, award SMALLINT, award_time DOUBLE PRECISION, n_excellent SMALLINT, n_impressive SMALLINT, n_gauntlet SMALLINT,
-  spectator SMALLINT, follow_name VARCHAR(32))
+  spectator SMALLINT, follow_name VARCHAR(32), mover_yaw DOUBLE PRECISION)
 AS
 DECLARE i INTEGER = 0;
 BEGIN
   SELECT g.tic FROM game g WHERE g.id = 1 INTO tic;
+  UPDATE player p SET p.mover_yaw = 0 WHERE p.id = 1 AND p.mover_yaw <> 0;
   DELETE FROM sound_events s WHERE s.tic < :tic - 40;
   DELETE FROM fx_events f WHERE f.tic < :tic - 40;
   WHILE (i < tics) DO
@@ -1191,13 +1244,14 @@ BEGIN
          MAXVALUE(0, p.enviro_finished - g.time_), MAXVALUE(0, p.flight_finished - g.time_), p.holdable,
          e.leaf, e.cluster, g.match_over, g.winner, p.land_time, IIF(p.follow_id IS NULL, p.onground, IIF(BIN_AND(e.flags, 512) <> 0, 1, 0)), p.move_speed, p.weapon_sound,
          (SELECT COALESCE(MAX(b.frags), 0) FROM ents b WHERE b.classname = 'bot'), p.ducked, g.fraglimit, g.timelimit, g.over_time, g.next_map,
-         p.dmg_z, p.dmg_world, p.land_change, e.vx, e.vy, g.warmup_end, e.award, e.award_time, e.n_excellent, e.n_impressive, e.n_gauntlet, p.spectator, IIF(p.follow_id IS NULL, NULL, e.bot)
+         p.dmg_z, p.dmg_world, p.land_change, e.vx, e.vy, g.warmup_end, e.award, e.award_time, e.n_excellent, e.n_impressive, e.n_gauntlet, p.spectator, IIF(p.follow_id IS NULL, NULL, e.bot),
+         p.mover_yaw / :tics
     FROM game g CROSS JOIN player p JOIN ents e ON e.id = COALESCE(p.follow_id, p.ent_id)   -- following: the one followed
    WHERE g.id = 1 AND p.id = 1
     INTO tic, time_, health, max_health, armor, bullets, shells, grenades, rockets, lightning, slugs, cells, bfg,
          weapons, weapon, pending_weapon, weaponstate, weapon_time, attack_start, attack_finished,
          px, py, pz, yaw, pitch, view_z, punch, msg, cprint, dmg_take, dmg_save, dmg_time, dmg_x, dmg_y, bonus_time, dead, exit_kind, frags, deaths, waterlevel, watertype, map_name, level_msg,
-         quad, haste, invis, regen, enviro, flight, holdable, leaf, cluster, match_over, winner, land_time, onground, move_speed, weapon_sound, lead, ducked, fraglimit, timelimit, over_time, next_map, dmg_z, dmg_world, land_change, vx, vy, warmup_end, award, award_time, n_excellent, n_impressive, n_gauntlet, spectator, follow_name;
+         quad, haste, invis, regen, enviro, flight, holdable, leaf, cluster, match_over, winner, land_time, onground, move_speed, weapon_sound, lead, ducked, fraglimit, timelimit, over_time, next_map, dmg_z, dmg_world, land_change, vx, vy, warmup_end, award, award_time, n_excellent, n_impressive, n_gauntlet, spectator, follow_name, mover_yaw;
   UPDATE player p SET p.dmg_take = 0, p.dmg_save = 0 WHERE p.id = 1 AND p.dmg_time < :time_ - 0.05e0;
   SUSPEND;
 END^

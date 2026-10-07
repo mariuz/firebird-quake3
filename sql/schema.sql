@@ -391,6 +391,7 @@ CREATE TABLE player (
   stepz           DOUBLE PRECISION DEFAULT 0 NOT NULL,
   land_time       DOUBLE PRECISION DEFAULT 0 NOT NULL,
   land_change     DOUBLE PRECISION DEFAULT -8 NOT NULL,   -- how far the view dips on that landing: -8, -16, -24 (EV_FALL_SHORT, MEDIUM, FAR)
+  mover_yaw       DOUBLE PRECISION DEFAULT 0 NOT NULL,    -- the degrees a turning mover turned us in the last q3_tic call (delta_angles[YAW])
   weapon_sound    SMALLINT DEFAULT 0 NOT NULL,
   regen_time      DOUBLE PRECISION DEFAULT 0 NOT NULL,
   health_decay    DOUBLE PRECISION DEFAULT 0 NOT NULL,    -- health above the maximum counts down

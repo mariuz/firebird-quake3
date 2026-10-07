@@ -196,6 +196,46 @@ async function sqlRuns() {
     }
     out.ramp[dir] = on;
   }
+
+  // a turning platform (G_MoverPush with an amove): q3dm17 has none, so one is made here, a brush
+  // 128 x 128 x 16 in a leaf of its own, a model whose head is that leaf, a func_rotating over the open
+  // floor with its top at 344. Stand on it 40 from its axis and let it turn 90 degrees a second
+  const P = { x: SPOT.x, y: SPOT.y, z: SPOT.floor + 16 };
+  const nid = async (t) => (await q(`SELECT COALESCE(MAX(id), 0) + 1 n FROM ${t}`))[0].N;
+  const side0 = await nid('brushsides'), brush = await nid('brushes'), lb = await nid('leafbrushes'), leaf = await nid('leaves'), model = await nid('models');
+  const sides = [[1, 0, 0, 64], [-1, 0, 0, 64], [0, 1, 0, 64], [0, -1, 0, 64], [0, 0, 1, 0], [0, 0, -1, 16]];
+  for (const [k, [nx, ny, nz, d]] of sides.entries()) await db.exec(`INSERT INTO brushsides (id, nx, ny, nz, dist) VALUES (${side0 + k}, ${nx}, ${ny}, ${nz}, ${d})`);
+  await db.exec(`INSERT INTO brushes (id, contents, first_side, num_sides, minx, miny, minz, maxx, maxy, maxz) VALUES (${brush}, 1, ${side0}, 6, -64, -64, -16, 64, 64, 0)`);
+  await db.exec(`INSERT INTO leafbrushes (id, brush) VALUES (${lb}, ${brush})`);
+  await db.exec(`INSERT INTO leaves (id, contents, cluster, minx, miny, minz, maxx, maxy, maxz, first_lf, num_lf, first_lb, num_lb, pvs) VALUES (${leaf}, 1, -1, -64, -64, -16, 64, 64, 0, 0, 0, ${lb}, 1, '')`);
+  await db.exec(`INSERT INTO models (id, name, kind, minx, miny, minz, maxx, maxy, maxz, headnode, first_face, num_faces) VALUES (${model}, '*turntable', 'B', -64, -64, -16, 64, 64, 0, ${-(leaf + 1)}, 0, 0)`);
+  const plat = (await q(`SELECT id FROM spawn_ent('func_rotating', ${P.x}, ${P.y}, ${P.z})`))[0].ID;
+  await db.exec(`UPDATE ents SET model_id = ${model}, solid = 4, movetype = 7, minx = -64, miny = -64, minz = -16, maxx = 64, maxy = 64, maxz = 0, avel_yaw = 0, dmg = 2 WHERE id = ${plat}`);
+  await db.exec(`EXECUTE PROCEDURE link_ent(${plat})`);
+  const place = async (x, y, z, yaw) => {
+    await db.exec(`UPDATE ents SET x = ${x}, y = ${y}, z = ${z}, vx = 0, vy = 0, vz = 0, yaw = ${yaw}, flags = BIN_OR(flags, 16) WHERE id = ${pe}`);
+    await db.exec('UPDATE player SET pitch = 0, jump_released = 1, knockback_until = 0 WHERE id = 1');
+    await db.exec(`EXECUTE PROCEDURE link_ent(${pe})`);
+    for (let i = 0; i < 4; i++) await tic({ fwd: 0, side: 0, up: 0, yawRate: 0 });
+  };
+  const idle = () => tic({ fwd: 0, side: 0, up: 0, yawRate: 0 });
+  await place(P.x + 40, P.y, P.z + 24.25, 0);
+  const on0 = await idle();
+  await db.exec(`UPDATE ents SET avel_yaw = 90 WHERE id = ${plat}`);
+  const turns = [];
+  let r;
+  for (let i = 0; i < 20; i++) { r = await idle(); turns.push(r.MOVER_YAW); }
+  out.turntable = { start: { x: on0.PX, y: on0.PY, z: on0.PZ, yaw: on0.YAW, ground: on0.ONGROUND }, end: { x: r.PX, y: r.PY, z: r.PZ, yaw: r.YAW, ground: r.ONGROUND }, turns,
+                    plat: (await q(`SELECT yaw FROM ents WHERE id = ${plat}`))[0].YAW };
+  // beside it on the floor, where its corners sweep (90.5 from the axis): swept round, never inside it
+  await db.exec(`UPDATE ents SET avel_yaw = 0, yaw = 0 WHERE id = ${plat}`);
+  await place(P.x + 82, P.y, SPOT.floor + 24.25, 0);
+  const b0 = await idle();
+  await db.exec(`UPDATE ents SET avel_yaw = 90 WHERE id = ${plat}`);
+  for (let i = 0; i < 10; i++) r = await idle();
+  out.turntable.beside = { moved: Math.hypot(r.PX - b0.PX, r.PY - b0.PY), stuck: (await q(`SELECT test_position(${pe}, ${r.PX}, ${r.PY}, ${r.PZ}) s FROM rdb$database`))[0].S,
+                           plat: (await q(`SELECT yaw FROM ents WHERE id = ${plat}`))[0].YAW };
+  await db.exec(`UPDATE ents SET avel_yaw = 0 WHERE id = ${plat}`);
   await db.close();
   return out;
 }
@@ -208,7 +248,8 @@ const refOnly = process.argv.includes('--ref-only');
 const sqlRows = refOnly ? null : await sqlRuns();
 const falls = refOnly ? [] : sqlRows.falls;
 const ramp = refOnly ? null : sqlRows.ramp;
-if (!refOnly) { delete sqlRows.falls; delete sqlRows.ramp; }
+const turntable = refOnly ? null : sqlRows.turntable;
+if (!refOnly) { delete sqlRows.falls; delete sqlRows.ramp; delete sqlRows.turntable; }
 const sqlM = refOnly ? {} : Object.fromEntries(Object.entries(sqlRows).map(([k, r]) => [k, measure(k, r)]));
 console.log('\n' + ['scenario', 'quantity', 'Q3 8 ms', 'Q3 50 ms', 'SQL 50 ms'].map((s) => s.padEnd(16)).join(''));
 for (const name of Object.keys(SCENARIOS)) {
@@ -241,6 +282,18 @@ if (!refOnly) {
     const sp = on.reduce((a, r) => a + r.speed, 0) / n, hz = on.reduce((a, r) => a + r.horiz, 0) / n;
     assert(n >= 3 && near(sp, 320, 1.5) && near(hz, 320 * 0.894, 1.5) && on.every((r) => r.ground),
       `running ${dir} the ramp: ${sp.toFixed(1)} along it, ${hz.toFixed(1)} across the ground, on the ground all the way (Q3: 320, ${(320 * 0.894).toFixed(1)}; ${n} tics)`);
+  }
+  // the turntable: a second at 90 degrees a second carries us a quarter round its axis, the view
+  // turned with it, on it all the while; beside it, its corners push us round rather than through us
+  {
+    const T = turntable, a = T.start, b = T.end;
+    const ang = (Math.atan2(b.y - SPOT.y, b.x - SPOT.x) - Math.atan2(a.y - SPOT.y, a.x - SPOT.x)) * 180 / Math.PI;
+    const dyaw = ((b.yaw - a.yaw) % 360 + 360) % 360;
+    assert(a.ground && b.ground && near(ang, 90, 0.5) && near(Math.hypot(b.x - SPOT.x, b.y - SPOT.y), 40, 0.5) && near(dyaw, 90, 0.5) && near(b.z, a.z, 0.1) && near(T.plat, 90, 0.01),
+      `riding a turning platform: carried ${ang.toFixed(1)} degrees round its axis, the view ${dyaw.toFixed(1)}, ${Math.hypot(b.x - SPOT.x, b.y - SPOT.y).toFixed(1)} from it (Q3: 90, 90, 40)`);
+    assert(T.turns.every((t) => near(t, 4.5, 0.01)), `the tic says how far the mover turned us, for the view between tics (${T.turns[0].toFixed(2)} a tic)`);
+    assert(T.beside.moved > 10 && T.beside.stuck === 0 && near(T.beside.plat, 45, 0.01),
+      `beside it, its corners push us round (${T.beside.moved.toFixed(1)} units), never inside it, and it keeps turning (${T.beside.plat.toFixed(1)} degrees)`);
   }
   // the falls: what PM_CrashLand's delta (0.16 h from rest, doubled crouched) makes of each
   for (const f of falls) {

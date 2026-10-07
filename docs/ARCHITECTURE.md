@@ -233,7 +233,9 @@ checks all of it against a JavaScript reference of `bg_pmove`'s open-ground part
 open floor: start-up, stopping, standing, running, strafe and held-jump arcs, crouch-walking, a
 knock. Every quantity agrees within 0.2. It also drops the player from 30, 100, 300 and 450 units and
 from 150 crouched, where Quake III's `delta` is exactly 0.16 of the height, and checks the damage, the
-dip and the sounds of each, and runs up and down the ramp beside q3dm17's jump pad at x −312 (normal
+dip and the sounds of each; builds a turning platform (a brush, its own leaf, a model headed by the
+leaf, a `func_rotating`) and rides it a quarter turn, and stands beside it to be swept round; and runs
+up and down the ramp beside q3dm17's jump pad at x −312 (normal
 (0, 0.447, 0.894)): 320 along it, 286.2 across the ground, on the ground every tic.
 
 ---
@@ -273,7 +275,13 @@ sound, the lead state. Each tic:
 3. `run_pushers`: every mover (`movetype` 7) moves along its `calc_move` track and pushes what stands
    on it or in its way (`push_move`, the pushed set kept in the `pushed` temporary table so a blocked
    mover can put everything back, as `G_MoverPush` does); doors reverse when blocked and crush at
-   `dmg`; bobbing platforms, pendulums and rotating things have their own `*_think`;
+   `dmg`; bobbing platforms, pendulums and rotating things have their own `*_think`. A turning mover
+   first finds who stands on it (a one-unit trace down that hits it: Quake III's `groundEntityNum`),
+   turns, then carries those riders and anything its new pose is inside round its origin by the turn
+   (`angle_matrix` of the turn, model to world), and adds the yaw to players' and bots' facing
+   (`delta_angles[YAW]`); one that cannot go leaves it where it was if the turn left it clear, or else
+   everything goes back and `mover_blocked` runs. The player's share of the turn comes back from
+   `q3_tic` as `mover_yaw` a tic, and the page turns the view on with it between tics;
 4. `run_think`: every entity whose `nextthink` has come, dispatched by the `think` name: `bot_think`,
    `item_respawn`, `missile_explode`, the door, plat, button and train states, `timer_think`,
    `speaker_think`, `remove`;

@@ -256,7 +256,8 @@ function viewRow(alpha, now) {
   const yawLive = mouseYaw + ((k('ArrowLeft') ? 1 : 0) - (k('ArrowRight') ? 1 : 0)) * 7 * frac;
   const pitchLive = mousePitch + ((k('PageDown') ? 1 : 0) - (k('PageUp') ? 1 : 0)) * 5 * frac;
   if (last.MATCH_OVER || last.FOLLOW_NAME) return { ...last };   // the intermission camera and the eyes of the one followed do not turn with the mouse
-  const v = { ...last, YAW: (last.YAW + yawLive) % 360, PITCH: Math.max(-89, Math.min(89, last.PITCH + pitchLive)) };
+  // (a turning mover under us turns the view on through the tic as it did through the last one)
+  const v = { ...last, YAW: (last.YAW + yawLive + (last.MOVER_YAW || 0) * frac) % 360, PITCH: Math.max(-89, Math.min(89, last.PITCH + pitchLive)) };
   if (!prev || alpha >= 1 || Math.hypot(last.PX - prev.PX, last.PY - prev.PY, last.PZ - prev.PZ) >= SNAP) return v;
   v.TIME_ = lerp(prev.TIME_, last.TIME_, alpha);
   const duckLeft = Math.max(0, 1 - (now - duckTime) / 100);
