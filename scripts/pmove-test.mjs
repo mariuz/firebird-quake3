@@ -157,6 +157,19 @@ async function sqlRuns() {
     }
     out[name] = rows;
   }
+  // the falls (PM_CrashLand): from rest at a height h the contact is at sqrt(2 g h), delta = 0.16 h
+  out.falls = [];
+  for (const [h, crouched] of [[30, 0], [100, 0], [300, 0], [450, 0], [150, 1]]) {
+    await db.exec(`UPDATE ents SET x = ${SPOT.x}, y = ${SPOT.y}, z = ${SPOT.floor + 24 + h}, vx = 0, vy = 0, vz = 0, health = 100, flags = BIN_AND(flags, BIN_NOT(512 + 16)), maxz = 32 WHERE id = ${pe}`);
+    await db.exec('UPDATE player SET armor = 0, ducked = 0, pain_finished = 0, land_change = 0 WHERE id = 1');
+    await db.exec(`EXECUTE PROCEDURE link_ent(${pe})`);
+    const s0 = (await q('SELECT COALESCE(MAX(id), 0) m FROM sound_events'))[0].M;
+    let s;
+    for (let i = 0; i < 60; i++) { s = await tic({ fwd: 0, side: 0, up: crouched ? -127 : 0, yawRate: 0 }); if (s.ONGROUND === 1) break; }
+    const snd = (await q(`SELECT snd FROM sound_events WHERE id > ${s0} ORDER BY id`)).map((r) => r.SND.trim());
+    out.falls.push({ h, crouched, damage: 100 - s.HEALTH, dip: s.LAND_CHANGE, sounds: snd });
+  }
+  await db.exec(`UPDATE ents SET flags = BIN_OR(flags, 16), health = 100 WHERE id = ${pe}`);
   await db.close();
   return out;
 }
@@ -167,6 +180,8 @@ const ref8 = {}, ref50 = {};
 for (const [name, tics] of Object.entries(SCENARIOS)) { ref8[name] = measure(name, refRun(fresh(), tics, 8)); ref50[name] = measure(name, refRun(fresh(), tics, 50)); }
 const refOnly = process.argv.includes('--ref-only');
 const sqlRows = refOnly ? null : await sqlRuns();
+const falls = refOnly ? [] : sqlRows.falls;
+if (!refOnly) delete sqlRows.falls;
 const sqlM = refOnly ? {} : Object.fromEntries(Object.entries(sqlRows).map(([k, r]) => [k, measure(k, r)]));
 console.log('\n' + ['scenario', 'quantity', 'Q3 8 ms', 'Q3 50 ms', 'SQL 50 ms'].map((s) => s.padEnd(16)).join(''));
 for (const name of Object.keys(SCENARIOS)) {
@@ -192,6 +207,16 @@ if (!refOnly) {
   const heldS = S.heldjump['speed in the air'] - S.heldjump['takeoff speed'], heldR = R.heldjump['speed in the air'] - R.heldjump['takeoff speed'];
   assert(heldR < gainR && near(heldS, heldR, 3), `holding jump in the air takes air control away, as PM_CmdScale does (+${heldS.toFixed(1)}, Q3 +${heldR.toFixed(1)})`);
   assert(near(S.knockstop['stop distance'], R.knockstop['stop distance'], 3) && S.knockstop['stop distance'] > S.stop['stop distance'] + 40, `a knock carries 200 ms without friction (${S.knockstop['stop distance'].toFixed(1)}, Q3 ${R.knockstop['stop distance'].toFixed(1)})`);
+  // the falls: what PM_CrashLand's delta (0.16 h from rest, doubled crouched) makes of each
+  for (const f of falls) {
+    const delta = 0.16 * f.h * (f.crouched ? 2 : 1);
+    const want = delta > 60 ? { damage: 10, dip: -24, sound: '/fall1.wav' } : delta > 40 ? { damage: 5, dip: -16, sound: '/pain100_1.wav' }
+      : delta > 7 ? { damage: 0, dip: -8, sound: 'sound/player/land1.wav' } : { damage: 0, dip: 0, sound: 'footsteps/step' };
+    const heard = f.sounds.some((n) => n.includes(want.sound));
+    const pain = f.sounds.some((n) => /\/pain(25|50|75|100)_1\.wav$/.test(n)) && want.sound !== '/pain100_1.wav';
+    assert(f.damage === want.damage && f.dip === want.dip && heard && !pain,
+      `a fall of ${f.h}${f.crouched ? ' crouched' : ''} (delta ${delta.toFixed(1)}): ${f.damage} damage, the ${f.dip} dip, ${f.sounds.filter((n) => !n.includes('talk')).join(' ') || 'silence'}`);
+  }
 }
 console.log(failed ? `${failed} FAILED` : 'all good');
 process.exit(failed ? 1 : 0);

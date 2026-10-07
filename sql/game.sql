@@ -1202,6 +1202,61 @@ BEGIN
   DELETE FROM ents e WHERE e.id = :eid;
 END^
 
+-- PM_CrashLand, and what g_active.c and cg_event.c make of its events: the speed at the moment of contact,
+-- solved from the tic's start (dist = vel t + acc t² / 2, as bg_pmove.c solves it from the frame's), squared
+-- (delta = v² / 10000), doubled crouched, halved knee-deep, quartered waist-deep, nothing with the head under
+-- or on a SURF_NODAMAGE floor; then above 60 EV_FALL_FAR (10 damage, the model's *fall1), above 40
+-- EV_FALL_MEDIUM (5, its *pain100_1, not when dead), above 7 EV_FALL_SHORT (land1), else a footstep. The
+-- damage holds the normal pain sound back (pain_debounce_time); the legs land
+CREATE OR ALTER PROCEDURE crash_land (eid INTEGER, vel DOUBLE PRECISION, dist DOUBLE PRECISION, grav DOUBLE PRECISION, ducked SMALLINT, wl SMALLINT, sflags INTEGER)
+AS
+DECLARE a DOUBLE PRECISION; DECLARE den DOUBLE PRECISION; DECLARE tc DOUBLE PRECISION; DECLARE delta DOUBLE PRECISION;
+DECLARE pm VARCHAR(16); DECLARE hp INTEGER; DECLARE pe INTEGER; DECLARE change DOUBLE PRECISION = 0;
+BEGIN
+  pe = player_ent();
+  a = -grav / 2;
+  den = vel * vel - 4 * a * (-dist);
+  IF (den < 0 OR a = 0) THEN EXIT;
+  tc = (-vel - SQRT(den)) / (2 * a);
+  delta = vel - grav * tc;
+  delta = delta * delta * 0.0001e0;
+  IF (ducked = 1) THEN delta = delta * 2;
+  IF (wl = 3) THEN EXIT;
+  IF (wl = 2) THEN delta = delta * 0.25e0;
+  IF (wl = 1) THEN delta = delta * 0.5e0;
+  EXECUTE PROCEDURE set_anims(eid, 19, NULL);   -- LEGS_LAND
+  IF (delta < 1 OR BIN_AND(COALESCE(sflags, 0), 1) <> 0) THEN EXIT;
+  SELECT e.pmodel, e.health FROM ents e WHERE e.id = :eid INTO pm, hp;
+  pm = COALESCE(pm, 'sarge');
+  IF (delta > 60) THEN
+  BEGIN
+    change = -24;
+    EXECUTE PROCEDURE snd(eid, 2, 'sound/player/' || pm || '/fall1.wav', 1, 1);
+    IF (eid = pe) THEN UPDATE player p SET p.pain_finished = now_() + 0.2e0 WHERE p.id = 1;
+    ELSE UPDATE ents e SET e.pain_finished = now_() + 0.2e0 WHERE e.id = :eid;
+    EXECUTE PROCEDURE t_damage(eid, 0, 0, 10, 0, 4, 13);
+  END
+  ELSE IF (delta > 40) THEN
+  BEGIN
+    change = -16;
+    IF (hp > 0) THEN
+    BEGIN
+      EXECUTE PROCEDURE snd(eid, 2, 'sound/player/' || pm || '/pain100_1.wav', 1, 1);
+      IF (eid = pe) THEN UPDATE player p SET p.pain_finished = now_() + 0.2e0 WHERE p.id = 1;
+      ELSE UPDATE ents e SET e.pain_finished = now_() + 0.2e0 WHERE e.id = :eid;
+      EXECUTE PROCEDURE t_damage(eid, 0, 0, 5, 0, 4, 13);
+    END
+  END
+  ELSE IF (delta > 7) THEN
+  BEGIN
+    change = -8;
+    EXECUTE PROCEDURE snd(eid, 2, 'sound/player/land1.wav', 1, 1);
+  END
+  ELSE EXECUTE PROCEDURE snd(eid, 2, 'sound/player/footsteps/step' || CAST(1 + FLOOR(RAND() * 4) AS INTEGER) || '.wav', 0.6e0, 1);
+  -- the view's dip (CG_EntityEvent: EV_FALL_FAR -24, EV_FALL_MEDIUM -16, EV_FALL_SHORT -8)
+  IF (eid = pe AND change < 0) THEN UPDATE player p SET p.land_time = now_(), p.land_change = :change WHERE p.id = 1;
+END^
+
 -- ── touching ────────────────────────────────────────────────────────────
 -- SV_Impact: e1 moved into e2 (e2 = 0 is the world); sflags are the surface flags hit
 CREATE OR ALTER PROCEDURE impact (e1 INTEGER, e2 INTEGER, sflags INTEGER)
@@ -1248,25 +1303,6 @@ BEGIN
       spd = vlen(vx, vy, vz);
       IF (spd > 60) THEN EXECUTE PROCEDURE snd_at(x, y, z, 'sound/weapons/grenade/hgrenb1a.wav', 1, 1);
     END
-  END
-  ELSE IF (c1 IN ('player', 'bot') AND e2 = 0 AND vz < -300) THEN
-  BEGIN
-    -- PM_CrashLand: delta = vz² / 10000
-    IF (vz * vz * 0.0001e0 > 60) THEN
-    BEGIN
-      EXECUTE PROCEDURE t_damage(e1, 0, 0, 10, 0, 4, 13);
-      EXECUTE PROCEDURE snd(e1, 2, 'sound/player/' || (SELECT e.pmodel FROM ents e WHERE e.id = :e1) || '/fall1.wav', 1, 1);
-    END
-    ELSE IF (vz * vz * 0.0001e0 > 40) THEN
-    BEGIN
-      EXECUTE PROCEDURE t_damage(e1, 0, 0, 5, 0, 4, 13);
-      EXECUTE PROCEDURE snd(e1, 2, 'sound/player/' || (SELECT e.pmodel FROM ents e WHERE e.id = :e1) || '/fall1.wav', 1, 1);
-    END
-    ELSE EXECUTE PROCEDURE snd(e1, 2, 'sound/player/land1.wav', 1, 1);
-    EXECUTE PROCEDURE set_anims(e1, 19, NULL);   -- LEGS_LAND
-    -- the view's dip (CG_EntityEvent: EV_FALL_FAR -24, EV_FALL_MEDIUM -16, EV_FALL_SHORT -8)
-    IF (e1 = player_ent()) THEN
-      UPDATE player p SET p.land_time = now_(), p.land_change = IIF(:vz * :vz * 0.0001e0 > 60, -24, IIF(:vz * :vz * 0.0001e0 > 40, -16, -8)) WHERE p.id = 1;
   END
   ELSE IF (c1 = 'gib' AND e2 = 0 AND vlen(vx, vy, vz) > 100) THEN
     EXECUTE PROCEDURE snd_at(x, y, z, 'sound/player/gibimp' || CAST(1 + FLOOR(RAND() * 3) AS INTEGER) || '.wav', 0.6e0, 1);

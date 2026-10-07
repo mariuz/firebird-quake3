@@ -541,6 +541,7 @@ DECLARE mover SMALLINT; DECLARE pm VARCHAR(16); DECLARE match_done SMALLINT; DEC
 DECLARE spec SMALLINT; DECLARE sfire SMALLINT; DECLARE fid INTEGER;
 DECLARE kb DOUBLE PRECISION; DECLARE upk DOUBLE PRECISION; DECLARE yaw0 DOUBLE PRECISION; DECLARE yk DOUBLE PRECISION; DECLARE ds DOUBLE PRECISION;
 DECLARE sxv DOUBLE PRECISION; DECLARE syv DOUBLE PRECISION; DECLARE szv DOUBLE PRECISION; DECLARE vz0 DOUBLE PRECISION; DECLARE wl2 DOUBLE PRECISION; DECLARE k INTEGER;
+DECLARE vz_start DOUBLE PRECISION; DECLARE pz_start DOUBLE PRECISION; DECLARE lvz DOUBLE PRECISION;
 BEGIN
   SELECT p.ent_id, p.jump_released, p.air_finished, p.dead_time, p.enviro_finished, p.haste_finished, p.regen_finished, p.next_drown_time, p.drown_dmg, p.health_decay, p.regen_time, p.step_time, p.ducked,
          p.spectator, p.spec_fire, p.follow_id
@@ -667,12 +668,8 @@ BEGIN
   onground = IIF(f < 1 AND gnz >= 0.7e0 AND NOT (vz > 0 AND vx * gnx + vy * gny + vz * gnz > 10), 1, 0);
   IF (als = 1 OR sts = 1) THEN onground = 1;
   mover = IIF(hit > 0 AND onground = 1, 1, 0);
-  IF (onground = 1 AND BIN_AND(flags, 512) = 0 AND vz < -300) THEN
-  BEGIN
-    -- landed: PM_CrashLand through impact's falling-damage path
-    UPDATE ents e SET e.vz = :vz WHERE e.id = :pe;
-    EXECUTE PROCEDURE impact(pe, 0, 0);
-  END
+  -- where the tic starts, for PM_CrashLand's solve if it ends on the ground
+  vz_start = vz; pz_start = pz;
   flags = IIF(onground = 1, BIN_OR(flags, 512), BIN_AND(flags, BIN_NOT(512)));
   maxspd = IIF(run = 1, 320, 160);
   IF (haste > t) THEN maxspd = maxspd * 1.3e0;
@@ -793,6 +790,16 @@ BEGIN
   END
   IF (NOT EXISTS (SELECT 1 FROM ents e WHERE e.id = :pe)) THEN EXIT;
   EXECUTE PROCEDURE link_ent(pe);
+  -- in the air, and now on the ground: landed (PmoveSingle's second PM_GroundTrace, then PM_CrashLand)
+  IF (onground = 0) THEN
+  BEGIN
+    SELECT e.x, e.y, e.z, e.vx, e.vy, e.vz FROM ents e WHERE e.id = :pe INTO ex, ey, ez, gnx, gny, gnz;
+    lvz = gnz;
+    EXECUTE PROCEDURE trace_move(pe, -15, -15, -24, 15, 15, maxz, ex, ey, ez, ex, ey, ez - 0.25e0, 33619969)
+      RETURNING_VALUES f, ex, ey, ez, gnx, gny, gnz, sf, ct, als, sts, hit;
+    IF (f < 1 AND gnz >= 0.7e0 AND lvz <= 10 AND sts = 0) THEN
+      EXECUTE PROCEDURE crash_land(pe, vz_start, (SELECT e.z FROM ents e WHERE e.id = :pe) - pz_start, grav, ducked, wl, sf);
+  END
   -- smooth the view over steps
   SELECT e.z, e.vx, e.vy FROM ents e WHERE e.id = :pe INTO pz, vx, vy;
   UPDATE player p SET p.stepz = IIF(:onground = 1 AND :pz - :oldz > 0 AND :pz - :oldz <= 18, MINVALUE(p.stepz + (:pz - :oldz), 18), MAXVALUE(0, p.stepz - 160 * :dt)),

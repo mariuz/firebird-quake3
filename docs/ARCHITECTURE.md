@@ -207,10 +207,19 @@ short of what `AimAtTarget` aimed at; the bots in the air and `toss_move` do the
 speed is `PM_CmdScale`'s, with the jump or crouch key among the keys (holding jump in the air takes air
 control away; a jump held on the ground does not count), the crouch's quarter speed a cap after it, and
 a knock (`t_damage` for the player) leaves 50 to 200 ms without ground friction and with air
-acceleration (`PMF_TIME_KNOCKBACK`), which is what carries a rocket jump. `scripts/pmove-test.mjs`
+acceleration (`PMF_TIME_KNOCKBACK`), which is what carries a rocket jump. A landing is `PM_CrashLand`'s, once a tic, after the move:
+an airborne tic that ends on the ground (a second ground trace, as `PmoveSingle` makes) calls `crash_land`
+with the tic's starting vertical speed and the height it fell, which solves for the speed at the moment
+of contact as `bg_pmove.c` does and squares it (`delta = v² / 10000`); crouched doubles it, knee-deep water
+halves it, waist-deep quarters it, the head under or a `SURF_NODAMAGE` floor cancels it. Above 60 it is
+10 damage and the model's `*fall1`, above 40 5 damage and its `*pain100_1` (the normal pain sound held
+back for 200 ms, `pain_debounce_time`), above 7 the `land1` thud, below that a footstep; the view dips
+24, 16 or 8 units with them. The bots in the air land the same way in `run_physics`. `scripts/pmove-test.mjs`
 checks all of it against a JavaScript reference of `bg_pmove`'s open-ground part at 8 ms, on q3dm17's
 open floor: start-up, stopping, standing, running, strafe and held-jump arcs, crouch-walking, a
-knock. Every quantity agrees within 0.2.
+knock. Every quantity agrees within 0.2. It also drops the player from 30, 100, 300 and 450 units and
+from 150 crouched, where Quake III's `delta` is exactly 0.16 of the height, and checks the damage, the
+dip and the sounds of each.
 
 ---
 

@@ -187,11 +187,13 @@ assert(s.DMG_WORLD === 0, `and its splash came from where it blew up (${s.DMG_X.
   // (for the one tic without god mode, the bots hold their fire and nothing is in flight)
   await db.exec("UPDATE ents SET nextthink = 1e9 WHERE classname = 'bot'");
   await db.exec("DELETE FROM ents WHERE classname IN ('rocket', 'grenade', 'plasma', 'bfg')");
-  await db.exec(`UPDATE ents SET vz = -900, flags = BIN_AND(flags, BIN_NOT(512 + 16)) WHERE id = ${pe}`);
+  // (30 units up, coming down at 900: the contact at 926 units a second, PM_CrashLand's delta 86)
+  await db.exec(`UPDATE ents SET z = z + 30, vz = -900, flags = BIN_AND(flags, BIN_NOT(512 + 16)) WHERE id = ${pe}`);
+  await db.exec(`EXECUTE PROCEDURE link_ent(${pe})`);
   s = await tic([1, 0, 0, 0, 0, 0, 0, 1, 0]);
   await db.exec(`UPDATE ents SET flags = BIN_OR(flags, 16) WHERE id = ${pe}`);
   await db.exec("UPDATE ents SET nextthink = 0 WHERE classname = 'bot'");
-  assert(s.LAND_CHANGE === -24 && s.TIME_ - s.LAND_TIME < 0.11, `landing at 900 units a second: the far dip (${s.LAND_CHANGE})`);
+  assert(s.LAND_CHANGE === -24 && s.TIME_ - s.LAND_TIME < 0.11, `coming down at 900 units a second: the far dip (${s.LAND_CHANGE})`);
   assert(s.DMG_WORLD === 1 && s.DMG_TAKE > 0, `the fall's damage comes from no direction (${s.DMG_TAKE} taken)`);
 }
 const boom = (await db.query("SELECT COUNT(*) n FROM fx_events WHERE kind = 2")).rows[0].N;

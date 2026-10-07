@@ -1128,6 +1128,10 @@ BEGIN
       EXECUTE PROCEDURE fly_move(eid, dt) RETURNING_VALUES wl, tid;
       IF (NOT EXISTS (SELECT 1 FROM ents e WHERE e.id = :eid)) THEN CONTINUE;
       UPDATE ents e SET e.vz = e.vz - (SELECT g.gravity FROM game g WHERE g.id = 1) * :dt / 2 WHERE e.id = :eid AND BIN_AND(e.flags, 512) = 0;
+      -- landed (PM_CrashLand): from the tic's start, the speed at the contact
+      IF (EXISTS (SELECT 1 FROM ents e WHERE e.id = :eid AND BIN_AND(e.flags, 512) <> 0) AND BIN_AND(flags, 512) = 0) THEN
+        EXECUTE PROCEDURE crash_land(eid, vz, (SELECT e.z FROM ents e WHERE e.id = :eid) - pz, (SELECT g.gravity FROM game g WHERE g.id = 1), 0,
+                                     (SELECT e.waterlevel FROM ents e WHERE e.id = :eid), 0);
       IF (wl = 3) THEN UPDATE ents e SET e.flags = BIN_OR(e.flags, 512) WHERE e.id = :eid;   -- could not move at all: it is standing in the floor
       IF (EXISTS (SELECT 1 FROM ents e WHERE e.id = :eid AND BIN_AND(e.flags, 512) <> 0)) THEN
       BEGIN
