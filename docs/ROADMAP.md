@@ -11,8 +11,9 @@ is a bug report; it is the gap between a 20 Hz SQL deathmatch and the 1999 game.
 
 ## 1. What you feel while playing
 
-| Gap | Quake III | Here | Where it would go |
-| --- | --- | --- | --- |
+Nothing left in this section: the frames between tics with the predicted player, crouching, the time
+limit with the intermission and the rotation, the view's kicks, the zoom, the weapon switch, the bots'
+chat, the rewards and the countdown, and spectating are all in (see §8). What is left starts with §2.
 
 ## 2. Movement and physics
 
