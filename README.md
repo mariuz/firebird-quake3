@@ -24,6 +24,10 @@ keyboard/mouse → SELECT * FROM q3_tic(...)        game logic: 20 Hz, PSQL
                → JS rasterises polygons, patches and models → canvas
 ```
 
+**Play it at [mariuz.github.io/firebird-quake3](https://mariuz.github.io/firebird-quake3/)** — the page downloads the demo pak, starts Firebird 6 in a Worker and drops you into the Arena Gate with three bots.
+
+![The live site: the Arena Gate at 320×240, the status bar, the controls and the SQL console](docs/live-site.png)
+
 ## Running it
 
 ```bash
