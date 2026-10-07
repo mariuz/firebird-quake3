@@ -344,6 +344,7 @@ CREATE TABLE player (
   flight_finished DOUBLE PRECISION DEFAULT 0 NOT NULL,
   holdable        SMALLINT DEFAULT 0 NOT NULL,            -- 1 teleporter 2 medkit
   jump_released   SMALLINT DEFAULT 1 NOT NULL,
+  ducked          SMALLINT DEFAULT 0 NOT NULL,            -- PMF_DUCKED: the box 16 high instead of 32, the eye at 12 instead of 26
   fly_sound_time  DOUBLE PRECISION DEFAULT 0 NOT NULL,
   step_time       DOUBLE PRECISION DEFAULT 0 NOT NULL,
   air_finished    DOUBLE PRECISION DEFAULT 0 NOT NULL,

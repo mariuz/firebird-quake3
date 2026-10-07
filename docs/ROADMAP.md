@@ -13,7 +13,6 @@ is a bug report; it is the gap between a 20 Hz SQL deathmatch and the 1999 game.
 
 | Gap | Quake III | Here | Where it would go |
 | --- | --- | --- | --- |
-| **Crouch** | `PM_CheckDuck`: box 16 high, view 12, speed ×0.25, crouch-sliding | none (no key, no ducked box) | `player.sql` `player_think`, a `ducked` column, `trace_move` with the small box; C key in `main.js`; the bots never crouch |
 | **Timelimit, intermission, map rotation** | `timelimit`, the intermission camera (`info_player_intermission`), the final scoreboard, awards, the next map | frag limit only; `exit_kind` 3 restarts the same arena | `score_frag`/`q3_tic` for the clock, `init_map` for the rotation, `hud.js` for the intermission screen |
 | **View kicks** | damage kicks the view toward the attacker (`CG_DamageFeedback`), landing dips, weapon recoil bob | screen tint on damage, a land dip; no directional kick | `player.dmg_*` already records where it came from; apply in `scene.js` |
 | **Zoom** | `+zoom` to 22.5 degrees with the railgun | none | `readInput` and `fov` per frame |
@@ -26,7 +25,6 @@ is a bug report; it is the gap between a 20 Hz SQL deathmatch and the 1999 game.
 
 | Gap | Notes |
 | --- | --- |
-| Crouch | see above |
 | Strafe-jumping accuracy | `PM_AirMove` and `PM_Accelerate` are here with Quake III's numbers; the air control feel depends on the 20 Hz tic and on `wishspeed` clamping, worth a side-by-side check against `bg_pmove.c` |
 | Ladders | Quake III has none; nothing to do |
 | Swimming | `PM_WaterMove` is here (swim, drown, surface jump); underwater sound filtering and the bubble trail are not |
@@ -116,7 +114,8 @@ fuzzy logic from the botfiles. What that leaves out:
 ## 8. Already there (for the record)
 
 Collision against brushes and patch facets, brush models with their own leaf, rotated models;
-`PM_GroundTrace`, slide and step moves, water; doors with auto triggers, plats, buttons, trains,
+`PM_GroundTrace`, slide and step moves, water, crouching (`PM_CheckDuck`, the crouch animations, the
+smoothed eye; the bots never crouch); doors with auto triggers, plats, buttons, trains,
 bobbing, pendulum, rotating, static, timers, speakers; jump pads (`AimAtTarget`), teleporters, hurt
 and multiple triggers, `G_UseTargets` with delays and relays, `target_give/kill/print/teleporter/
 remove_powerups/score`; every item of `bg_itemlist` with its respawn, armour at 66 percent, the five

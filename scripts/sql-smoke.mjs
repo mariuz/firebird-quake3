@@ -66,6 +66,34 @@ assert(moved > 150, `player ran forward (${moved.toFixed(1)} units in a second)`
 for (let i = 0; i < 10 && s.ONGROUND !== 1; i++) s = await tic([1, 0, 0, 0, 0, 0, 0, 1, 0]);   // the last step may have been off a stair
 assert(s.ONGROUND === 1, 'player is on the ground after walking');
 
+// crouch (PM_CheckDuck): the box and the eye go down, the walk slows to a quarter, and we stay down
+// while something blocks standing up. Back the way we came, which is clear for 150 units
+{
+  const pe = (await db.query('SELECT ent_id e FROM player')).rows[0].E;
+  await tic([1, 0, 0, 180, 0, 0, 0, 1, 0]);
+  for (let i = 0; i < 3; i++) s = await tic([1, 0, 0, 0, 0, 0, -1, 1, 0]);
+  // (the eye's height in the tic row also carries the stair smoothing, so the table's offset is what we check)
+  const box = (await db.query(`SELECT e.maxz, e.viewheight, p.view_ofs FROM ents e JOIN player p ON p.ent_id = e.id WHERE e.id = ${pe}`)).rows[0];
+  assert(s.DUCKED === 1 && box.MAXZ === 16 && box.VIEW_OFS === 12 && box.VIEWHEIGHT === 12, `crouching: the box 16 high, the eye 12 above the origin instead of 26 (${box.VIEW_OFS})`);
+  const from = { x: s.PX, y: s.PY };
+  for (let i = 0; i < 20; i++) s = await tic([1, 1, 0, 0, 0, 0, -1, 1, 0]);
+  const crept = Math.hypot(s.PX - from.x, s.PY - from.y);
+  assert(crept > 40 && crept < 100, `crouch-walking is a quarter of the run (${crept.toFixed(1)} units in a second)`);
+  // a bot standing on our head: no room to stand up
+  const b = (await db.query("SELECT FIRST 1 id FROM ents WHERE classname = 'bot' ORDER BY id")).rows[0].ID;
+  const keep = (await db.query(`SELECT x, y, z FROM ents WHERE id = ${b}`)).rows[0];
+  await db.exec(`UPDATE ents SET x = ${s.PX}, y = ${s.PY}, z = ${s.PZ + 41}, vx = 0, vy = 0, vz = 0, nextthink = 1e9 WHERE id = ${b}`);
+  await db.exec(`EXECUTE PROCEDURE link_ent(${b})`);
+  for (let i = 0; i < 3; i++) s = await tic([1, 0, 0, 0, 0, 0, 0, 1, 0]);
+  assert(s.DUCKED === 1, 'no room above: we stay crouched with the key released');
+  await db.exec(`UPDATE ents SET x = ${keep.X}, y = ${keep.Y}, z = ${keep.Z}, nextthink = 0 WHERE id = ${b}`);
+  await db.exec(`EXECUTE PROCEDURE link_ent(${b})`);
+  s = await tic([1, 0, 0, 0, 0, 0, 0, 1, 0]);
+  const stood = (await db.query(`SELECT e.maxz, p.view_ofs FROM ents e JOIN player p ON p.ent_id = e.id WHERE e.id = ${pe}`)).rows[0];
+  assert(s.DUCKED === 0 && stood.MAXZ === 32 && stood.VIEW_OFS === 26, 'room again: we stand up, the box 32 high, the eye back at 26');
+  await tic([1, 0, 0, 180, 0, 0, 0, 1, 0]);
+}
+
 // turn around and walk into whatever is behind: we must never be inside a wall
 await tic([1, 0, 0, 180, 0, 0, 0, 1, 0]);
 for (let i = 0; i < 60; i++) s = await tic([1, 1, 0, 0, 0, 0, 0, 1, 0]);

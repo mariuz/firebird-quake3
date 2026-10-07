@@ -195,7 +195,7 @@ On top of the trace:
 
 The player's numbers are Quake III's: run 320 units a second (walk 160 with Shift), ground
 acceleration 10, air acceleration 1, friction 6, jump 270, gravity 800, step 18, box −15..15 by
-−24..32, view height 26.
+−24..32, view height 26; crouched, the box −24..16, the view 12, the walk ×0.25.
 
 ---
 
@@ -209,8 +209,13 @@ sound, the lead state. Each tic:
 
 1. advances `game.time_` and the tic counter;
 2. `player_think` (`player.sql`): angles from the mouse, `view_vectors`, the water and ground state,
-   `PM_WalkMove` / `PM_AirMove` / `PM_WaterMove` through `walk_move` and `fly_move`, jumping and
-   landing with their sounds, footsteps on a distance clock, drowning, lava and slime damage, item and
+   `PM_CheckDuck` (the `jump` argument is Quake III's upmove: 1 jumps, −1 crouches; crouched, the box
+   is 16 high instead of 32 and the eye 12 above the origin instead of 26, kept in `player.ducked`,
+   `view_ofs`, `ents.maxz` and `viewheight`; the player stands up again only where a trace of the
+   standing box fits), `PM_WalkMove` / `PM_AirMove` / `PM_WaterMove` through `walk_move` and
+   `fly_move` (a crouching walk at a quarter of the speed, `pm_duckScale`; −1 swims down), jumping and
+   landing with their sounds, the legs animation (run, back, idle, crouch-walk `LEGS_WALKCR`,
+   crouch-idle `LEGS_IDLECR`, jump, land), footsteps on a distance clock but never while crouched, drowning, lava and slime damage, item and
    trigger touching through `touch_triggers`, weapon switching with Quake III's raise/drop timing
    (`weaponstate`, `pending_weapon`), firing through `player_fire`, the impulses (1–9 weapons, 12/14
    cycle, 13 holdable, 99 give all), powerup timers, health decay above the maximum;
@@ -457,7 +462,7 @@ The loop (`frame`) runs on `requestAnimationFrame` with a 60 ms `setTimeout` fal
 display's rate; the game runs at 20 Hz inside it. When a 50 ms tic is due (one or two at most, so a
 slow machine plays in slow motion rather than stalling) it calls `q3_tic` with the input (`readInput`:
 WASD or arrows, mouse look with pointer lock on the `#screen-wrap`, Ctrl or click fires, Space jumps,
-Shift walks, 1–9 weapons, `/` or the wheel cycles, Enter or H uses the holdable, Tab shows the
+C crouches, Shift walks, 1–9 weapons, `/` or the wheel cycles, Enter or H uses the holdable, Tab shows the
 scoreboard, G gives everything, P pauses; touch: the left half moves, the right half looks, a tap
 fires) and keeps the previous tic's row and poses. Every frame, ticked or not, sits a fraction
 `alpha` of the way into the current tic, and is painted the way the original's client paints:
@@ -479,7 +484,8 @@ fires) and keeps the previous tic's row and poses. Every frame, ticked or not, s
   `1 − alpha`, snapping instead when something jumped more than 200 units (a teleport); the clock
   is interpolated the same way.
 
-So the look has no latency, your own motion about none (it is the last tic's motion carried on),
+When the eye drops or rises 14 units for a crouch, the page spreads the step over 100 ms
+(`CG_OffsetFirstPersonView`'s `DUCK_TIME`). So the look has no latency, your own motion about none (it is the last tic's motion carried on),
 and the others are one tic (50 ms) behind, as in the original. The rows then go to
 `scene.js` and `audio.js`; on ticked frames the loop also refreshes the scoreboard and, while the
 waypoint graph is incomplete, runs `buildWaypoints`. `document.hidden` pauses it. The stats line
@@ -501,7 +507,7 @@ passes in Node is what runs in the browser.
 | --- | --- |
 | `npm run fetch-pak` | downloads the demo and extracts `public/pak/pak0.pk3` |
 | `npm run check` | compiles every SQL file into a fresh engine, reports the first error with Firebird's message |
-| `npm test` | `sql-smoke.mjs q3dm1`: loads the map, walks, turns, jumps, lands, takes a jump pad, fires every weapon, checks the frame queries, the effects and that every queued sound exists in the pak |
+| `npm test` | `sql-smoke.mjs q3dm1`: loads the map, walks, crouches (and stays down under a bot standing on its head), turns, jumps, lands, takes a jump pad, fires every weapon, checks the frame queries, the effects and that every queued sound exists in the pak |
 | `npm run test:dm7`, `test:dm17` | the smoke test on the other arenas (q3dm17 for the pads) |
 | `npm run test:bots` | `bots-test.mjs`: four bots join, see, fire, die, respawn, pick up a weapon, a bot hunts the player from the farthest spawn over the graph, a minute of play scores frags and strands nobody |
 | `npm run test:bots:dm17` | the same on q3dm17, plus: the bots take the jump pads |

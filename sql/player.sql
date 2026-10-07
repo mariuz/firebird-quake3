@@ -348,7 +348,7 @@ BEGIN
          e.flags = BIN_AND(e.flags, 16), e.deadflag = 0, e.model_id = NULL, e.alpha = 1, e.legs_anim = 22, e.legs_time = :t, e.torso_anim = 11, e.torso_time = :t,
          e.weapon = 2, e.teleport_time = :t + 0.3e0, e.lx = NULL WHERE e.id = :pe;
   UPDATE player p SET p.armor = 0, p.bullets = 100, p.shells = 0, p.grenades = 0, p.rockets = 0, p.lightning = 0, p.slugs = 0, p.cells = 0, p.bfg = 0,
-         p.weapons = 3, p.weapon = 2, p.pending_weapon = 0, p.weaponstate = 0, p.attack_finished = :t + 0.3e0, p.attack_start = 0, p.pain_finished = 0, p.punchangle = 0, p.view_ofs = 26,
+         p.weapons = 3, p.weapon = 2, p.pending_weapon = 0, p.weaponstate = 0, p.attack_finished = :t + 0.3e0, p.attack_start = 0, p.pain_finished = 0, p.punchangle = 0, p.view_ofs = 26, p.ducked = 0,
          p.dmg_take = 0, p.dmg_save = 0, p.dmg_time = -10, p.bonus_time = -10, p.quad_finished = 0, p.haste_finished = 0, p.invis_finished = 0, p.regen_finished = 0, p.enviro_finished = 0, p.flight_finished = 0,
          p.holdable = 0, p.jump_released = 1, p.air_finished = :t + 12, p.drown_dmg = 2, p.pitch = 0, p.stepz = 0, p.dead_time = 0, p.weapon_sound = 0, p.health_decay = :t + 1, p.spawn_protect = :t + 0.5e0 WHERE p.id = 1;
   EXECUTE PROCEDURE link_ent(pe);
@@ -367,7 +367,7 @@ BEGIN
   EXECUTE PROCEDURE say(obituary(pe, attacker, mod_));
   EXECUTE PROCEDURE score_frag(attacker, pe, mod_);
   UPDATE ents e SET e.deadflag = 1, e.solid = 0, e.movetype = 6, e.takedamage = 0, e.viewheight = -8, e.minz = -24, e.maxz = -8, e.weapon = 0 WHERE e.id = :pe;
-  UPDATE player p SET p.dead_time = :t, p.deaths = p.deaths + 1, p.view_ofs = -8, p.weapon = 0, p.pending_weapon = 0, p.weaponstate = 0, p.quad_finished = 0, p.haste_finished = 0, p.invis_finished = 0, p.regen_finished = 0, p.enviro_finished = 0, p.flight_finished = 0 WHERE p.id = 1;
+  UPDATE player p SET p.dead_time = :t, p.deaths = p.deaths + 1, p.view_ofs = -8, p.ducked = 0, p.weapon = 0, p.pending_weapon = 0, p.weaponstate = 0, p.quad_finished = 0, p.haste_finished = 0, p.invis_finished = 0, p.regen_finished = 0, p.enviro_finished = 0, p.flight_finished = 0 WHERE p.id = 1;
   IF (hp < -40) THEN
   BEGIN
     EXECUTE PROCEDURE gib_ent(pe, -hp);
@@ -384,6 +384,7 @@ BEGIN
 END^
 
 -- ClientThink + Pmove + ClientEndServerFrame for one tic
+-- `jump` is Quake III's upmove: 1 jumps (or swims up), -1 crouches (or swims down), 0 neither
 CREATE OR ALTER PROCEDURE player_think (dt DOUBLE PRECISION, fwd DOUBLE PRECISION, side DOUBLE PRECISION,
   yaw_d DOUBLE PRECISION, pitch_d DOUBLE PRECISION, fire SMALLINT, jump SMALLINT, run SMALLINT, imp SMALLINT)
 AS
@@ -404,10 +405,10 @@ DECLARE tst SMALLINT; DECLARE tid INTEGER;
 DECLARE afin DOUBLE PRECISION; DECLARE hp INTEGER; DECLARE deadt DOUBLE PRECISION; DECLARE oldz DOUBLE PRECISION;
 DECLARE enviro DOUBLE PRECISION; DECLARE haste DOUBLE PRECISION; DECLARE regen DOUBLE PRECISION; DECLARE ndt DOUBLE PRECISION; DECLARE ddmg INTEGER; DECLARE mhp INTEGER;
 DECLARE grav DOUBLE PRECISION; DECLARE tt DOUBLE PRECISION; DECLARE legs INTEGER; DECLARE hdecay DOUBLE PRECISION; DECLARE rt DOUBLE PRECISION; DECLARE stept DOUBLE PRECISION;
-DECLARE mover SMALLINT; DECLARE pm VARCHAR(16); DECLARE match_done SMALLINT;
+DECLARE mover SMALLINT; DECLARE pm VARCHAR(16); DECLARE match_done SMALLINT; DECLARE ducked SMALLINT; DECLARE maxz DOUBLE PRECISION;
 BEGIN
-  SELECT p.ent_id, p.jump_released, p.air_finished, p.dead_time, p.enviro_finished, p.haste_finished, p.regen_finished, p.next_drown_time, p.drown_dmg, p.health_decay, p.regen_time, p.step_time
-    FROM player p WHERE p.id = 1 INTO pe, jr, afin, deadt, enviro, haste, regen, ndt, ddmg, hdecay, rt, stept;
+  SELECT p.ent_id, p.jump_released, p.air_finished, p.dead_time, p.enviro_finished, p.haste_finished, p.regen_finished, p.next_drown_time, p.drown_dmg, p.health_decay, p.regen_time, p.step_time, p.ducked
+    FROM player p WHERE p.id = 1 INTO pe, jr, afin, deadt, enviro, haste, regen, ndt, ddmg, hdecay, rt, stept, ducked;
   IF (pe IS NULL) THEN EXIT;
   SELECT e.deadflag, e.flags, e.waterlevel, e.watertype, e.yaw, e.health, e.z, e.max_health, e.teleport_time, e.legs_anim, e.pmodel
     FROM ents e WHERE e.id = :pe INTO dead, flags, owl, wt, yaw, hp, oldz, mhp, tt, legs, pm;
@@ -466,9 +467,22 @@ BEGIN
   END
   IF (NOT EXISTS (SELECT 1 FROM ents e WHERE e.id = :pe AND e.deadflag = 0)) THEN EXIT;
 
-  -- PM_GroundTrace: a quarter unit down
   SELECT e.vx, e.vy, e.vz, e.flags, e.x, e.y, e.z FROM ents e WHERE e.id = :pe INTO vx, vy, vz, flags, px, py, pz;
-  EXECUTE PROCEDURE trace_move(pe, -15, -15, -24, 15, 15, 32, px, py, pz, px, py, pz - 0.25e0, 33619969)
+
+  -- PM_CheckDuck: down while the crouch key is held; up again only where the standing box fits
+  IF (jump = -1) THEN ducked = 1;
+  ELSE IF (ducked = 1) THEN
+  BEGIN
+    EXECUTE PROCEDURE trace_move(pe, -15, -15, -24, 15, 15, 32, px, py, pz, px, py, pz, 33619969)
+      RETURNING_VALUES f, ex, ey, ez, gnx, gny, gnz, sf, ct, als, sts, hit;
+    IF (als = 0 AND sts = 0) THEN ducked = 0;
+  END
+  maxz = IIF(ducked = 1, 16, 32);
+  UPDATE ents e SET e.maxz = :maxz, e.viewheight = IIF(:ducked = 1, 12, 26) WHERE e.id = :pe AND e.maxz <> :maxz;
+  UPDATE player p SET p.ducked = :ducked, p.view_ofs = IIF(:ducked = 1, 12, 26) WHERE p.id = 1 AND p.ducked <> :ducked;
+
+  -- PM_GroundTrace: a quarter unit down
+  EXECUTE PROCEDURE trace_move(pe, -15, -15, -24, 15, 15, maxz, px, py, pz, px, py, pz - 0.25e0, 33619969)
     RETURNING_VALUES f, ex, ey, ez, gnx, gny, gnz, sf, ct, als, sts, hit;
   onground = IIF(f < 1 AND gnz >= 0.7e0 AND NOT (vz > 0 AND vx * gnx + vy * gny + vz * gnz > 10), 1, 0);
   IF (als = 1 OR sts = 1) THEN onground = 1;
@@ -482,6 +496,8 @@ BEGIN
   flags = IIF(onground = 1, BIN_OR(flags, 512), BIN_AND(flags, BIN_NOT(512)));
   maxspd = IIF(run = 1, 320, 160);
   IF (haste > t) THEN maxspd = maxspd * 1.3e0;
+  -- PM_WalkMove: a crouching player walks at a quarter of the speed (pm_duckScale); in the air or the water, no change
+  IF (ducked = 1 AND onground = 1 AND wl < 2) THEN maxspd = maxspd * 0.25e0;
 
   -- PM_CheckJump
   IF (jump = 1) THEN
@@ -534,6 +550,7 @@ BEGIN
     wx = fx_ * fwd * maxspd + rx * side * maxspd; wy = fy * fwd * maxspd + ry * side * maxspd; wz = fz * fwd * maxspd;
     IF (fwd = 0 AND side = 0 AND jump = 0) THEN wz = wz - 60;
     ELSE IF (jump = 1) THEN wz = wz + 200;
+    ELSE IF (jump = -1) THEN wz = wz - 200;
     wspd = vlen(wx, wy, wz);
     IF (wspd > maxspd) THEN BEGIN wx = wx * maxspd / wspd; wy = wy * maxspd / wspd; wz = wz * maxspd / wspd; wspd = maxspd; END
     wspd = wspd * 0.5e0;
@@ -589,15 +606,20 @@ BEGIN
   UPDATE player p SET p.stepz = IIF(:onground = 1 AND :pz - :oldz > 0 AND :pz - :oldz <= 18, MINVALUE(p.stepz + (:pz - :oldz), 18), MAXVALUE(0, p.stepz - 160 * :dt)),
          p.move_speed = vlen(:vx, :vy, 0), p.onground = :onground WHERE p.id = 1;
 
-  -- the legs: run, back-pedal, idle, or still in the air
+  -- the legs: run, back-pedal, idle, crouch-walk, crouch-idle, or still in the air
   IF (onground = 1 AND legs IN (18, 20) AND tt < t) THEN BEGIN EXECUTE PROCEDURE set_anims(pe, 19, NULL); legs = 19; END
+  ELSE IF (onground = 1 AND ducked = 1) THEN
+  BEGIN
+    IF (vlen(vx, vy, 0) > 10 AND legs <> 13) THEN EXECUTE PROCEDURE set_anims(pe, 13, NULL);         -- LEGS_WALKCR
+    ELSE IF (vlen(vx, vy, 0) <= 10 AND legs <> 23) THEN EXECUTE PROCEDURE set_anims(pe, 23, NULL);   -- LEGS_IDLECR
+  END
   ELSE IF (onground = 1 AND legs <> 19) THEN
   BEGIN
     IF (vlen(vx, vy, 0) > 40 AND legs NOT IN (IIF(fwd < 0, 16, 15))) THEN EXECUTE PROCEDURE set_anims(pe, IIF(fwd < 0, 16, 15), NULL);
     ELSE IF (vlen(vx, vy, 0) <= 40 AND legs <> 22) THEN EXECUTE PROCEDURE set_anims(pe, 22, NULL);
   END
-  -- footsteps
-  IF (onground = 1 AND vlen(vx, vy, 0) > 100 AND stept < t) THEN
+  -- footsteps (PM_Footsteps: "ducked characters never play footsteps")
+  IF (onground = 1 AND ducked = 0 AND vlen(vx, vy, 0) > 100 AND stept < t) THEN
   BEGIN
     UPDATE player p SET p.step_time = :t + 0.3e0 WHERE p.id = 1;
     EXECUTE PROCEDURE snd(pe, 2, IIF(wl > 0, 'sound/player/footsteps/splash' || CAST(1 + FLOOR(RAND() * 4) AS INTEGER) || '.wav', 'sound/player/footsteps/step' || CAST(1 + FLOOR(RAND() * 4) AS INTEGER) || '.wav'), 0.6e0, 1);

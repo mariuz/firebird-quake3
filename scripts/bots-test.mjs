@@ -70,6 +70,11 @@ if (item) {
 {
   const wp = (await q('SELECT COUNT(*) n, (SELECT COUNT(*) FROM wp_edges) e FROM waypoints'))[0];
   assert(wp.N > 20 && wp.E > wp.N, `the waypoint graph has ${wp.N} nodes and ${wp.E} edges`);
+  // we stand on a spawn point (the earlier play may have knocked us into q3dm17's void, god mode or not)
+  const home = (await q("SELECT FIRST 1 e.x, e.y, e.z FROM ents e WHERE e.classname = 'info_player_deathmatch' ORDER BY e.id"))[0];
+  await db.exec(`UPDATE ents SET x = ${home.X}, y = ${home.Y}, z = ${home.Z + 9}, vx = 0, vy = 0, vz = 0 WHERE id = ${pe}`);
+  await db.exec(`EXECUTE PROCEDURE link_ent(${pe})`);
+  await tic(2);
   const me = (await q(`SELECT x, y, z FROM ents WHERE id = ${pe}`))[0];
   const far = (await q(`SELECT FIRST 1 e.id, e.x, e.y, e.z FROM ents e WHERE e.classname = 'info_player_deathmatch' ORDER BY (e.x - ${me.X}) * (e.x - ${me.X}) + (e.y - ${me.Y}) * (e.y - ${me.Y}) DESC`))[0];
   // the other bots sit this one out

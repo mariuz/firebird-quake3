@@ -38,6 +38,7 @@ let prev = null;         // the one before: the frame between two tics is painte
 let prevPose = null, curPose = null;   // the entities' and brush models' poses at those tics
 let frameAt = 0;         // when the last frame was painted
 let lastTics = 1;        // how many tics the last q3_tic call ran (the displacement prev → last covers them)
+let duckChange = 0, duckTime = -1e9;   // the eye's last crouch or stand step, and when it happened
 let running = false;
 let paused = false;
 let lastTic = 0;
@@ -73,7 +74,7 @@ let impulse = 0;
 let scoreboard = false;
 const GAME_KEYS = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space', 'KeyE',
   'ControlLeft', 'ControlRight', 'ShiftLeft', 'ShiftRight', 'Tab', 'Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5', 'Digit6', 'Digit7',
-  'Digit8', 'Digit9', 'Digit0', 'KeyF', 'KeyG', 'Comma', 'Period', 'PageUp', 'PageDown', 'Slash', 'Enter', 'KeyH']);
+  'Digit8', 'Digit9', 'Digit0', 'KeyF', 'KeyG', 'Comma', 'Period', 'PageUp', 'PageDown', 'Slash', 'Enter', 'KeyH', 'KeyC']);
 window.addEventListener('keydown', (e) => {
   if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement) return;
   if (!running) return;
@@ -148,7 +149,8 @@ function readInput(tics) {
   mouseYaw = 0; mousePitch = 0;
   const fire = k('ControlLeft') || k('ControlRight') || k('KeyF') || fireClick ? 1 : 0;
   if (fireClick === 'tap') fireClick = false;
-  const jump = k('Space') || k('KeyE') || k('TapJump') ? 1 : 0;
+  // upmove, as Quake III has it: 1 jumps, -1 crouches (C, Quake III's +movedown key)
+  const jump = k('Space') || k('KeyE') || k('TapJump') ? 1 : k('KeyC') ? -1 : 0;
   keys.delete('TapJump');
   const imp = impulse;
   impulse = 0;
@@ -244,6 +246,8 @@ function viewRow(alpha, now) {
   const v = { ...last, YAW: (last.YAW + yawLive) % 360, PITCH: Math.max(-89, Math.min(89, last.PITCH + pitchLive)) };
   if (!prev || alpha >= 1 || Math.hypot(last.PX - prev.PX, last.PY - prev.PY, last.PZ - prev.PZ) >= SNAP) return v;
   v.TIME_ = lerp(prev.TIME_, last.TIME_, alpha);
+  const duckLeft = Math.max(0, 1 - (now - duckTime) / 100);
+  if (duckLeft > 0) v.VIEW_Z += duckChange * duckLeft;
   if (last.DEAD || !settings.predict) return v;
   // the displacement of one tic, carried on for alpha of the next; with no move key down on the
   // ground, friction is stopping us, so carry on half as far (an overshoot that snaps back is worse
@@ -255,7 +259,7 @@ function viewRow(alpha, now) {
   // up and down only in the air on both tics: a landing would otherwise sink the eye into the floor
   if (!last.ONGROUND && !prev.ONGROUND) {
     v.PZ = last.PZ + (last.PZ - prev.PZ) * kk;
-    v.VIEW_Z = last.VIEW_Z + (last.VIEW_Z - prev.VIEW_Z) * kk;
+    v.VIEW_Z += (last.PZ - prev.PZ) * kk;     // the body's motion, not the eye's (a crouch in the air moves the eye 14)
   }
   v.predicted = true;
   return v;
@@ -283,6 +287,12 @@ async function frame() {
       perf.tic = performance.now() - t;
       ticked = tics;
       lastTics = tics;
+      if (prev && !last.DEAD && !prev.DEAD && last.DUCKED !== prev.DUCKED) {
+        // the eye drops 14 units or rises 14: spread it over 100 ms, carrying what is left of the last one
+        const left = Math.max(0, 1 - (now - duckTime) / 100) * duckChange;
+        duckChange = (last.DUCKED ? 14 : -14) + left;
+        duckTime = now;
+      }
       if (last.EXIT_KIND === 3) {
         await startMap(map.name);
         nextFrame();
