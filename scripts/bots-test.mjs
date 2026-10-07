@@ -46,12 +46,17 @@ s = (await q(`SELECT st, deadflag, respawn_time FROM ents WHERE id = ${b}`))[0];
 assert(s.DEADFLAG === 1 && s.ST.trim() === 'dead', `the bot died (hp was ${hpBefore})`);
 const frags = (await q('SELECT frags FROM player'))[0].FRAGS;
 assert(frags === 1, `we were credited the frag (${frags})`);
-const obit = (await q('SELECT msg FROM messages ORDER BY id DESC'))[0]?.MSG;
-assert(obit && obit.includes('railed'), `the obituary reads "${obit}"`);
+// (the obituary, among the last lines: the dying bot may have said something after it)
+const obit = (await q('SELECT FIRST 4 msg FROM messages ORDER BY id DESC')).map((m) => m.MSG).find((m) => m.includes('railed'));
+assert(obit, `the obituary reads "${obit}"`);
 const corpses = (await q("SELECT COUNT(*) n FROM ents WHERE classname = 'corpse'"))[0].N;
 assert(corpses >= 1, `a corpse was left (${corpses})`);
-for (let i = 0; i < 120; i++) await tic();
-s = (await q(`SELECT st, deadflag, health, cluster FROM ents WHERE id = ${b}`))[0];
+// (watched tic by tic: back in the fight, it can die again before the six seconds are up)
+for (let i = 0; i < 120; i++) {
+  await tic();
+  s = (await q(`SELECT st, deadflag, health, cluster FROM ents WHERE id = ${b}`))[0];
+  if (s.DEADFLAG === 0 && s.HEALTH > 0) break;
+}
 assert(s.DEADFLAG === 0 && s.HEALTH > 0 && s.CLUSTER !== null, `the bot respawned (hp ${s.HEALTH})`);
 
 // a bot picks up a weapon: drop it on one

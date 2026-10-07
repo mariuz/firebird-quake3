@@ -267,6 +267,7 @@ DECLARE qx DOUBLE PRECISION; DECLARE qy DOUBLE PRECISION; DECLARE world INTEGER;
 DECLARE eid INTEGER; DECLARE emid INTEGER; DECLARE cls VARCHAR(200) CHARACTER SET ASCII; DECLARE cl INTEGER; DECLARE rot SMALLINT;
 DECLARE vis SMALLINT; DECLARE vis_cl INTEGER;
 DECLARE pm VARCHAR(16); DECLARE ps VARCHAR(16); DECLARE la INTEGER; DECLARE ta INTEGER; DECLARE hp INTEGER; DECLARE cn VARCHAR(40); DECLARE alpha SMALLINT;
+DECLARE tn DOUBLE PRECISION;
 BEGIN
   SELECT g.world_model FROM game g WHERE g.id = 1 INTO world;
   pe = player_ent();
@@ -332,7 +333,11 @@ BEGIN
   -- the PVS, with their pose. The frustum test is in the WHERE clause so only the entities in view
   -- reach the PVS test; the sphere is the model's radius plus a margin that covers a player's box.
   kind = 2;
-  FOR SELECT e.id, e.model_id, e.frame, e.weapon, e.effects, e.x, e.y, e.z, e.pitch, e.yaw, e.roll, e.legs_time, e.torso_time,
+  tn = now_();
+  FOR SELECT e.id, e.model_id, e.frame, e.weapon,
+             -- the medal over the head for two seconds: 8192 excellent, 16384 gauntlet, 32768 impressive
+             e.effects + IIF(e.award > 0 AND e.award_time > :tn - 2, CASE e.award WHEN 1 THEN 8192 WHEN 2 THEN 32768 WHEN 3 THEN 16384 ELSE 0 END, 0),
+             e.x, e.y, e.z, e.pitch, e.yaw, e.roll, e.legs_time, e.torso_time,
              e.pmodel, e.pskin, e.legs_anim, e.torso_anim, e.health, e.classname, e.cluster, e.clusters
         FROM ents e LEFT JOIN models m ON m.id = e.model_id
        WHERE (m.kind IN ('M', 'S') OR e.pmodel IS NOT NULL) AND e.id <> :pe AND e.alpha = 0

@@ -210,6 +210,86 @@ if (pad) {
 }
 
 // every sound we queued exists in the pak
+// the rewards (player_die, weapon_railgun_fire): excellent, gauntlet, impressive
+{
+  const pe = (await db.query('SELECT ent_id e FROM player')).rows[0].E;
+  const said = async (name) => (await db.query(`SELECT COUNT(*) n FROM sound_events WHERE snd = '${name}'`)).rows[0].N;
+  await db.exec("UPDATE ents SET nextthink = 1e9 WHERE classname = 'bot'");
+  const bots = (await db.query("SELECT id FROM ents WHERE classname = 'bot' ORDER BY id")).rows.map((r) => r.ID);
+  // (a bot the earlier play killed stands up again for this)
+  const revive = (b) => db.exec(`UPDATE ents SET health = 125, deadflag = 0, st = 'stand', solid = 3, takedamage = 2, alpha = 0, flags = 32 WHERE id = ${b}`);
+  const before = (await db.query(`SELECT n_excellent, n_gauntlet, n_impressive FROM ents WHERE id = ${pe}`)).rows[0];
+  // two frags within three seconds
+  await revive(bots[0]); await revive(bots[1]); await revive(bots[2]);
+  await db.exec(`EXECUTE PROCEDURE t_damage(${bots[0]}, ${pe}, ${pe}, 500, 0, 8, 2)`);
+  s = await tic([1, 0, 0, 0, 0, 0, 0, 1, 0]);
+  await db.exec(`EXECUTE PROCEDURE t_damage(${bots[1]}, ${pe}, ${pe}, 500, 0, 8, 2)`);
+  s = await tic([1, 0, 0, 0, 0, 0, 0, 1, 0]);
+  assert(s.AWARD === 1 && s.N_EXCELLENT === before.N_EXCELLENT + 1 && await said('sound/feedback/excellent.wav') > 0, `two frags in three seconds: excellent (${s.N_EXCELLENT})`);
+  // a gauntlet frag
+  await db.exec(`EXECUTE PROCEDURE t_damage(${bots[2]}, ${pe}, ${pe}, 500, 0, 8, 1)`);
+  s = await tic([1, 0, 0, 0, 0, 0, 0, 1, 0]);
+  assert(s.N_GAUNTLET === before.N_GAUNTLET + 1 && await said('sound/feedback/humiliation.wav') > 0, `a gauntlet frag: the gauntlet medal, "humiliation" (${s.N_GAUNTLET})`);
+  // the medal floats over a bot's head too: give one to a bot and look at it
+  await db.exec(`EXECUTE PROCEDURE give_award(${bots[0]}, 2)`);
+  const fx = (await db.query(`SELECT e.effects + IIF(e.award > 0 AND e.award_time > (SELECT time_ FROM game) - 2, 32768, 0) f FROM ents e WHERE e.id = ${bots[0]}`)).rows[0].F;
+  assert((fx & 32768) !== 0, 'a bot\'s fresh medal is an effect bit for the painter');
+  // two railgun hits in a row: impressive. Facing a heading with 200 units of room, a bot 150 units ahead
+  {
+    const p = (await db.query(`SELECT x, y, z FROM ents WHERE id = ${pe}`)).rows[0];
+    for (const yaw of [0, 45, 90, 135, 180, 225, 270, 315]) {
+      const a = (yaw * Math.PI) / 180;
+      const t = (await db.query(`SELECT fraction f FROM trace_move(${pe}, -15, -15, -24, 15, 15, 32, ${p.X}, ${p.Y}, ${p.Z}, ${p.X + Math.cos(a) * 200}, ${p.Y + Math.sin(a) * 200}, ${p.Z}, 1)`)).rows[0];
+      if (t.F === 1) { await db.exec(`UPDATE ents SET yaw = ${yaw} WHERE id = ${pe}`); break; }
+    }
+  }
+  const aim = async () => {
+    const p = (await db.query(`SELECT x, y, z, yaw FROM ents WHERE id = ${pe}`)).rows[0];
+    const a = (p.YAW * Math.PI) / 180;
+    await db.exec(`UPDATE ents SET x = ${p.X + Math.cos(a) * 150}, y = ${p.Y + Math.sin(a) * 150}, z = ${p.Z}, vx = 0, vy = 0, vz = 0, health = 125, deadflag = 0, st = 'stand', solid = 3, takedamage = 2, alpha = 0 WHERE id = ${bots[1]}`);
+    await db.exec(`EXECUTE PROCEDURE link_ent(${bots[1]})`);
+  };
+  await db.exec(`UPDATE player SET pitch = 0, weapons = 511, slugs = 50 WHERE id = 1`);
+  s = await tic([1, 0, 0, 0, 0, 0, 0, 1, 7]);
+  for (let i = 0; i < 12; i++) s = await tic([1, 0, 0, 0, 0, 0, 0, 1, 0]);
+  const imp0 = s.N_IMPRESSIVE;
+  for (let shot = 0; shot < 2; shot++) {
+    await aim();
+    s = await tic([1, 0, 0, 0, 0, 1, 0, 1, 0]);
+    for (let i = 0; i < 32; i++) s = await tic([1, 0, 0, 0, 0, 0, 0, 1, 0]);
+  }
+  assert(s.WEAPON === 64 && s.N_IMPRESSIVE === imp0 + 1 && await said('sound/feedback/impressive.wav') > 0, `two railgun hits in a row: impressive (${s.N_IMPRESSIVE})`);
+  await db.exec("UPDATE ents SET nextthink = 0 WHERE classname = 'bot'");
+}
+
+// the countdown (CG_DrawWarmup): three, two, one, "fight!", and no firing before it
+{
+  // (sound events live 40 tics: note each as it comes)
+  let seen = (await db.query('SELECT MAX(id) m FROM sound_events')).rows[0].M ?? 0;
+  const heard = new Map();
+  await db.exec('UPDATE game SET warmup_end = time_ + 3.5, warmup_said = 4 WHERE id = 1');
+  const ammo = (await db.query('SELECT slugs FROM player')).rows[0].SLUGS;
+  for (let i = 0; i < 80; i++) {
+    s = await tic([1, 0, 0, 0, 0, 1, 0, 1, 0]);
+    for (const e of (await db.query(`SELECT id, snd FROM sound_events WHERE id > ${seen} ORDER BY id`)).rows) {
+      seen = e.ID;
+      const m = /feedback\/(three|two|one|fight)\.wav/.exec(e.SND);
+      if (m && !heard.has(m[1])) heard.set(m[1], i);
+    }
+  }
+  const order = ['three', 'two', 'one', 'fight'].map((n) => heard.get(n));
+  const shotDuring = (await db.query('SELECT slugs FROM player')).rows[0].SLUGS;
+  assert(order.every((n) => n !== undefined) && order[0] < order[1] && order[1] < order[2] && order[2] < order[3], `the countdown: three, two, one, fight, a second apart (at tics ${order.join(', ')})`);
+  assert(shotDuring < ammo, `firing works once it is over (${ammo} → ${shotDuring} slugs)`);
+  await db.exec('UPDATE game SET warmup_end = time_ + 2, warmup_said = 4 WHERE id = 1');
+  const a0 = (await db.query('SELECT slugs FROM player')).rows[0].SLUGS;
+  for (let i = 0; i < 20; i++) s = await tic([1, 0, 0, 0, 0, 1, 0, 1, 0]);
+  const a1 = (await db.query('SELECT slugs FROM player')).rows[0].SLUGS;
+  assert(a1 === a0 && s.WARMUP_END > s.TIME_, `no firing before "fight!" (${a0} slugs, still ${a1})`);
+  for (let i = 0; i < 30; i++) s = await tic([1, 0, 0, 0, 0, 0, 0, 1, 0]);
+  await db.exec('UPDATE game SET warmup_end = 0, warmup_said = 0 WHERE id = 1');
+}
+
 // the page's predicted eye: passed through when it is the real one, clamped by a trace when it runs into a wall
 {
   const e = (await db.query('SELECT ex, ey, ez, fx, fy FROM view_setup')).rows[0];

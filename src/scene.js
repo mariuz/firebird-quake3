@@ -196,6 +196,9 @@ export function drawScene(renderer, hud, res, bsp, last, frame, opts = {}) {
       const [legs, torso, hp, cls] = e.anims.split(',');
       const isCorpse = cls === 'corpse';
       r.drawPlayer(pm, skin, +legs, e.legsTime, +torso, e.torsoTime, isCorpse ? 0 : e.weapon, [e.x, e.y, e.z], e.yaw, time, light);
+      // a fresh reward floats over the head (CG_PlayerSprites, CG_PlayerFloatSprite)
+      const medal = e.effects & 8192 ? 'excellent' : e.effects & 32768 ? 'impressive' : e.effects & 16384 ? 'gauntlet' : null;
+      if (medal && !isCorpse) r.drawSprite(`menu/medals/medal_${medal}`, [e.x, e.y, e.z + 48], 20, 'blend');
       continue;
     }
     const m = res.models.get(e.model);

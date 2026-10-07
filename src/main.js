@@ -173,7 +173,7 @@ async function startMap(name) {
   running = false;
   setStatus(`Loading ${name} into Firebird…`);
   const t0 = performance.now();
-  const bsp = await loadMap(db, pak, res, name, { skill: settings.skill, bots: settings.bots, link: false, fraglimit: settings.fraglimit, timelimit: settings.timelimit });
+  const bsp = await loadMap(db, pak, res, name, { skill: settings.skill, bots: settings.bots, link: false, fraglimit: settings.fraglimit, timelimit: settings.timelimit, warmup: 4 });   // "prepare to fight", three, two, one, "fight!"
   map = { name, bsp, unlinked: 1 };
   await setPlayerName();
   renderer.setResources(res);

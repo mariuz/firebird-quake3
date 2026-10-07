@@ -34,6 +34,8 @@ CREATE TABLE game (
   fraglimit      INTEGER DEFAULT 20 NOT NULL,           -- 0: none
   timelimit      INTEGER DEFAULT 0 NOT NULL,            -- minutes, 0: none
   time_warnings  SMALLINT DEFAULT 0 NOT NULL,           -- said already: 1 five minutes, 2 one minute, 4 sudden death
+  warmup_end     DOUBLE PRECISION DEFAULT 0 NOT NULL,   -- the countdown before the match ends then (the clock counts from it)
+  warmup_said    SMALLINT DEFAULT 0 NOT NULL,           -- the last of three, two, one said (0: done)
   match_over     SMALLINT DEFAULT 0 NOT NULL,           -- 1 from the frag or time limit on: the intermission
   winner         VARCHAR(32),
   over_time      DOUBLE PRECISION DEFAULT 0 NOT NULL,
@@ -273,6 +275,15 @@ CREATE TABLE ents (
   -- players and bots
   bot        VARCHAR(16),                   -- bots: the bot's name
   last_chat  DOUBLE PRECISION DEFAULT -100 NOT NULL,   -- bots: when it last said something (25 s between)
+  -- the rewards (PERS_*_COUNT, EF_AWARD_*): when the last kill was (two in 3 s is excellent), the railgun
+  -- hits in a row (two is impressive), the last award (1 excellent 2 impressive 3 gauntlet) and when
+  last_kill    DOUBLE PRECISION DEFAULT -10 NOT NULL,
+  rail_hits    SMALLINT DEFAULT 0 NOT NULL,
+  award        SMALLINT DEFAULT 0 NOT NULL,
+  award_time   DOUBLE PRECISION DEFAULT -10 NOT NULL,
+  n_excellent  SMALLINT DEFAULT 0 NOT NULL,
+  n_impressive SMALLINT DEFAULT 0 NOT NULL,
+  n_gauntlet   SMALLINT DEFAULT 0 NOT NULL,
   pmodel     VARCHAR(16),                   -- the player model (sarge, grunt …)
   pskin      VARCHAR(16),
   legs_anim  INTEGER DEFAULT 22 NOT NULL,   -- LEGS_IDLE

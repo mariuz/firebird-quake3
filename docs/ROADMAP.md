@@ -13,8 +13,7 @@ is a bug report; it is the gap between a 20 Hz SQL deathmatch and the 1999 game.
 
 | Gap | Quake III | Here | Where it would go |
 | --- | --- | --- | --- |
-| **Awards and voices** | excellent, impressive, gauntlet, humiliation, the announcer's countdown | lead changes, "fight!", the frag limit | `score_frag` / `killed` |
-| **Spectating and warm-up** | free-floating spectator, the countdown before a match | you spawn and it starts | small |
+| **Spectating** | free-floating spectator, joining and leaving the match (`team spectator`) | you are always in the match | a `spectator` flag on the player: no box, no weapon, `PM_SPECTATOR`'s fly move |
 
 ## 2. Movement and physics
 
@@ -113,7 +112,9 @@ smoothed eye; the bots never crouch); the first-person view's kick away from a h
 fall, the run's lean and the step bob, the gun's sway; the zoom to 22.5 degrees with the slower mouse; the view's hand playing the switch and the attack from
 the torso's frames (`CG_MapTorsoToWeaponFrame`), the bots' new gun coming up; the bots' chat from their own chat files (botlib's random strings, variables
 and characteristics: level start and end, joining, deaths, kills, suicides, hits, idle talk; no synonyms,
-no typing delay, no replies); doors with auto triggers, plats, buttons, trains,
+no typing delay, no replies); the rewards (excellent for two frags in 3 s, impressive for two rail hits in a
+row, gauntlet with "humiliation" for both), their medals on the HUD and over the earner's head and the
+match's medals at the end; the countdown before the match ("prepare to fight", three, two, one, "fight!"); doors with auto triggers, plats, buttons, trains,
 bobbing, pendulum, rotating, static, timers, speakers; jump pads (`AimAtTarget`), teleporters, hurt
 and multiple triggers, `G_UseTargets` with delays and relays, `target_give/kill/print/teleporter/
 remove_powerups/score`; every item of `bg_itemlist` with its respawn, armour at 66 percent, the five

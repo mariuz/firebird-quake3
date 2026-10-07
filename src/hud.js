@@ -81,7 +81,7 @@ export class Hud {
     r.drawString(this.font, `${hud.LEAD ?? 0}`, w - Math.round(8 * k) - String(hud.LEAD ?? 0).length * fs, Math.round(8 * k) + fs + 2, fs, [1, 0.4, 0.4]);
     // the time left (cg_drawTimer counts up; with a time limit the minutes left are what matter)
     if (hud.TIMELIMIT > 0 && !hud.MATCH_OVER) {
-      const left = Math.max(0, Math.ceil(hud.TIMELIMIT * 60 - time));
+      const left = Math.max(0, Math.ceil(hud.TIMELIMIT * 60 - (time - Math.max(0, hud.WARMUP_END ?? 0))));
       const clock = `${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}`;
       const ts = Math.round(12 * k);
       r.drawString(this.font, clock, w - Math.round(8 * k) - clock.length * ts, Math.round(8 * k) + 2 * (fs + 2), ts, left <= 60 ? [1, 0.4, 0.4] : [1, 1, 1]);
@@ -96,6 +96,22 @@ export class Hud {
       }
     }
     if (hud.HOLDABLE) r.drawPic(this.pic(hud.HOLDABLE === 1 ? 'icons/teleporter' : 'icons/medkit'), w - Math.round(44 * k), py, Math.round(36 * k), Math.round(36 * k));
+    // the reward (CG_DrawReward): the medal as many times as it has been earned (up to nine), for three seconds
+    const AWARDS = [null, 'excellent', 'impressive', 'gauntlet'];
+    if (hud.AWARD > 0 && time - hud.AWARD_TIME >= 0 && time - hud.AWARD_TIME < 3) {
+      const kind = AWARDS[hud.AWARD], count = hud[`N_${kind.toUpperCase()}`] ?? 1, size = Math.round(44 * k), step = Math.round(48 * k);
+      const pic = this.pic(`menu/medals/medal_${kind}`), ay = Math.round(56 * k);
+      if (pic && count >= 10) {
+        r.drawPic(pic, (w - size) >> 1, ay, size, size);
+        const n = String(count), ns = Math.round(12 * k);
+        r.drawString(this.font, n, (w - n.length * ns) >> 1, ay + size + 2, ns, [1, 1, 1]);
+      } else if (pic) {
+        let ax = (w - count * step) >> 1;
+        for (let i = 0; i < count; i++, ax += step) r.drawPic(pic, ax, ay, size, size);
+      }
+    }
+    // the countdown (CG_DrawWarmup)
+    if (hud.WARMUP_END > time) this.drawCenter(`Starts in: ${Math.ceil(hud.WARMUP_END - time)}`, Math.floor(h * 0.42), Math.round(18 * k));
     // the pickup line and the centre print
     const cs = Math.max(8, Math.round(12 * k));
     if (hud.MSG) r.drawString(this.font, hud.MSG, (w - hud.MSG.length * cs) >> 1, h - Math.round(120 * k), cs, [1, 1, 1]);
@@ -152,6 +168,18 @@ export class Hud {
       r.drawString(this.font, sf, bx + bw - 8 - (sd.length + sf.length + 2) * cs, y, cs, [1, 1, 1]);
       r.drawString(this.font, sd, bx + bw - 8 - sd.length * cs, y, cs, [0.7, 0.7, 0.7]);
       y += cs + 4;
+    }
+    // at the end, the player's medals of the match (the single-player postgame's)
+    if (hud.MATCH_OVER) {
+      const medals = [['excellent', hud.N_EXCELLENT], ['impressive', hud.N_IMPRESSIVE], ['gauntlet', hud.N_GAUNTLET]].filter(([, n]) => n > 0);
+      const ms = Math.round(32 * k);
+      let mx = (r.w - medals.length * (ms + 3 * cs)) >> 1;
+      for (const [kind, n] of medals) {
+        const pic = this.pic(`menu/medals/medal_${kind}`);
+        if (pic) r.drawPic(pic, mx, by + bh + 6, ms, ms);
+        r.drawString(this.font, `${n}`, mx + ms + 2, by + bh + 6 + ((ms - cs) >> 1), cs, [1, 1, 1]);
+        mx += ms + 3 * cs;
+      }
     }
   }
 }

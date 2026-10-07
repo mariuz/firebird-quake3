@@ -228,7 +228,17 @@ sound, the lead state. Each tic:
    `speaker_think`, `remove`;
 5. `run_physics`: the projectiles (`launch_missile` sets a straight velocity; grenades `toss_move`),
    the gibs and corpses, `impact` when something hits, `missile_explode` with `t_radius_damage`;
-6. the match: `score_frag` keeps the scoreboard, announces the lead changes and the frags left, and
+6. the match: before it, the page's four-second countdown (`init_map`'s `warmup`; `CG_DrawWarmup`): "prepare to
+   fight", then three, two, one a second apart and "fight!" from `check_exit_rules`, the bots standing and
+   nobody firing until then, the match's clock counting from "fight!". The rewards are `give_award`'s
+   (`player_die` and `weapon_railgun_fire` in g_combat.c and g_weapon.c): a gauntlet frag (and
+   "humiliation" for its victim too), a frag within 3 s of the last (`CARNAGE_REWARD_TIME`: excellent),
+   two railgun hits on players in a row (`fire_rail` counts `rail_hits`, a miss resets it: impressive).
+   Each counts on the entity, sets `award` and `award_time`, plays the announcer for the player; the
+   HUD shows the medal for 3 s, as many times as it was earned (`CG_DrawReward`), the frame query sets
+   an `EF_AWARD_*` bit for 2 s so the painter floats the medal over the earner's head, and the
+   intermission's scoreboard shows the player's medals of the match. Then `score_frag` keeps the
+   scoreboard, announces the lead changes and the frags left, and
    ends the match at the frag limit; `check_exit_rules` (Quake III's `CheckExitRules`) runs after
    every tic for the time limit: "five minutes" and "one minute" once each (`game.time_warnings`),
    and at the limit either the leader wins or, with the lead tied (`ScoreIsTied`, the player and the

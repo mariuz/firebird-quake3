@@ -246,7 +246,7 @@ function geometryRows(bsp, res) {
 /** SV_SpawnServer: replace the current map with `name` from the PK3. */
 // `link`: finish the bots' waypoint graph now (the Node scripts), or leave it to buildWaypoints a few
 // columns a frame (the browser, so the arena opens at once)
-export async function loadMap(db, pak, res, name, { skill = 2, newGame = true, bots = 3, link = true, fraglimit = 20, timelimit = 0 } = {}) {
+export async function loadMap(db, pak, res, name, { skill = 2, newGame = true, bots = 3, link = true, fraglimit = 20, timelimit = 0, warmup = 0 } = {}) {
   const bsp = new Bsp(pak.buffer(`maps/${name}.bsp`), `maps/${name}.bsp`);
   await db.exec(`DELETE FROM sound_events; DELETE FROM fx_events; DELETE FROM messages; DELETE FROM ents; DELETE FROM map_ents; DELETE FROM vis_faces; UPDATE viewcfg SET vis_cluster = NULL;
     DELETE FROM face_verts; DELETE FROM faces; DELETE FROM textures; DELETE FROM nodes; DELETE FROM leaves; DELETE FROM leaffaces; DELETE FROM leafbrushes;
@@ -277,7 +277,7 @@ export async function loadMap(db, pak, res, name, { skill = 2, newGame = true, b
   });
   await bulkLoad(db, 'map_ents', entRows);
 
-  await db.exec(`EXECUTE PROCEDURE init_map('${name}', ${geo.modelIds[0]}, ${skill}, ${newGame ? 1 : 0}, ${bots}, ${Number(fraglimit) | 0}, ${Number(timelimit) | 0})`);
+  await db.exec(`EXECUTE PROCEDURE init_map('${name}', ${geo.modelIds[0]}, ${skill}, ${newGame ? 1 : 0}, ${bots}, ${Number(fraglimit) | 0}, ${Number(timelimit) | 0}, ${Number(warmup) || 0})`);
   if (link) while ((await buildWaypoints(db, 1e9, 1e9)) > 0);
   return bsp;
 }

@@ -108,6 +108,18 @@ BEGIN
   RETURN e;
 END^
 
+-- a reward (G_Damage's and weapon_railgun_fire's): the count goes up, the medal floats over the head for
+-- two seconds (EF_AWARD_*), and the player hears the announcer and sees the medal on the HUD for three
+-- (CG_RewardSound, CG_DrawReward). 1 excellent, 2 impressive, 3 gauntlet
+CREATE OR ALTER PROCEDURE give_award (eid INTEGER, kind SMALLINT)
+AS
+BEGIN
+  UPDATE ents e SET e.award = :kind, e.award_time = now_(), e.n_excellent = e.n_excellent + IIF(:kind = 1, 1, 0),
+         e.n_impressive = e.n_impressive + IIF(:kind = 2, 1, 0), e.n_gauntlet = e.n_gauntlet + IIF(:kind = 3, 1, 0) WHERE e.id = :eid;
+  IF (eid = player_ent()) THEN
+    EXECUTE PROCEDURE snd_local(TRIM(CASE kind WHEN 1 THEN 'sound/feedback/excellent.wav' WHEN 2 THEN 'sound/feedback/impressive.wav' ELSE 'sound/feedback/humiliation.wav' END));
+END^
+
 CREATE OR ALTER FUNCTION model_by_name (name VARCHAR(64)) RETURNS INTEGER
 AS
 DECLARE id INTEGER;

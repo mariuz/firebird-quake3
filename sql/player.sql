@@ -89,6 +89,7 @@ DECLARE nx DOUBLE PRECISION; DECLARE ny DOUBLE PRECISION; DECLARE nz DOUBLE PREC
 DECLARE sf INTEGER; DECLARE ct INTEGER; DECLARE als SMALLINT; DECLARE sts SMALLINT; DECLARE hit INTEGER;
 DECLARE sx DOUBLE PRECISION; DECLARE sy DOUBLE PRECISION; DECLARE sz DOUBLE PRECISION; DECLARE ignore INTEGER; DECLARE i INTEGER = 0;
 DECLARE ex DOUBLE PRECISION; DECLARE ey DOUBLE PRECISION; DECLARE ez DOUBLE PRECISION; DECLARE dl DOUBLE PRECISION;
+DECLARE hits INTEGER = 0; DECLARE acc INTEGER;
 BEGIN
   dl = vlen(dx, dy, dz);
   IF (dl = 0) THEN EXIT;
@@ -101,6 +102,8 @@ BEGIN
       RETURNING_VALUES f, hx, hy, hz, nx, ny, nz, sf, ct, als, sts, hit;
     IF (hit > 0 AND EXISTS (SELECT 1 FROM ents e WHERE e.id = :hit AND e.takedamage > 0)) THEN
     BEGIN
+      -- LogAccuracyHit: a player or a bot, alive
+      IF (EXISTS (SELECT 1 FROM ents e WHERE e.id = :hit AND e.classname IN ('player', 'bot') AND e.health > 0 AND e.id <> :shooter)) THEN hits = hits + 1;
       EXECUTE PROCEDURE t_damage(hit, shooter, shooter, dmg, dmg, 0, 17);
       -- continue from just past the hit, ignoring what we just shot
       ignore = hit;
@@ -111,6 +114,17 @@ BEGIN
     LEAVE;
   END
   EXECUTE PROCEDURE fx(4, ox, oy, oz, hx, hy, hz, 0);
+  -- two hits in a row, impressive (a miss starts the count again)
+  IF (hits = 0) THEN UPDATE ents e SET e.rail_hits = 0 WHERE e.id = :shooter;
+  ELSE
+  BEGIN
+    UPDATE ents e SET e.rail_hits = e.rail_hits + :hits WHERE e.id = :shooter RETURNING e.rail_hits INTO acc;
+    IF (acc >= 2) THEN
+    BEGIN
+      UPDATE ents e SET e.rail_hits = e.rail_hits - 2 WHERE e.id = :shooter;
+      EXECUTE PROCEDURE give_award(shooter, 2);
+    END
+  END
 END^
 
 -- Weapon_LightningFire: 768 units, 8 damage, the beam drawn by the browser
@@ -405,7 +419,7 @@ DECLARE tst SMALLINT; DECLARE tid INTEGER;
 DECLARE afin DOUBLE PRECISION; DECLARE hp INTEGER; DECLARE deadt DOUBLE PRECISION; DECLARE oldz DOUBLE PRECISION;
 DECLARE enviro DOUBLE PRECISION; DECLARE haste DOUBLE PRECISION; DECLARE regen DOUBLE PRECISION; DECLARE ndt DOUBLE PRECISION; DECLARE ddmg INTEGER; DECLARE mhp INTEGER;
 DECLARE grav DOUBLE PRECISION; DECLARE tt DOUBLE PRECISION; DECLARE legs INTEGER; DECLARE hdecay DOUBLE PRECISION; DECLARE rt DOUBLE PRECISION; DECLARE stept DOUBLE PRECISION;
-DECLARE mover SMALLINT; DECLARE pm VARCHAR(16); DECLARE match_done SMALLINT; DECLARE ducked SMALLINT; DECLARE maxz DOUBLE PRECISION;
+DECLARE mover SMALLINT; DECLARE pm VARCHAR(16); DECLARE match_done SMALLINT; DECLARE ducked SMALLINT; DECLARE maxz DOUBLE PRECISION; DECLARE wend DOUBLE PRECISION;
 BEGIN
   SELECT p.ent_id, p.jump_released, p.air_finished, p.dead_time, p.enviro_finished, p.haste_finished, p.regen_finished, p.next_drown_time, p.drown_dmg, p.health_decay, p.regen_time, p.step_time, p.ducked
     FROM player p WHERE p.id = 1 INTO pe, jr, afin, deadt, enviro, haste, regen, ndt, ddmg, hdecay, rt, stept, ducked;
@@ -413,7 +427,7 @@ BEGIN
   SELECT e.deadflag, e.flags, e.waterlevel, e.watertype, e.yaw, e.health, e.z, e.max_health, e.teleport_time, e.legs_anim, e.pmodel
     FROM ents e WHERE e.id = :pe INTO dead, flags, owl, wt, yaw, hp, oldz, mhp, tt, legs, pm;
   t = now_();
-  SELECT g.gravity, g.match_over FROM game g WHERE g.id = 1 INTO grav, match_done;
+  SELECT g.gravity, g.match_over, g.warmup_end FROM game g WHERE g.id = 1 INTO grav, match_done, wend;
 
   IF (dead = 1) THEN
   BEGIN
@@ -648,7 +662,7 @@ BEGIN
     EXECUTE PROCEDURE snd(pe, 3, 'sound/items/wearoff.wav', 1, 1);
 
   -- weapon
-  EXECUTE PROCEDURE player_fire(fire);
+  EXECUTE PROCEDURE player_fire(IIF(t < wend, 0, fire));   -- not before "fight!"
 END^
 
 SET TERM ; ^
