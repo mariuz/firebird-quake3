@@ -542,6 +542,7 @@ DECLARE spec SMALLINT; DECLARE sfire SMALLINT; DECLARE fid INTEGER;
 DECLARE kb DOUBLE PRECISION; DECLARE upk DOUBLE PRECISION; DECLARE yaw0 DOUBLE PRECISION; DECLARE yk DOUBLE PRECISION; DECLARE ds DOUBLE PRECISION;
 DECLARE sxv DOUBLE PRECISION; DECLARE syv DOUBLE PRECISION; DECLARE szv DOUBLE PRECISION; DECLARE vz0 DOUBLE PRECISION; DECLARE wl2 DOUBLE PRECISION; DECLARE k INTEGER;
 DECLARE vz_start DOUBLE PRECISION; DECLARE pz_start DOUBLE PRECISION; DECLARE lvz DOUBLE PRECISION;
+DECLARE slick SMALLINT; DECLARE d DOUBLE PRECISION; DECLARE rz DOUBLE PRECISION;
 BEGIN
   SELECT p.ent_id, p.jump_released, p.air_finished, p.dead_time, p.enviro_finished, p.haste_finished, p.regen_finished, p.next_drown_time, p.drown_dmg, p.health_decay, p.regen_time, p.step_time, p.ducked,
          p.spectator, p.spec_fire, p.follow_id
@@ -670,6 +671,7 @@ BEGIN
   mover = IIF(hit > 0 AND onground = 1, 1, 0);
   -- where the tic starts, for PM_CrashLand's solve if it ends on the ground
   vz_start = vz; pz_start = pz;
+  slick = IIF(onground = 1 AND BIN_AND(sf, 2) <> 0, 1, 0);   -- SURF_SLICK: ice, no friction, air acceleration
   flags = IIF(onground = 1, BIN_OR(flags, 512), BIN_AND(flags, BIN_NOT(512)));
   maxspd = IIF(run = 1, 320, 160);
   IF (haste > t) THEN maxspd = maxspd * 1.3e0;
@@ -746,47 +748,76 @@ BEGIN
     k = 1;
     WHILE (k <= 6) DO
     BEGIN
-      -- PM_Friction: walking, unless a jump pad, a teleporter or a knock has us
-      IF (onground = 1 AND tt < t AND kb < t) THEN
+      -- PM_Friction: walking, unless a jump pad, a teleporter, a knock or a slick floor has us; on the
+      -- horizontal speed ("ignore slope movement"), all three scaled
+      IF (onground = 1 AND tt < t AND kb < t AND slick = 0) THEN
       BEGIN
         spd = vlen(vx, vy, 0);
         IF (spd < 1) THEN BEGIN vx = 0; vy = 0; END
         ELSE
         BEGIN
           ns = MAXVALUE(0, spd - MAXVALUE(spd, 100) * 6 * ds) / spd;
-          vx = vx * ns; vy = vy * ns;
+          vx = vx * ns; vy = vy * ns; vz = vz * ns;
         END
       END
-      -- PM_Accelerate toward the wish direction of this moment: 10 walking, 1 in the air or knocked
+      -- PM_Accelerate toward the wish direction of this moment: 10 walking, 1 in the air, knocked or on ice.
+      -- Walking, forward and right are laid on the ground plane first (PM_WalkMove's PM_ClipVelocity of
+      -- them), so a ramp is run up and down along it
+      vz0 = vz;
       IF (wspd > 0 AND tt < t) THEN
       BEGIN
         yk = (yaw0 + yaw_d * k / 6) * 0.0174532925e0;
-        wx = COS(yk) * fwd + SIN(yk) * side; wy = SIN(yk) * fwd - COS(yk) * side;
-        wl2 = vlen(wx, wy, 0);
+        IF (onground = 1) THEN
+        BEGIN
+          d = COS(yk) * gnx + SIN(yk) * gny; d = IIF(d < 0, d * 1.001e0, d / 1.001e0);
+          fx_ = COS(yk) - gnx * d; fy = SIN(yk) - gny * d; fz = -gnz * d;
+          d = vlen(fx_, fy, fz); IF (d > 0) THEN BEGIN fx_ = fx_ / d; fy = fy / d; fz = fz / d; END
+          d = SIN(yk) * gnx - COS(yk) * gny; d = IIF(d < 0, d * 1.001e0, d / 1.001e0);
+          rx = SIN(yk) - gnx * d; ry = -COS(yk) - gny * d; rz = -gnz * d;
+          d = vlen(rx, ry, rz); IF (d > 0) THEN BEGIN rx = rx / d; ry = ry / d; rz = rz / d; END
+        END
+        ELSE BEGIN fx_ = COS(yk); fy = SIN(yk); fz = 0; rx = SIN(yk); ry = -COS(yk); rz = 0; END
+        wx = fx_ * fwd + rx * side; wy = fy * fwd + ry * side; wz = fz * fwd + rz * side;
+        wl2 = vlen(wx, wy, wz);
         IF (wl2 > 0) THEN
         BEGIN
-          wx = wx / wl2; wy = wy / wl2;
-          add_ = wspd - (vx * wx + vy * wy);
+          wx = wx / wl2; wy = wy / wl2; wz = wz / wl2;
+          add_ = wspd - (vx * wx + vy * wy + vz * wz);
           IF (add_ > 0) THEN
           BEGIN
-            acc = MINVALUE(add_, IIF(onground = 1 AND kb < t, 10, 1) * wspd * ds);
-            vx = vx + acc * wx; vy = vy + acc * wy;
+            acc = MINVALUE(add_, IIF(onground = 1 AND kb < t AND slick = 0, 10, 1) * wspd * ds);
+            vx = vx + acc * wx; vy = vy + acc * wy; vz = vz + acc * wz;
           END
         END
       END
-      -- PM_WalkMove: slide along the ground plane rather than into it
-      IF (onground = 1 AND vz < 0 AND BIN_AND(flags, 512) <> 0) THEN
-        EXECUTE PROCEDURE clip_velocity(vx, vy, vz, gnx, gny, gnz, 1.001e0) RETURNING_VALUES vx, vy, vz, cb;
-      -- gravity, over the substep by its average (PM_SlideMove's endVelocity)
-      vz0 = vz;
-      IF (onground = 0) THEN vz = vz - grav * ds;
-      ELSE IF (mover = 0) THEN vz = MINVALUE(vz, 0);
+      IF (onground = 1) THEN
+      BEGIN
+        -- knocked or on ice, gravity still pulls; then slide along the ground plane, and "don't decrease
+        -- velocity when going up or down a slope": the speed it had, along the plane
+        IF (kb >= t OR slick = 1) THEN vz = vz - grav * ds;
+        spd = vlen(vx, vy, vz);
+        d = vx * gnx + vy * gny + vz * gnz; d = IIF(d < 0, d * 1.001e0, d / 1.001e0);
+        vx = vx - gnx * d; vy = vy - gny * d; vz = vz - gnz * d;
+        d = vlen(vx, vy, vz);
+        IF (d > 0) THEN BEGIN vx = vx * spd / d; vy = vy * spd / d; vz = vz * spd / d; END
+        vz0 = vz;   -- (no trapezoid: walking, the move is along the plane, PM_StepSlideMove without gravity)
+      END
+      -- gravity in the air, over the substep by its average (PM_SlideMove's endVelocity)
+      ELSE vz = vz - grav * ds;
       sxv = sxv + vx; syv = syv + vy; szv = szv + (vz0 + vz) / 2;
       k = k + 1;
     END
     UPDATE ents e SET e.vx = :sxv / 6, e.vy = :syv / 6, e.vz = :szv / 6, e.flags = :flags WHERE e.id = :pe;
     EXECUTE PROCEDURE walk_move(pe, dt);
     UPDATE ents e SET e.vx = :vx + (e.vx - :sxv / 6), e.vy = :vy + (e.vy - :syv / 6), e.vz = :vz + (e.vz - :szv / 6) WHERE e.id = :pe;
+    -- walking, the end velocity clipped by the ground plane too (PM_SlideMove clips its endVelocity by
+    -- the planes it touches): what the step move took off the average must not tip it off a ramp
+    IF (onground = 1) THEN
+    BEGIN
+      SELECT e.vx, e.vy, e.vz FROM ents e WHERE e.id = :pe INTO vx, vy, vz;
+      EXECUTE PROCEDURE clip_velocity(vx, vy, vz, gnx, gny, gnz, 1.001e0) RETURNING_VALUES vx, vy, vz, cb;
+      UPDATE ents e SET e.vx = :vx, e.vy = :vy, e.vz = :vz WHERE e.id = :pe;
+    END
   END
   IF (NOT EXISTS (SELECT 1 FROM ents e WHERE e.id = :pe)) THEN EXIT;
   EXECUTE PROCEDURE link_ent(pe);
@@ -798,7 +829,17 @@ BEGIN
     EXECUTE PROCEDURE trace_move(pe, -15, -15, -24, 15, 15, maxz, ex, ey, ez, ex, ey, ez - 0.25e0, 33619969)
       RETURNING_VALUES f, ex, ey, ez, gnx, gny, gnz, sf, ct, als, sts, hit;
     IF (f < 1 AND gnz >= 0.7e0 AND lvz <= 10 AND sts = 0) THEN
+    BEGIN
+      -- the velocity the tic ends with, clipped by the floor it came down on (PM_SlideMove's endVelocity
+      -- clip), or what is left of the fall would be turned along the ground by the next PM_WalkMove
+      SELECT e.vx, e.vy, e.vz FROM ents e WHERE e.id = :pe INTO vx, vy, vz;
+      IF (vx * gnx + vy * gny + vz * gnz < 0) THEN
+      BEGIN
+        EXECUTE PROCEDURE clip_velocity(vx, vy, vz, gnx, gny, gnz, 1.001e0) RETURNING_VALUES vx, vy, vz, cb;
+        UPDATE ents e SET e.vx = :vx, e.vy = :vy, e.vz = :vz WHERE e.id = :pe;
+      END
       EXECUTE PROCEDURE crash_land(pe, vz_start, (SELECT e.z FROM ents e WHERE e.id = :pe) - pz_start, grav, ducked, wl, sf);
+    END
   END
   -- smooth the view over steps
   SELECT e.z, e.vx, e.vy FROM ents e WHERE e.id = :pe INTO pz, vx, vy;

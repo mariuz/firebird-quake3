@@ -20,7 +20,6 @@ chat, the rewards and the countdown, and spectating are all in (see §8). What i
 | Gap | Notes |
 | --- | --- |
 | Ladders | Quake III has none; nothing to do |
-| Slopes | `PM_WalkMove` projects the wish direction onto the ground plane and keeps the speed going up and down a ramp; here the acceleration is horizontal and the step move climbs |
 | Proximity to movers | a mover pushes and crushes; standing on a rotating `func_rotating` does not rotate the player with it |
 | Knockback feel | `t_damage` applies Quake III's knockback and its 50 to 200 ms without friction (`PMF_TIME_KNOCKBACK`); rocket jumps work for the player, the bots never use them |
 
@@ -107,7 +106,8 @@ fuzzy logic from the botfiles. What that leaves out:
 Collision against brushes and patch facets, brush models with their own leaf, rotated models;
 `PM_GroundTrace`, slide and step moves, water, the open-ground movement matching `bg_pmove.c` at 8 ms
 (friction, acceleration and gravity in six substeps a tic, the trapezoid gravity, `PM_CmdScale` with
-the jump key, the knock's time without friction, `PM_CrashLand`'s landings: `npm run test:pmove` checks it side by side), swimming with its
+the jump key, the knock's time without friction, `PM_CrashLand`'s landings, `PM_WalkMove` on a slope
+at the full speed along it: `npm run test:pmove` checks it side by side; `SURF_SLICK` floors), swimming with its
 bubbles (shots and rockets in water, `CG_BubbleTrail`), the view's wave and the muffled sound with the
 head under (the demo's arenas have lava only, a registered pak's have water), crouching (`PM_CheckDuck`, the crouch animations, the
 smoothed eye; the bots never crouch); the first-person view's kick away from a hit, landing dips by the

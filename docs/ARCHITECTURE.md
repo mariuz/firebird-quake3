@@ -207,7 +207,21 @@ short of what `AimAtTarget` aimed at; the bots in the air and `toss_move` do the
 speed is `PM_CmdScale`'s, with the jump or crouch key among the keys (holding jump in the air takes air
 control away; a jump held on the ground does not count), the crouch's quarter speed a cap after it, and
 a knock (`t_damage` for the player) leaves 50 to 200 ms without ground friction and with air
-acceleration (`PMF_TIME_KNOCKBACK`), which is what carries a rocket jump. A landing is `PM_CrashLand`'s, once a tic, after the move:
+acceleration (`PMF_TIME_KNOCKBACK`), which is what carries a rocket jump.
+
+Walking is `PM_WalkMove`'s on any floor, not only a flat one: friction works on the horizontal speed and
+scales all three, forward and right are clipped onto the ground plane before the acceleration (so the
+wish direction runs along a ramp), and the velocity is then clipped onto the plane and given back the
+speed it had ("don't decrease velocity when going up or down a slope"): 320 along a ramp, its horizontal
+share the normal's z. A `SURF_SLICK` floor has no friction and air acceleration, and gravity still pulls
+there and through a knock. On the ground the substeps' average has no trapezoid (the move is along the
+plane, `PM_StepSlideMove` without gravity), and the tic's end velocity is clipped by the ground plane
+again, as `PM_SlideMove` clips its `endVelocity`: what the step move took off the average must not leave
+the velocity steeper than the ramp, where the next ground check (`vz > 0` and into the air by more than
+10) would count it as leaving the ground. A landing clips the end velocity by the floor too, or what is
+left of the fall would be turned along the ground by the next `PM_WalkMove`'s rescale.
+
+A landing is `PM_CrashLand`'s, once a tic, after the move:
 an airborne tic that ends on the ground (a second ground trace, as `PmoveSingle` makes) calls `crash_land`
 with the tic's starting vertical speed and the height it fell, which solves for the speed at the moment
 of contact as `bg_pmove.c` does and squares it (`delta = v² / 10000`); crouched doubles it, knee-deep water
@@ -219,7 +233,8 @@ checks all of it against a JavaScript reference of `bg_pmove`'s open-ground part
 open floor: start-up, stopping, standing, running, strafe and held-jump arcs, crouch-walking, a
 knock. Every quantity agrees within 0.2. It also drops the player from 30, 100, 300 and 450 units and
 from 150 crouched, where Quake III's `delta` is exactly 0.16 of the height, and checks the damage, the
-dip and the sounds of each.
+dip and the sounds of each, and runs up and down the ramp beside q3dm17's jump pad at x −312 (normal
+(0, 0.447, 0.894)): 320 along it, 286.2 across the ground, on the ground every tic.
 
 ---
 

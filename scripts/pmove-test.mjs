@@ -170,6 +170,32 @@ async function sqlRuns() {
     out.falls.push({ h, crouched, damage: 100 - s.HEALTH, dip: s.LAND_CHANGE, sounds: snd });
   }
   await db.exec(`UPDATE ents SET flags = BIN_OR(flags, 16), health = 100 WHERE id = ${pe}`);
+
+  // the ramp (PM_WalkMove on a slope): q3dm17's at x -312, beside its jump pad, its normal (0, 0.447,
+  // 0.894), from the floor at 600 (y 600 on) up to 672 (y 444), rising toward -y. Run onto it from the
+  // flat at the full run, and down it from its middle at the full run along it, the key held
+  const floorAt = async (x, y, top) => {
+    for (let z = top; ; z -= 2) {   // from the first height clear of the brushes over it
+      const r = (await q(`SELECT ez, startsolid s FROM trace_move(${pe}, -15,-15,-24,15,15,32, ${x}, ${y}, ${z}, ${x}, ${y}, 450, 33619969)`))[0];
+      if (!r.S) return r.EZ;
+    }
+  };
+  out.ramp = {};
+  for (const [dir, y0, top, yaw, v] of [['up', 690, 640, -90, [0, -320, 0]], ['down', 470, 692, 90, [0, 320 * 0.894, -320 * 0.447]]]) {
+    await db.exec(`UPDATE ents SET x = -312, y = ${y0}, z = ${await floorAt(-312, y0, top)}, vx = ${v[0]}, vy = ${v[1]}, vz = ${v[2]}, yaw = ${yaw}, flags = BIN_OR(flags, 512 + 16) WHERE id = ${pe}`);
+    await db.exec('UPDATE player SET pitch = 0, jump_released = 1, knockback_until = 0, onground = 1 WHERE id = 1');
+    await db.exec(`EXECUTE PROCEDURE link_ent(${pe})`);
+    let a = (await q(`SELECT y, z FROM ents WHERE id = ${pe}`))[0];
+    const on = [];
+    for (let i = 0; i < 16; i++) {
+      const r = await tic({ fwd: 1, side: 0, up: 0, yawRate: 0 });
+      // the tics wholly on the slope (the box's near edge on it, its far edge short of the top)
+      if (Math.min(a.Y, r.PY) > 460 && Math.max(a.Y, r.PY) < 575)
+        on.push({ speed: Math.hypot(r.PY - a.Y, r.PZ - a.Z) / 0.05, horiz: Math.abs(r.PY - a.Y) / 0.05, ground: r.ONGROUND === 1 });
+      a = { Y: r.PY, Z: r.PZ };
+    }
+    out.ramp[dir] = on;
+  }
   await db.close();
   return out;
 }
@@ -181,7 +207,8 @@ for (const [name, tics] of Object.entries(SCENARIOS)) { ref8[name] = measure(nam
 const refOnly = process.argv.includes('--ref-only');
 const sqlRows = refOnly ? null : await sqlRuns();
 const falls = refOnly ? [] : sqlRows.falls;
-if (!refOnly) delete sqlRows.falls;
+const ramp = refOnly ? null : sqlRows.ramp;
+if (!refOnly) { delete sqlRows.falls; delete sqlRows.ramp; }
 const sqlM = refOnly ? {} : Object.fromEntries(Object.entries(sqlRows).map(([k, r]) => [k, measure(k, r)]));
 console.log('\n' + ['scenario', 'quantity', 'Q3 8 ms', 'Q3 50 ms', 'SQL 50 ms'].map((s) => s.padEnd(16)).join(''));
 for (const name of Object.keys(SCENARIOS)) {
@@ -207,6 +234,14 @@ if (!refOnly) {
   const heldS = S.heldjump['speed in the air'] - S.heldjump['takeoff speed'], heldR = R.heldjump['speed in the air'] - R.heldjump['takeoff speed'];
   assert(heldR < gainR && near(heldS, heldR, 3), `holding jump in the air takes air control away, as PM_CmdScale does (+${heldS.toFixed(1)}, Q3 +${heldR.toFixed(1)})`);
   assert(near(S.knockstop['stop distance'], R.knockstop['stop distance'], 3) && S.knockstop['stop distance'] > S.stop['stop distance'] + 40, `a knock carries 200 ms without friction (${S.knockstop['stop distance'].toFixed(1)}, Q3 ${R.knockstop['stop distance'].toFixed(1)})`);
+  // the ramp: along it at the full 320 (PM_WalkMove keeps the speed, along the plane), its horizontal
+  // share cos(26.6°) = the normal's z, never off it
+  for (const dir of ['up', 'down']) {
+    const on = ramp[dir], n = on.length;
+    const sp = on.reduce((a, r) => a + r.speed, 0) / n, hz = on.reduce((a, r) => a + r.horiz, 0) / n;
+    assert(n >= 3 && near(sp, 320, 1.5) && near(hz, 320 * 0.894, 1.5) && on.every((r) => r.ground),
+      `running ${dir} the ramp: ${sp.toFixed(1)} along it, ${hz.toFixed(1)} across the ground, on the ground all the way (Q3: 320, ${(320 * 0.894).toFixed(1)}; ${n} tics)`);
+  }
   // the falls: what PM_CrashLand's delta (0.16 h from rest, doubled crouched) makes of each
   for (const f of falls) {
     const delta = 0.16 * f.h * (f.crouched ? 2 : 1);

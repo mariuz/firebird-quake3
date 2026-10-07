@@ -84,6 +84,10 @@ explosion sprites, beams) and nothing else. The renderers never query the databa
   a procedure hangs the engine with no output and every test with it. If a test prints nothing for
   minutes, that is what happened: kill the `node` process (PowerShell `Stop-Process`) and look for the
   loop.
+- On the ground the player's velocity is rescaled to its speed after the plane clip (`PM_WalkMove`), so any
+  vertical speed left over on the ground turns into horizontal speed: landings and the end of a walking
+  tic clip the stored velocity by the floor. A test trace with a NULL pass-entity hits the player's own
+  box; pass the player's ent id when probing where the player stands.
 - Waypoint node heights are the point-trace floor + 25 (the box is only settled on slopes). A box
   dropped from above catches on railings and crate edges and puts nodes on top of them, which
   disconnects the graph (the symptom: "N of M nodes can reach the spawn" collapses).
