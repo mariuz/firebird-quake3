@@ -13,7 +13,6 @@ is a bug report; it is the gap between a 20 Hz SQL deathmatch and the 1999 game.
 
 | Gap | Quake III | Here | Where it would go |
 | --- | --- | --- | --- |
-| **Local player prediction** | the client predicts its own movement so there is no latency on it | the view angles are live and the frame is interpolated between the last two tics (done 2026-10-07), which leaves 50 ms of latency on your own position; predicting it would mean running the player's move in JavaScript against the same collision, or extrapolating from the velocity | `main.js` `viewRow`: extrapolate the eye with the last tic's displacement, clamped by a trace |
 | **Crouch** | `PM_CheckDuck`: box 16 high, view 12, speed ×0.25, crouch-sliding | none (no key, no ducked box) | `player.sql` `player_think`, a `ducked` column, `trace_move` with the small box; C key in `main.js`; the bots never crouch |
 | **Timelimit, intermission, map rotation** | `timelimit`, the intermission camera (`info_player_intermission`), the final scoreboard, awards, the next map | frag limit only; `exit_kind` 3 restarts the same arena | `score_frag`/`q3_tic` for the clock, `init_map` for the rotation, `hud.js` for the intermission screen |
 | **View kicks** | damage kicks the view toward the attacker (`CG_DamageFeedback`), landing dips, weapon recoil bob | screen tint on damage, a land dip; no directional kick | `player.dmg_*` already records where it came from; apply in `scene.js` |
@@ -126,7 +125,8 @@ times; damage, knockback, gibs, corpses, obituaries; the player model animation 
 `animation.cfg`, tags and skins; the HUD, scoreboard, announcer, lead state, frag limit; bots with
 five skill levels, weapon choice, strafing, health runs, item pickup, and the waypoint graph with pad
 and teleporter edges; the PVS, frustum and back-face culling in SQL for the view actually painted, frames interpolated
-between tics with live mouse look; lightmaps with the overbright
+between tics with live mouse look and the local player predicted (extrapolated, clamped by a trace);
+lightmaps with the overbright
 shift, the light grid for models, sky cloud layers, blend/add/filter surfaces, scroll/scale/turb
 tcMods, animMap, two-sided surfaces; the software and WebGL painters; positional sound, loops,
 speakers, music; touch controls; the SQL console.

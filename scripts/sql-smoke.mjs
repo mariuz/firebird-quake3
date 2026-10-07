@@ -147,6 +147,19 @@ if (pad) {
 }
 
 // every sound we queued exists in the pak
+// the page's predicted eye: passed through when it is the real one, clamped by a trace when it runs into a wall
+{
+  const e = (await db.query('SELECT ex, ey, ez, fx, fy FROM view_setup')).rows[0];
+  const eyeOf = async (x, y, z) => (await db.query(`SELECT * FROM frame_all(0, 2147483647, 2147483647, 0, ${x}, ${y}, ${z}, 0, 0)`, [], { rowMode: 'array' })).rows.find((r) => r[0] === 10);
+  const same = await eyeOf(e.EX, e.EY, e.EZ);
+  assert(same && Math.hypot(same[6] - e.EX, same[7] - e.EY, same[8] - e.EZ) < 0.01, 'frame_all paints from the eye it is given');
+  const far = [e.EX + e.FX * 4000, e.EY + e.FY * 4000, e.EZ];
+  const clamped = await eyeOf(...far);
+  const d = Math.hypot(clamped[6] - e.EX, clamped[7] - e.EY, clamped[8] - e.EZ);
+  const cl = (await db.query(`SELECT cluster FROM leaves WHERE id = point_leaf(${clamped[6]}, ${clamped[7]}, ${clamped[8]})`)).rows[0].CLUSTER;
+  assert(d < 3990 && cl >= 0, `an eye predicted through a wall stops inside the world (${d.toFixed(0)} of 4000 units, cluster ${cl})`);
+}
+
 const snds = (await db.query('SELECT DISTINCT snd FROM sound_events')).rows.map((r) => r.SND);
 const missing = snds.filter((n) => !pak.has(n));
 assert(missing.length === 0, `all queued sounds exist in the pak (${missing.join(', ') || 'none missing'})`);

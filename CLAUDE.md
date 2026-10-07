@@ -39,8 +39,8 @@ explosion sprites, beams) and nothing else. The renderers never query the databa
   (quotes in the body). Write the patch script with the Write tool into `.prof/` and run
   `python .prof/x.py`. Python 3 is on the PATH; `pkill` is not (use PowerShell `Stop-Process`).
 - Commits: `git -c user.name="mariuz" -c user.email="mapopa@gmail.com" commit`, message in the
-  style of `git log` (a title, then why and what, in prose), ending with
-  `Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>`. Push to `main` deploys to
+  style of `git log` (a title, then why and what, in prose), ending with the `Co-Authored-By:`
+  trailer for the model doing the work (the session's system prompt gives it). Push to `main` deploys to
   https://mariuz.github.io/firebird-quake3/ through `.github/workflows/pages.yml` (about four minutes;
   `gh run watch <id> --exit-status`). Nothing is committed without the tests passing locally.
 
@@ -56,6 +56,7 @@ explosion sprites, beams) and nothing else. The renderers never query the databa
 | bot navigation (nodes, edges, routing, incremental build) | `sql/waypoints.sql`, `bot_follow_route` in `sql/bots.sql` |
 | the tic entry point, think/physics dispatch, scoring, `init_map` | the end of `sql/bots.sql` |
 | what a frame returns | `sql/render.sql` (`frame_all`), read in `src/scene.js` `FrameState.parse` |
+| interpolation between tics, local prediction | `src/main.js`: `viewRow`, `interpolateFrame`, `poseOf`; the eye clamp in `view_setup` |
 | what gets drawn and how | `src/scene.js` (what), `src/renderer.js` and `src/renderer-gl.js` (how) |
 | HUD, icons, scoreboard | `src/hud.js` |
 | sounds, music | `src/audio.js`; events are rows in `sound_events` written by `snd`/`snd_at` |

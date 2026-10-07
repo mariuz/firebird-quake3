@@ -389,6 +389,7 @@ Node scripts leave them out.
 | 6 | the pose of a rotated brush model | id, pitch, yaw, roll |
 | 7 | (every 10th frame) the `target_speaker`s audible now | `lst` = ids |
 | 9 | a console line | id, time, text |
+| 10 | the eye the frame was culled for (always the first row) | x y z in `d1..d3` |
 
 How the faces are found: `view_setup` reads the player's eye and angles into `viewcfg`;
 `mark_faces` runs once per cluster the eye enters and fills `vis_faces` with every face of every leaf
@@ -458,15 +459,28 @@ slow machine plays in slow motion rather than stalling) it calls `q3_tic` with t
 WASD or arrows, mouse look with pointer lock on the `#screen-wrap`, Ctrl or click fires, Space jumps,
 Shift walks, 1–9 weapons, `/` or the wheel cycles, Enter or H uses the holdable, Tab shows the
 scoreboard, G gives everything, P pauses; touch: the left half moves, the right half looks, a tap
-fires) and keeps the previous tic's row and poses. Every frame, ticked or not, is painted *between
-the last two tics* (`CG_CalcEntityLerpPositions`): `viewRow` interpolates the eye's position and the
-clock by how far the frame sits into the current tic and applies the mouse's and the turn keys'
-pending deltas to the angles, so the look never waits for a tic; `frame_all` is called with that
-view (its `vx … vpitch` parameters override the player's eye in `view_setup`, so the face list is
-culled for the view actually painted); `interpolateFrame` moves the entities, the brush models'
-origins and their angles back toward the previous tic's poses by the same fraction, snapping
-instead when something jumped more than 200 units (a teleport). The result is one tic (50 ms) of
-latency on positions and none on the view, as in the original's client. The rows then go to
+fires) and keeps the previous tic's row and poses. Every frame, ticked or not, sits a fraction
+`alpha` of the way into the current tic, and is painted the way the original's client paints:
+
+- *Your own eye is predicted* (`CG_PredictPlayerState`). Quake III re-runs the player's move on the
+  client; here the move is SQL, so `viewRow` extrapolates instead: the last tic's displacement
+  (divided by the tics it covered) carried on for `alpha` of the next, at half strength on the
+  ground with no move key down (friction is stopping you, and an overshoot that snaps back looks
+  worse than a little lag), vertically only when both tics were in the air (a landing would sink
+  the eye into the floor). The mouse's and the turn keys' pending deltas are applied to the angles.
+  Nothing is predicted when dead or with the page's *Predict* box unticked.
+- `frame_all` is called with that view (its `vx … vpitch` parameters override the player's eye in
+  `view_setup`, so the face list is culled for the view actually painted). `view_setup` traces a
+  ±8-unit box from the player's real eye to the predicted one, so a prediction that runs past a wall
+  stops short of it, and the frame returns the eye it used as a row of kind 10, which the page
+  then paints from.
+- *Everything else is interpolated* (`CG_CalcEntityLerpPositions`): `interpolateFrame` moves the
+  entities, the brush models' origins and their angles back toward the previous tic's poses by
+  `1 − alpha`, snapping instead when something jumped more than 200 units (a teleport); the clock
+  is interpolated the same way.
+
+So the look has no latency, your own motion about none (it is the last tic's motion carried on),
+and the others are one tic (50 ms) behind, as in the original. The rows then go to
 `scene.js` and `audio.js`; on ticked frames the loop also refreshes the scoreboard and, while the
 waypoint graph is incomplete, runs `buildWaypoints`. `document.hidden` pauses it. The stats line
 shows frames and tics per second separately.

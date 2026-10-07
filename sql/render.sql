@@ -16,7 +16,9 @@
 SET TERM ^ ;
 
 -- the eye: the player's, or, when the page passes one, the view it is painting between two tics (the
--- position interpolated, the angles live from the mouse: see the loop in src/main.js)
+-- position predicted a fraction of a tic ahead, the angles live from the mouse: see the loop in
+-- src/main.js). A predicted eye is traced from the player's real one with a small box, so a prediction
+-- that runs past a wall stops 8 units short of it instead of looking into the void
 CREATE OR ALTER PROCEDURE view_setup (vx DOUBLE PRECISION DEFAULT NULL, vy DOUBLE PRECISION DEFAULT NULL, vz DOUBLE PRECISION DEFAULT NULL,
                                       vyaw DOUBLE PRECISION DEFAULT NULL, vpitch DOUBLE PRECISION DEFAULT NULL)
 RETURNS (ex DOUBLE PRECISION, ey DOUBLE PRECISION, ez DOUBLE PRECISION,
@@ -29,11 +31,25 @@ AS
 DECLARE yaw DOUBLE PRECISION; DECLARE pitch DOUBLE PRECISION; DECLARE fov DOUBLE PRECISION;
 DECLARE sy DOUBLE PRECISION; DECLARE cy DOUBLE PRECISION; DECLARE sp DOUBLE PRECISION; DECLARE cp DOUBLE PRECISION;
 DECLARE stepz DOUBLE PRECISION; DECLARE dead SMALLINT;
+DECLARE f DOUBLE PRECISION; DECLARE tx DOUBLE PRECISION; DECLARE ty DOUBLE PRECISION; DECLARE tz DOUBLE PRECISION;
+DECLARE nx DOUBLE PRECISION; DECLARE ny DOUBLE PRECISION; DECLARE nz DOUBLE PRECISION;
+DECLARE sf INTEGER; DECLARE ct INTEGER; DECLARE als SMALLINT; DECLARE sts SMALLINT; DECLARE hit INTEGER;
 BEGIN
   SELECT e.x, e.y, e.z + p.view_ofs, e.yaw, p.pitch + p.punchangle, p.stepz, e.deadflag
     FROM player p JOIN ents e ON e.id = p.ent_id WHERE p.id = 1 INTO ex, ey, ez, yaw, pitch, stepz, dead;
   ez = ez - COALESCE(stepz, 0);
-  IF (vx IS NOT NULL) THEN BEGIN ex = vx; ey = vy; ez = vz; yaw = vyaw; pitch = vpitch; END
+  IF (vx IS NOT NULL) THEN
+  BEGIN
+    yaw = vyaw; pitch = vpitch;
+    IF (ex IS NULL OR ABS(vx - ex) + ABS(vy - ey) + ABS(vz - ez) < 0.5e0) THEN BEGIN ex = vx; ey = vy; ez = vz; END
+    ELSE
+    BEGIN
+      EXECUTE PROCEDURE trace_move(NULL, -8, -8, -8, 8, 8, 8, ex, ey, ez, vx, vy, vz, 1)
+        RETURNING_VALUES f, tx, ty, tz, nx, ny, nz, sf, ct, als, sts, hit;
+      IF (sts = 1) THEN BEGIN ex = vx; ey = vy; ez = vz; END      -- the real eye is in a wall (noclip, a corpse): trust the page
+      ELSE BEGIN ex = tx; ey = ty; ez = tz; END
+    END
+  END
   SELECT c.w, c.h, c.fov, c.near_z FROM viewcfg c WHERE c.id = 1 INTO w, h, fov, nearz;
   sy = SIN(yaw * 0.0174532925e0); cy = COS(yaw * 0.0174532925e0);
   sp = SIN(pitch * 0.0174532925e0); cp = COS(pitch * 0.0174532925e0);
@@ -255,6 +271,10 @@ BEGIN
   pe = player_ent();
   EXECUTE PROCEDURE view_setup(vx, vy, vz, vyaw, vpitch) RETURNING_VALUES ex, ey, ez, fx, fy, fz, rx, ry, rz, ux, uy, uz, w, h, sc, nearz, kx, ky, pvs, vcl, vleaf;
   qx = SQRT(1 + kx * kx); qy = SQRT(1 + ky * ky);
+  -- the eye this frame was culled for (a predicted one may have been clamped): the page paints from it
+  kind = 10; d1 = ex; d2 = ey; d3 = ez;
+  SUSPEND;
+  d1 = NULL; d2 = NULL; d3 = NULL;
   IF (mode = 1) THEN
   BEGIN
     kind = 8;

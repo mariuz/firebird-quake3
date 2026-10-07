@@ -37,6 +37,7 @@ let last = null;         // last Q3_TIC row
 let prev = null;         // the one before: the frame between two tics is painted between the two states
 let prevPose = null, curPose = null;   // the entities' and brush models' poses at those tics
 let frameAt = 0;         // when the last frame was painted
+let lastTics = 1;        // how many tics the last q3_tic call ran (the displacement prev → last covers them)
 let running = false;
 let paused = false;
 let lastTic = 0;
@@ -45,7 +46,7 @@ let lastFxId = 0;
 let frameNo = 0;
 let scores = [];
 const state = new FrameState();
-const settings = { map: 'q3dm1', detail: 'medium', sfx: 70, music: 40, musicMode: 'tracks', skill: 2, bots: 3, fov: 90, renderer: 'fast', brightness: 4 };
+const settings = { map: 'q3dm1', detail: 'medium', sfx: 70, music: 40, musicMode: 'tracks', skill: 2, bots: 3, fov: 90, renderer: 'fast', brightness: 4, predict: true };
 try { Object.assign(settings, JSON.parse(localStorage.getItem('firebird-quake3:settings') || '{}')); } catch { /* defaults */ }
 const saveSettings = () => { try { localStorage.setItem('firebird-quake3:settings', JSON.stringify(settings)); } catch { /* ignore */ } };
 const viewWidth = () => (settings.detail === 'high' ? 640 : settings.detail === 'low' ? 160 : 320);
@@ -195,8 +196,10 @@ const arr = { rowMode: 'array' };
 
 // ── between two tics ─────────────────────────────────────────────────────
 // The game runs at 20 Hz; the painter runs at the display's rate. A frame between two tics shows the
-// world interpolated between the last two states (CG_CalcEntityLerpPositions), one tic behind, with the
-// view angles live from the mouse so the look never waits for a tic.
+// world interpolated between the last two states (CG_CalcEntityLerpPositions), one tic behind, and the
+// player predicted ahead of the last state (CG_PredictPlayerState, by extrapolation rather than by
+// re-running the move: the move is SQL), with the view angles live from the mouse, so neither the
+// look nor your own motion waits for a tic.
 const lerp = (a, b, k) => a + (b - a) * k;
 const lerpAngle = (a, b, k) => a + (((b - a + 540) % 360) - 180) * k;
 const SNAP = 200;   // a jump this long in one tic is a teleport, not a move
@@ -230,18 +233,31 @@ function interpolateFrame(fr, alpha) {
   }
 }
 
-/** The tic row as the painter sees it this frame: the position between the two tics, the angles live. */
+/** The tic row as the painter sees it this frame: the eye predicted `alpha` of a tic past the last
+ *  state along the last tic's motion, the clock between the two tics, the angles live. The frame
+ *  query clamps a predicted eye with a trace and returns the eye it used (row kind 10). */
 function viewRow(alpha, now) {
   const k = (c) => keys.has(c);
   const frac = Math.min(1, (now - lastTic) / TIC_MS);
   const yawLive = mouseYaw + ((k('ArrowLeft') ? 1 : 0) - (k('ArrowRight') ? 1 : 0)) * 7 * frac;
   const pitchLive = mousePitch + ((k('PageDown') ? 1 : 0) - (k('PageUp') ? 1 : 0)) * 5 * frac;
   const v = { ...last, YAW: (last.YAW + yawLive) % 360, PITCH: Math.max(-89, Math.min(89, last.PITCH + pitchLive)) };
-  if (prev && alpha < 1 && Math.hypot(last.PX - prev.PX, last.PY - prev.PY, last.PZ - prev.PZ) < SNAP) {
-    v.PX = lerp(prev.PX, last.PX, alpha); v.PY = lerp(prev.PY, last.PY, alpha); v.PZ = lerp(prev.PZ, last.PZ, alpha);
-    v.VIEW_Z = lerp(prev.VIEW_Z, last.VIEW_Z, alpha);
-    v.TIME_ = lerp(prev.TIME_, last.TIME_, alpha);
+  if (!prev || alpha >= 1 || Math.hypot(last.PX - prev.PX, last.PY - prev.PY, last.PZ - prev.PZ) >= SNAP) return v;
+  v.TIME_ = lerp(prev.TIME_, last.TIME_, alpha);
+  if (last.DEAD || !settings.predict) return v;
+  // the displacement of one tic, carried on for alpha of the next; with no move key down on the
+  // ground, friction is stopping us, so carry on half as far (an overshoot that snaps back is worse
+  // than a little lag)
+  const moving = touch.move || ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'Comma', 'Period'].some(k);
+  const kk = (alpha / Math.max(1, lastTics)) * (moving || !last.ONGROUND ? 1 : 0.5);
+  v.PX = last.PX + (last.PX - prev.PX) * kk;
+  v.PY = last.PY + (last.PY - prev.PY) * kk;
+  // up and down only in the air on both tics: a landing would otherwise sink the eye into the floor
+  if (!last.ONGROUND && !prev.ONGROUND) {
+    v.PZ = last.PZ + (last.PZ - prev.PZ) * kk;
+    v.VIEW_Z = last.VIEW_Z + (last.VIEW_Z - prev.VIEW_Z) * kk;
   }
+  v.predicted = true;
   return v;
 }
 
@@ -266,6 +282,7 @@ async function frame() {
       last = (await db.query('SELECT * FROM q3_tic(?, ?, ?, ?, ?, ?, ?, ?, ?)', readInput(tics), { rowMode: 'object' })).rows[0];
       perf.tic = performance.now() - t;
       ticked = tics;
+      lastTics = tics;
       if (last.EXIT_KIND === 3) {
         await startMap(map.name);
         nextFrame();
@@ -281,6 +298,11 @@ async function frame() {
     const rows = (await db.query(`SELECT * FROM frame_all(${settings.renderer === 'sql' ? 1 : 0}, ${lastSoundId}, ${lastFxId}, ${wantSpeakers ? 1 : 0}, ${view.PX}, ${view.PY}, ${view.VIEW_Z}, ${view.YAW}, ${view.PITCH})`, [], arr)).rows;
     const fr = state.parse(rows);
     fr.sqlProjected = settings.renderer === 'sql';
+    if (view.predicted && fr.eye) {
+      // paint from the eye the faces were culled for (a prediction into a wall was clamped)
+      view.PZ += fr.eye[2] - view.VIEW_Z;
+      view.PX = fr.eye[0]; view.PY = fr.eye[1]; view.VIEW_Z = fr.eye[2];
+    }
     if (ticked) { prevPose = curPose; curPose = poseOf(fr); }
     interpolateFrame(fr, alpha);
     if (fr.speakers) audio.setSpeakersOn(fr.speakers);
@@ -435,6 +457,8 @@ $('renderer').addEventListener('change', (e) => {
 });
 $('brightness').value = String(settings.brightness);
 $('brightness').addEventListener('change', (e) => { settings.brightness = Number(e.target.value); saveSettings(); if (renderer) renderer.setBrightness(settings.brightness); });
+$('predict').checked = settings.predict;
+$('predict').addEventListener('change', (e) => { settings.predict = e.target.checked; saveSettings(); });
 $('skill').value = String(settings.skill);
 $('skill').addEventListener('change', (e) => { settings.skill = Number(e.target.value); saveSettings(); });
 $('bots').value = String(settings.bots);

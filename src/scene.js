@@ -27,7 +27,7 @@ export class FrameState {
   /** rows of FRAME_ALL (array mode): r = [kind, i1, i2, i3, i4, i5, d1..d9, s, lst] */
   parse(rows) {
     const faces = [], ents = [], sounds = [], fx = [];
-    let speakers = null;
+    let speakers = null, eye = null;
     const messages = [];
     this.brushAngles.clear();
     for (const r of rows) {
@@ -40,11 +40,12 @@ export class FrameState {
         case 6: if (r[6] || r[7] || r[8]) this.brushAngles.set(r[1], [r[6], r[7], r[8]]); break;
         case 7: speakers = r[16] ? r[16].split(',').map(Number) : []; break;
         case 9: messages.push({ id: r[1], time: r[6], text: r[15] }); break;
+        case 10: eye = [r[6], r[7], r[8]]; break;
         default: break;
       }
     }
     this.messages = messages;
-    return { faces, ents, sounds, fx, speakers, messages };
+    return { faces, ents, sounds, fx, speakers, messages, eye };
   }
 
   /** The temp entities of a tic become sprites, beams and particles. */
