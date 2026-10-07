@@ -4,7 +4,7 @@
 //
 //   node scripts/view-test.mjs
 
-import { FrameState, firstPersonView } from '../src/scene.js';
+import { FrameState, firstPersonView, zoomedFov, fovY } from '../src/scene.js';
 
 let failed = 0;
 const assert = (c, m) => { if (!c) { console.error(`FAIL: ${m}`); failed++; } else console.log(`ok   ${m}`); };
@@ -83,6 +83,17 @@ assert(weak.pitch <= -9.9 && strong.pitch >= -10.01, `low on health the kick is 
   assert(dead.roll === 40 && dead.pitch === 0, 'the dead lie on their side, unkicked');
   const over = firstPersonView(row({ MATCH_OVER: 1, VX: 320 }), st);
   assert(over.roll === 0 && over.pitch === 0 && over.z === 26, 'the intermission camera holds still');
+}
+
+// the zoom (CG_CalcFov): 90 → 22.5 in 150 ms while held, back as fast once released
+{
+  const near = (a, b) => Math.abs(a - b) < 0.01;
+  assert(near(zoomedFov(90, false, 1e9), 90) && near(zoomedFov(90, true, 0), 90) && near(zoomedFov(90, true, 75), 56.25) && near(zoomedFov(90, true, 150), 22.5) && near(zoomedFov(90, true, 5000), 22.5),
+    'zooming in: 90, half-way at 75 ms, 22.5 from 150 ms on');
+  assert(near(zoomedFov(90, false, 0), 22.5) && near(zoomedFov(90, false, 75), 56.25) && near(zoomedFov(90, false, 150), 90), 'and out again');
+  const y = fovY(22.5, 640, 480);
+  assert(Math.abs(y - 16.97) < 0.05 && Math.abs(y / 75 - 0.226) < 0.002, `zoomed on 4:3, fov_y ${y.toFixed(2)}, the mouse at ${(y / 75).toFixed(3)} of its speed`);
+  assert(Math.abs(fovY(90, 640, 480) - 73.74) < 0.05, 'fov_y of 90 on 4:3 is 73.74');
 }
 
 console.log(failed ? `${failed} FAILED` : 'all good');

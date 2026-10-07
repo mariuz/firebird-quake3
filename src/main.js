@@ -19,7 +19,7 @@ import { createSchema, loadResources, loadMap, buildWaypoints, setView } from '.
 import { Renderer } from './renderer.js';
 import { GLRenderer } from './renderer-gl.js';
 import { Hud } from './hud.js';
-import { FrameState, drawScene, firstPersonView } from './scene.js';
+import { FrameState, drawScene, firstPersonView, zoomedFov, fovY, ZOOM_FOV } from './scene.js';
 import { Q3Audio } from './audio.js';
 
 const $ = (id) => document.getElementById(id);
@@ -72,9 +72,12 @@ let mouseYaw = 0, mousePitch = 0;
 let fireClick = false;
 let impulse = 0;
 let scoreboard = false;
+// +zoom (Z or the right mouse button): when it went down or up, and the field of view of the last frame
+let zoomed = false, zoomAt = -1e9, curFov = 90;
+const zoom = (on) => { if (on !== zoomed) { zoomed = on; zoomAt = performance.now(); } };
 const GAME_KEYS = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space', 'KeyE',
   'ControlLeft', 'ControlRight', 'ShiftLeft', 'ShiftRight', 'Tab', 'Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5', 'Digit6', 'Digit7',
-  'Digit8', 'Digit9', 'Digit0', 'KeyF', 'KeyG', 'Comma', 'Period', 'PageUp', 'PageDown', 'Slash', 'Enter', 'KeyH', 'KeyC']);
+  'Digit8', 'Digit9', 'Digit0', 'KeyF', 'KeyG', 'Comma', 'Period', 'PageUp', 'PageDown', 'Slash', 'Enter', 'KeyH', 'KeyC', 'KeyZ']);
 window.addEventListener('keydown', (e) => {
   if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement) return;
   if (!running) return;
@@ -85,19 +88,27 @@ window.addEventListener('keydown', (e) => {
   if (e.code === 'KeyG') impulse = 99;
   if (e.code === 'Enter' || e.code === 'KeyH') impulse = 13;
   if (e.code === 'Tab') scoreboard = true;
+  if (e.code === 'KeyZ') zoom(true);
   if (e.code === 'KeyP' || e.code === 'Pause') paused = !paused;
 });
-window.addEventListener('keyup', (e) => { keys.delete(e.code); if (e.code === 'Tab') scoreboard = false; });
-window.addEventListener('blur', () => keys.clear());
+window.addEventListener('keyup', (e) => { keys.delete(e.code); if (e.code === 'Tab') scoreboard = false; if (e.code === 'KeyZ') zoom(false); });
+window.addEventListener('blur', () => { keys.clear(); zoom(false); });
 wrap.addEventListener('click', () => {
   if (running && document.pointerLockElement !== wrap) wrap.requestPointerLock?.()?.catch?.(() => {});
 });
-wrap.addEventListener('mousedown', (e) => { if (document.pointerLockElement === wrap && e.button === 0) fireClick = true; });
-window.addEventListener('mouseup', () => { fireClick = false; });
+wrap.addEventListener('mousedown', (e) => {
+  if (document.pointerLockElement !== wrap) return;
+  if (e.button === 0) fireClick = true;
+  if (e.button === 2) zoom(true);
+});
+window.addEventListener('mouseup', (e) => { if (e.button === 0) fireClick = false; if (e.button === 2) zoom(false); });
+wrap.addEventListener('contextmenu', (e) => e.preventDefault());
 window.addEventListener('mousemove', (e) => {
   if (document.pointerLockElement === wrap) {
-    mouseYaw -= e.movementX * 0.15;
-    mousePitch += e.movementY * 0.15;
+    // zoomed, the mouse slows with the view (cg.zoomSensitivity = fov_y / 75)
+    const sens = zoomed ? fovY(curFov, viewWidth(), viewHeight()) / 75 : 1;
+    mouseYaw -= e.movementX * 0.15 * sens;
+    mousePitch += e.movementY * 0.15 * sens;
   }
 });
 window.addEventListener('wheel', (e) => { if (document.pointerLockElement === wrap) impulse = e.deltaY > 0 ? 12 : 14; });
@@ -307,8 +318,9 @@ async function frame() {
     t = performance.now();
     // one round trip: every row is tagged with what it is (see FRAME_ALL in sql/render.sql); the view is this frame's
     const wantSpeakers = ++frameNo % 10 === 0;
-    const fpv = firstPersonView(view, state, dt, settings.fov);   // the kicks, the dips, the bob: the view that is painted
-    const rows = (await db.query(`SELECT * FROM frame_all(${settings.renderer === 'sql' ? 1 : 0}, ${lastSoundId}, ${lastFxId}, ${wantSpeakers ? 1 : 0}, ${fpv.x}, ${fpv.y}, ${fpv.z}, ${fpv.yaw}, ${fpv.pitch})`, [], arr)).rows;
+    curFov = last.MATCH_OVER || last.DEAD ? settings.fov : zoomedFov(settings.fov, zoomed, now - zoomAt);
+    const fpv = firstPersonView(view, state, dt, curFov);   // the kicks, the dips, the bob, the zoom: the view that is painted
+    const rows = (await db.query(`SELECT * FROM frame_all(${settings.renderer === 'sql' ? 1 : 0}, ${lastSoundId}, ${lastFxId}, ${wantSpeakers ? 1 : 0}, ${fpv.x}, ${fpv.y}, ${fpv.z}, ${fpv.yaw}, ${fpv.pitch}, ${curFov})`, [], arr)).rows;
     const fr = state.parse(rows);
     fr.sqlProjected = settings.renderer === 'sql';
     if (fr.eye) {
@@ -337,7 +349,9 @@ async function frame() {
     }
 
     t = performance.now();
-    const tint = drawScene(renderer, hud, res, map.bsp, view, fr, { fov: settings.fov, sqlProjected: fr.sqlProjected, state, dt, scoreboard, scores, view: fpv });
+    // the gun is put away past half-way into the zoom: drawn with the zoomed view it would fill the screen
+    const noWeapon = curFov < (settings.fov + ZOOM_FOV) / 2;
+    const tint = drawScene(renderer, hud, res, map.bsp, view, fr, { fov: curFov, sqlProjected: fr.sqlProjected, state, dt, scoreboard, scores, view: fpv, noWeapon });
     renderer.present(tint);
     perf.draw = performance.now() - t;
     updateStats(ticked);

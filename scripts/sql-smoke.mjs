@@ -214,6 +214,18 @@ if (pad) {
   const d = Math.hypot(clamped[6] - e.EX, clamped[7] - e.EY, clamped[8] - e.EZ);
   const cl = (await db.query(`SELECT cluster FROM leaves WHERE id = point_leaf(${clamped[6]}, ${clamped[7]}, ${clamped[8]})`)).rows[0].CLUSTER;
   assert(d < 3990 && cl >= 0, `an eye predicted through a wall stops inside the world (${d.toFixed(0)} of 4000 units, cluster ${cl})`);
+  // the zoom: the page's field of view culls and projects (CG_CalcFov's cg_zoomFov)
+  const faces = async (mode, fov) => (await db.query(`SELECT * FROM frame_all(${mode}, 2147483647, 2147483647, 0, ${e.EX}, ${e.EY}, ${e.EZ}, 0, 0, ${fov})`, [], { rowMode: 'array' })).rows;
+  const count = (rows) => rows.filter((r) => r[0] === 1).reduce((n, r) => n + r[16].split(',').length, 0);
+  const wide = count(await faces(0, 90)), narrow = count(await faces(0, 22.5));
+  assert(narrow > 0 && narrow < wide, `zoomed to 22.5 degrees, fewer faces pass the frustum (${narrow} of ${wide})`);
+  // the same vertex, projected in SQL at both: about tan 45° / tan 11.25° = 5.03 times as far from the centre
+  const w = (await db.query('SELECT w FROM viewcfg')).rows[0].W;
+  const at = (rows) => new Map(rows.filter((r) => r[0] === 8 && r[6] > 16).map((r) => [`${r[1]}:${r[2]}`, r[9] - w / 2]));   // in front of the eye: the ones behind are left for the painter to clip
+  const v90 = at(await faces(1, 90)), v22 = at(await faces(1, 22.5));
+  const both = [...v22.keys()].filter((k) => v90.has(k) && Math.abs(v90.get(k)) > 2);
+  const ratio = both.length ? v22.get(both[0]) / v90.get(both[0]) : 0;
+  assert(both.length > 0 && Math.abs(ratio - 5.03) < 0.05, `the SQL projection zooms too: a vertex ${ratio.toFixed(2)} times as far from the centre`);
 }
 
 // the end of a match (CheckExitRules, BeginIntermission, CheckIntermissionExit)

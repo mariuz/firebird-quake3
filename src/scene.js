@@ -144,6 +144,18 @@ export function firstPersonView(last, state, dt = 0.05, fov = 90) {
   return view;
 }
 
+// CG_CalcFov's zoom: to cg_zoomFov (22.5) in 150 ms from when +zoom went down, and back as fast from
+// when it came up (from wherever the other half-way zoom had got to: Quake III's jump included)
+export const ZOOM_FOV = 22.5, ZOOM_TIME = 150;
+export function zoomedFov(fov, zoomed, sinceMs, zoomFov = ZOOM_FOV) {
+  const f = sinceMs / ZOOM_TIME;
+  if (zoomed) return f >= 1 ? zoomFov : fov + f * (zoomFov - fov);
+  return f >= 1 ? fov : zoomFov + f * (fov - zoomFov);
+}
+
+/** The vertical field of view of a horizontal one on a w×h screen (CG_CalcFov's fov_y). */
+export const fovY = (fovX, w, h) => (Math.atan2(h, w / Math.tan((fovX * Math.PI) / 360)) * 360) / Math.PI;
+
 /** The whole picture of one frame into the renderer (not yet presented). Returns the screen tint. */
 export function drawScene(renderer, hud, res, bsp, last, frame, opts = {}) {
   const r = renderer;

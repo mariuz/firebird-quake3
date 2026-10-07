@@ -397,9 +397,9 @@ positionally by `src/scene.js`:
 | --- | --- | --- |
 | 1 | the visible faces of a model (world or brush model) | entity id, origin, `lst` = face ids joined with commas |
 
-`frame_all(mode, last_sound, last_fx, want_speakers [, vx, vy, vz, vyaw, vpitch])`: the five optional
-parameters are the eye to use instead of the player's (the page passes its interpolated view); the
-Node scripts leave them out.
+`frame_all(mode, last_sound, last_fx, want_speakers [, vx, vy, vz, vyaw, vpitch, vfov])`: the optional
+parameters are the eye to use instead of the player's (the page passes its predicted and kicked view)
+and the field of view instead of `viewcfg`'s (the zoom); the Node scripts leave them out.
 | 8 | (mode 1) one projected vertex | face id, screen x y z, s t u v, colour |
 | 2 | an entity to draw (MD3 item, sprite, player model) | id, model, frame, weapon, effects, pose, legs and torso clocks, `pmodel/skin`, `legs_anim,torso_anim,health,classname` |
 | 4 | a sound event newer than `last_sound` | id, name, position, volume, attenuation, entity |
@@ -454,6 +454,12 @@ is, cosmetic state kept in `FrameState.kick`:
   crouched) and lifts the eye up to 6 units (×0.005).
 - *The gun* follows the view, kicks and all, swaying with the steps and drifting at rest.
 
+*The zoom* is the client's too (`CG_CalcFov`): Z or the right mouse button holds it, `zoomedFov`
+eases the field of view to 22.5 degrees in 150 ms and back as fast on release, the mouse slows to
+`fov_y / 75` of its speed while zoomed (`cg.zoomSensitivity`), and the gun is put away past half-way
+(drawn with the zoomed view it would fill the screen). `frame_all`'s last optional parameter is the
+field of view, so the frustum test and the SQL projection use it.
+
 The page calls it before the frame query and passes the resulting eye and angles to `frame_all`, so
 the faces are culled for the view that is painted; the dead (rolled 40 degrees) and the intermission
 camera are left alone.
@@ -500,7 +506,7 @@ The loop (`frame`) runs on `requestAnimationFrame` with a 60 ms `setTimeout` fal
 display's rate; the game runs at 20 Hz inside it. When a 50 ms tic is due (one or two at most, so a
 slow machine plays in slow motion rather than stalling) it calls `q3_tic` with the input (`readInput`:
 WASD or arrows, mouse look with pointer lock on the `#screen-wrap`, Ctrl or click fires, Space jumps,
-C crouches, Shift walks, 1–9 weapons, `/` or the wheel cycles, Enter or H uses the holdable, Tab shows the
+C crouches, Z or the right button zooms, Shift walks, 1–9 weapons, `/` or the wheel cycles, Enter or H uses the holdable, Tab shows the
 scoreboard, G gives everything, P pauses; touch: the left half moves, the right half looks, a tap
 fires) and keeps the previous tic's row and poses. Every frame, ticked or not, sits a fraction
 `alpha` of the way into the current tic, and is painted the way the original's client paints:

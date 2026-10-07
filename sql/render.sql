@@ -20,7 +20,7 @@ SET TERM ^ ;
 -- src/main.js). A predicted eye is traced from the player's real one with a small box, so a prediction
 -- that runs past a wall stops 8 units short of it instead of looking into the void
 CREATE OR ALTER PROCEDURE view_setup (vx DOUBLE PRECISION DEFAULT NULL, vy DOUBLE PRECISION DEFAULT NULL, vz DOUBLE PRECISION DEFAULT NULL,
-                                      vyaw DOUBLE PRECISION DEFAULT NULL, vpitch DOUBLE PRECISION DEFAULT NULL)
+                                      vyaw DOUBLE PRECISION DEFAULT NULL, vpitch DOUBLE PRECISION DEFAULT NULL, vfov DOUBLE PRECISION DEFAULT NULL)
 RETURNS (ex DOUBLE PRECISION, ey DOUBLE PRECISION, ez DOUBLE PRECISION,
          fx DOUBLE PRECISION, fy DOUBLE PRECISION, fz DOUBLE PRECISION,
          rx DOUBLE PRECISION, ry DOUBLE PRECISION, rz DOUBLE PRECISION,
@@ -51,6 +51,7 @@ BEGIN
     END
   END
   SELECT c.w, c.h, c.fov, c.near_z FROM viewcfg c WHERE c.id = 1 INTO w, h, fov, nearz;
+  IF (vfov IS NOT NULL AND vfov > 1 AND vfov < 170) THEN fov = vfov;   -- the page's, while zooming (CG_CalcFov)
   sy = SIN(yaw * 0.0174532925e0); cy = COS(yaw * 0.0174532925e0);
   sp = SIN(pitch * 0.0174532925e0); cp = COS(pitch * 0.0174532925e0);
   fx = cp * cy; fy = cp * sy; fz = -sp;
@@ -143,7 +144,7 @@ END^
 
 -- FRAME_FACES: the visible faces, projected vertex by vertex in SQL.
 CREATE OR ALTER PROCEDURE frame_faces (vx DOUBLE PRECISION DEFAULT NULL, vy DOUBLE PRECISION DEFAULT NULL, vz DOUBLE PRECISION DEFAULT NULL,
-                                       vyaw DOUBLE PRECISION DEFAULT NULL, vpitch DOUBLE PRECISION DEFAULT NULL)
+                                       vyaw DOUBLE PRECISION DEFAULT NULL, vpitch DOUBLE PRECISION DEFAULT NULL, vfov DOUBLE PRECISION DEFAULT NULL)
 RETURNS (face INTEGER, seq INTEGER, vf DOUBLE PRECISION, vr DOUBLE PRECISION, vu DOUBLE PRECISION,
          sx DOUBLE PRECISION, sy DOUBLE PRECISION, s DOUBLE PRECISION, t DOUBLE PRECISION, u DOUBLE PRECISION, v DOUBLE PRECISION, ent_id INTEGER)
 AS
@@ -161,7 +162,7 @@ DECLARE m00 DOUBLE PRECISION; DECLARE m01 DOUBLE PRECISION; DECLARE m02 DOUBLE P
 DECLARE m10 DOUBLE PRECISION; DECLARE m11 DOUBLE PRECISION; DECLARE m12 DOUBLE PRECISION;
 DECLARE m20 DOUBLE PRECISION; DECLARE m21 DOUBLE PRECISION; DECLARE m22 DOUBLE PRECISION;
 BEGIN
-  EXECUTE PROCEDURE view_setup(vx, vy, vz, vyaw, vpitch) RETURNING_VALUES ex, ey, ez, fx, fy, fz, rx, ry, rz, ux, uy, uz, w, h, sc, nearz, kx, ky, pvs, vcl, vleaf;
+  EXECUTE PROCEDURE view_setup(vx, vy, vz, vyaw, vpitch, vfov) RETURNING_VALUES ex, ey, ez, fx, fy, fz, rx, ry, rz, ux, uy, uz, w, h, sc, nearz, kx, ky, pvs, vcl, vleaf;
   hw = w / 2e0; hh = h / 2e0;
   qx = SQRT(1 + kx * kx); qy = SQRT(1 + ky * ky);
   EXECUTE PROCEDURE mark_faces(pvs, vcl);
@@ -250,7 +251,7 @@ END^
 --   9 a console line (i1 id, d1 time, s text)
 CREATE OR ALTER PROCEDURE frame_all (mode SMALLINT, last_sound INTEGER, last_fx INTEGER, want_speakers SMALLINT,
                                      vx DOUBLE PRECISION DEFAULT NULL, vy DOUBLE PRECISION DEFAULT NULL, vz DOUBLE PRECISION DEFAULT NULL,
-                                     vyaw DOUBLE PRECISION DEFAULT NULL, vpitch DOUBLE PRECISION DEFAULT NULL)
+                                     vyaw DOUBLE PRECISION DEFAULT NULL, vpitch DOUBLE PRECISION DEFAULT NULL, vfov DOUBLE PRECISION DEFAULT NULL)
 RETURNS (kind SMALLINT, i1 INTEGER, i2 INTEGER, i3 INTEGER, i4 INTEGER, i5 INTEGER,
          d1 DOUBLE PRECISION, d2 DOUBLE PRECISION, d3 DOUBLE PRECISION, d4 DOUBLE PRECISION, d5 DOUBLE PRECISION,
          d6 DOUBLE PRECISION, d7 DOUBLE PRECISION, d8 DOUBLE PRECISION, d9 DOUBLE PRECISION, s VARCHAR(200),
@@ -269,7 +270,7 @@ DECLARE pm VARCHAR(16); DECLARE ps VARCHAR(16); DECLARE la INTEGER; DECLARE ta I
 BEGIN
   SELECT g.world_model FROM game g WHERE g.id = 1 INTO world;
   pe = player_ent();
-  EXECUTE PROCEDURE view_setup(vx, vy, vz, vyaw, vpitch) RETURNING_VALUES ex, ey, ez, fx, fy, fz, rx, ry, rz, ux, uy, uz, w, h, sc, nearz, kx, ky, pvs, vcl, vleaf;
+  EXECUTE PROCEDURE view_setup(vx, vy, vz, vyaw, vpitch, vfov) RETURNING_VALUES ex, ey, ez, fx, fy, fz, rx, ry, rz, ux, uy, uz, w, h, sc, nearz, kx, ky, pvs, vcl, vleaf;
   qx = SQRT(1 + kx * kx); qy = SQRT(1 + ky * ky);
   -- the eye this frame was culled for (a predicted one may have been clamped): the page paints from it
   kind = 10; d1 = ex; d2 = ey; d3 = ez;
@@ -278,7 +279,7 @@ BEGIN
   IF (mode = 1) THEN
   BEGIN
     kind = 8;
-    FOR SELECT f.face, f.seq, f.ent_id, f.vf, f.vr, f.vu, f.sx, f.sy, f.s, f.t, f.u, f.v FROM frame_faces(:vx, :vy, :vz, :vyaw, :vpitch) f INTO i1, i2, i3, d1, d2, d3, d4, d5, d6, d7, d8, d9 DO SUSPEND;
+    FOR SELECT f.face, f.seq, f.ent_id, f.vf, f.vr, f.vu, f.sx, f.sy, f.s, f.t, f.u, f.v FROM frame_faces(:vx, :vy, :vz, :vyaw, :vpitch, :vfov) f INTO i1, i2, i3, d1, d2, d3, d4, d5, d6, d7, d8, d9 DO SUSPEND;
     i3 = NULL; d4 = NULL; d5 = NULL; d6 = NULL; d7 = NULL; d8 = NULL; d9 = NULL;
   END
   ELSE

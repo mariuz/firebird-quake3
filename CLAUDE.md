@@ -58,7 +58,7 @@ explosion sprites, beams) and nothing else. The renderers never query the databa
 | the tic entry point, think/physics dispatch, scoring, `init_map` | the end of `sql/bots.sql` |
 | what a frame returns | `sql/render.sql` (`frame_all`), read in `src/scene.js` `FrameState.parse` |
 | interpolation between tics, local prediction | `src/main.js`: `viewRow`, `interpolateFrame`, `poseOf`; the eye clamp in `view_setup` |
-| view kicks, landing dips, bob, gun sway | `src/scene.js` `firstPersonView` (tested by `npm run test:view`); the hit's source in `t_damage`, the fall's size in `impact` |
+| view kicks, landing dips, bob, gun sway, zoom | `src/scene.js` `firstPersonView`, `zoomedFov`; the zoom key and sensitivity in `src/main.js` (tested by `npm run test:view`); the hit's source in `t_damage`, the fall's size in `impact` |
 | what gets drawn and how | `src/scene.js` (what), `src/renderer.js` and `src/renderer-gl.js` (how) |
 | HUD, icons, scoreboard | `src/hud.js` |
 | sounds, music | `src/audio.js`; events are rows in `sound_events` written by `snd`/`snd_at` |
