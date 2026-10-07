@@ -52,6 +52,10 @@ jobs:
       - name: The bots
         run: npm run test:bots
 
+      # The bots on q3dm17: they hunt over the waypoint graph and take the jump pads
+      - name: The bots on the jump pads
+        run: npm run test:bots:dm17
+
       - name: Headless screenshots
         run: npm run screenshots
 

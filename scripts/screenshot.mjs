@@ -37,7 +37,7 @@ const db = new FirebirdBrowser('memory://quake3', { transport: new DirectTranspo
 await createSchema(db, sql);
 const pak = new Pk3(fs.readFileSync(process.env.PAK ?? path.join(root, 'public/pak/pak0.pk3')).buffer);
 const res = await loadResources(db, pak, { width: W, height: H });
-const bsp = await loadMap(db, pak, res, mapName, { skill: 2, bots });
+const bsp = await loadMap(db, pak, res, mapName, { skill: 2, bots, link: false });   // the bots need no routes for a still frame
 await db.exec("UPDATE ents SET flags = BIN_OR(flags, 16) WHERE classname = 'player'");
 const renderer = new Renderer(stubCanvas, res);
 renderer.setSize(W, H);

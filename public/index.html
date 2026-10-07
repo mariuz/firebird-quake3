@@ -83,6 +83,8 @@
         <button data-sql="SELECT id, item, solid, CAST(x AS INTEGER) x, CAST(y AS INTEGER) y, CAST(z AS INTEGER) z, nextthink FROM ents WHERE classname = 'item' ORDER BY item">items</button>
         <button data-sql="SELECT id, classname, mv_state, CAST(x AS INTEGER) x, CAST(y AS INTEGER) y, CAST(z AS INTEGER) z, targetname, target FROM ents WHERE movetype = 7 ORDER BY classname">movers</button>
         <button data-sql="SELECT classname, COUNT(*) n FROM ents GROUP BY classname ORDER BY n DESC">entities</button>
+        <button data-sql="SELECT w.kind, COUNT(*) nodes, (SELECT COUNT(*) FROM wp_edges e JOIN waypoints a ON a.id = e.a WHERE a.kind = w.kind) edges_out FROM waypoints w GROUP BY w.kind ORDER BY w.kind">waypoints</button>
+        <button data-sql="SELECT r.ent_id, e.bot, r.target, t.classname, r.path FROM bot_routes r JOIN ents e ON e.id = r.ent_id LEFT JOIN ents t ON t.id = r.target">bot routes</button>
         <button data-sql="SELECT FIRST 40 * FROM frame_faces_fast">frame_faces_fast</button>
         <button data-sql="SELECT FIRST 40 * FROM frame_faces">frame_faces</button>
         <button data-sql="SELECT * FROM frame_ents">frame_ents</button>
@@ -119,7 +121,9 @@
           launch velocity from their target, teleporters, hurt triggers; the items of bg_itemlist with their respawn times;
           the nine weapons from the gauntlet to the BFG10K; damage with armour and the quad, knockback, gibs; the obituaries,
           the frag count and the announcer; and the bots — see, chase, strafe, pick things up, shoot, die, respawn — in
-          <code>BOT_THINK</code>.</li>
+          <code>BOT_THINK</code>. The bots find their way over a waypoint graph built when the map loads: a node at every
+          spawn point, item, jump pad and teleporter and on a grid over every floor, an edge wherever a trace says a player
+          can walk, step, drop, fly off a pad or teleport; <code>WP_ROUTE</code> is a breadth-first search in PSQL.</li>
         <li><b>The renderer is a query.</b> <code>FRAME_ALL</code> finds the leaf and cluster the eye is in and, once per
           cluster, marks every face of every leaf whose cluster is in its PVS (R_MarkLeaves) with its plane and bounding
           sphere. A frame is then a scan of the marked faces with the back-face and frustum tests as expressions, aggregated

@@ -20,7 +20,7 @@ const db = new FirebirdBrowser('memory://quake3', { transport: new DirectTranspo
 await createSchema(db, sql);
 const pak = new Pk3(fs.readFileSync(path.join(root, 'public/pak/pak0.pk3')).buffer);
 const res = await loadResources(db, pak, { width: W, height: H });
-const bsp = await loadMap(db, pak, res, args[0] ?? 'q3dm1', { skill: 2, bots: 3 });
+const bsp = await loadMap(db, pak, res, args[0] ?? 'q3dm1', { skill: 2, bots: 3, link: false });
 const at = process.argv.find((a) => a.startsWith('--at='));
 if (at) { const [x, y, z, yaw] = at.slice(5).split(',').map(Number); await db.exec(`UPDATE ents SET x = ${x}, y = ${y}, z = ${z}, yaw = ${yaw} WHERE id = (SELECT ent_id FROM player)`); await db.exec('EXECUTE PROCEDURE link_ent((SELECT ent_id FROM player))'); }
 const renderer = new Renderer(stub, res);

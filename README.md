@@ -119,6 +119,21 @@ a few seconds, and frag each other as happily as they frag you; the scoreboard, 
 announcements and the frag limit are in `SCORE_FRAG`. Everything the simulation wants heard is a row
 in `sound_events`; temp entities are rows in `fx_events`; the console's lines are in `messages`.
 
+The bots know their way around because the arena is a graph (`sql/waypoints.sql`, the part of Quake
+III's area awareness system a deathmatch bot needs). When a map loads, `BUILD_WAYPOINTS` puts a node
+wherever a player can stand: at every spawn point, item, jump pad and teleporter, where each pad lands
+you (its arc flown past its `target_position` to the floor) and where each teleporter comes out, and
+on a 160-unit grid dropped down every column of the map, level by level. `WP_LINK_CHUNK` then traces
+the edges a few nodes a frame while you already play: a node links to a neighbour when a player box
+can walk there, by a straight trace with the floor probed along the way, or by a stepped walk that
+climbs stairs and ramps and drops off ledges (a drop is one way); the pads and teleporters are edges
+of their own. `WP_ROUTE` is a breadth-first search in PSQL, the frontier a global temporary table, the
+route a string of node ids. A bot that loses sight of you, or sees you on another floor, follows the
+route through `BOT_FOLLOW_ROUTE`, which is how it ends up stepping onto a jump pad to reach you on a
+ledge; with nothing in sight it roams from item to item the same way, drawn to the weapons and the
+armour. The console's `waypoints` button shows the graph; `SELECT wp_route(a, b) FROM rdb$database`
+asks it for a route.
+
 ### The renderer is a query (`sql/render.sql`)
 
 `FRAME_ALL` finds the leaf and cluster the eye is in and, once per cluster, marks every face of every

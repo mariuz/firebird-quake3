@@ -11,10 +11,11 @@ import schemaSql from '../sql/schema.sql';
 import physicsSql from '../sql/physics.sql';
 import gameSql from '../sql/game.sql';
 import playerSql from '../sql/player.sql';
+import waypointsSql from '../sql/waypoints.sql';
 import botsSql from '../sql/bots.sql';
 import renderSql from '../sql/render.sql';
 import { Pk3 } from './pk3.js';
-import { createSchema, loadResources, loadMap, setView } from './loader.js';
+import { createSchema, loadResources, loadMap, buildWaypoints, setView } from './loader.js';
 import { Renderer } from './renderer.js';
 import { GLRenderer } from './renderer-gl.js';
 import { Hud } from './hud.js';
@@ -52,7 +53,7 @@ audio.setMusicVolume(settings.music / 100);
 audio.musicMode = settings.musicMode;
 for (const ev of ['keydown', 'pointerdown', 'touchstart']) window.addEventListener(ev, () => audio.unlock(), { capture: true });
 document.addEventListener('visibilitychange', () => audio.suspend(document.hidden));
-const perf = { tic: 0, faces: 0, draw: 0, rows: 0 };
+const perf = { tic: 0, faces: 0, draw: 0, rows: 0, graph: 0 };
 
 function setStatus(msg, isError = false) {
   statusEl.textContent = msg;
@@ -155,8 +156,8 @@ async function startMap(name) {
   running = false;
   setStatus(`Loading ${name} into Firebird…`);
   const t0 = performance.now();
-  const bsp = await loadMap(db, pak, res, name, { skill: settings.skill, bots: settings.bots });
-  map = { name, bsp };
+  const bsp = await loadMap(db, pak, res, name, { skill: settings.skill, bots: settings.bots, link: false });
+  map = { name, bsp, unlinked: 1 };
   renderer.setResources(res);
   renderer.particles = [];
   renderer.meshCache?.clear();
@@ -225,6 +226,13 @@ async function frame() {
     audio.setLoop('weapon', last.WEAPON === 32 ? 'sound/weapons/lightning/lg_hum.wav' : last.WEAPON === 64 ? 'sound/weapons/railgun/rg_hum.wav' : null, !last.DEAD && (last.WEAPON === 32 || last.WEAPON === 64));
     if (fr.fx.length) { lastFxId = fr.fx[fr.fx.length - 1][0]; state.handleFx(renderer, fr.fx, last.TIME_); }
     if ((scoreboard || last.MATCH_OVER) && frameNo % 10 === 0) scores = (await db.query('SELECT * FROM scoreboard', [], arr)).rows;
+    // the bots learn the arena while we play: a few grid columns, then a few nodes' edges, a frame (sql/waypoints.sql)
+    if (map.unlinked > 0) {
+      t = performance.now();
+      map.unlinked = await buildWaypoints(db, 3, 2);
+      perf.graph = performance.now() - t;
+      if (map.unlinked === 0) console.log(`[firebird-quake3] waypoint graph built: ${(await db.query('SELECT (SELECT COUNT(*) FROM waypoints) n, COUNT(*) e FROM wp_edges')).rows.map((r) => `${r.N} nodes, ${r.E} edges`)[0]}`);
+    }
 
     t = performance.now();
     const tint = drawScene(renderer, hud, res, map.bsp, last, fr, { fov: settings.fov, sqlProjected: settings.renderer === 'sql', state, dt: tics * 0.05, scoreboard, scores });
@@ -245,7 +253,7 @@ function updateStats() {
   fpsN++;
   const now = performance.now();
   if (now - fpsT > 500) { fps = (fpsN * 1000) / (now - fpsT); fpsT = now; fpsN = 0; }
-  statsEl.textContent = `${fps.toFixed(1)} fps · q3_tic ${perf.tic.toFixed(0)} ms · frame query ${perf.faces.toFixed(0)} ms (${perf.rows} faces) · paint ${perf.draw.toFixed(0)} ms · ${renderer.particles.length} particles`;
+  statsEl.textContent = `${fps.toFixed(1)} fps · q3_tic ${perf.tic.toFixed(0)} ms · frame query ${perf.faces.toFixed(0)} ms (${perf.rows} faces) · paint ${perf.draw.toFixed(0)} ms · ${renderer.particles.length} particles${map?.unlinked > 0 ? ` · bots mapping the arena (${map.unlinked} to go, ${perf.graph.toFixed(0)} ms)` : ''}`;
 }
 
 // ── SQL console ─────────────────────────────────────────────────────────
@@ -291,7 +299,7 @@ async function openDatabase() {
   const v = await instance.query("SELECT rdb$get_context('SYSTEM', 'ENGINE_VERSION') AS v FROM rdb$database");
   $('engine').textContent = `Firebird ${v.rows[0].V}`;
   setStatus('Creating the Quake III schema (PSQL)…');
-  await createSchema(instance, { schema: schemaSql, physics: physicsSql, game: gameSql, player: playerSql, bots: botsSql, render: renderSql });
+  await createSchema(instance, { schema: schemaSql, physics: physicsSql, game: gameSql, waypoints: waypointsSql, player: playerSql, bots: botsSql, render: renderSql });
   return instance;
 }
 

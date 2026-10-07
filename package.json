@@ -11,6 +11,7 @@
     "test": "node scripts/sql-smoke.mjs",
     "test:dm7": "node scripts/sql-smoke.mjs q3dm7",
     "test:bots": "node scripts/bots-test.mjs",
+    "test:bots:dm17": "node scripts/bots-test.mjs q3dm17",
     "bench": "node scripts/bench.mjs",
     "bench:tic": "node scripts/tic-bench.mjs",
     "screenshots": "node scripts/screenshot.mjs q3dm1 docs/screenshot --at=300,2300,56,250 --bright=4",

@@ -86,6 +86,78 @@ BEGIN
     EXECUTE PROCEDURE new_chase_dir(eid, goal, dist);
 END^
 
+-- BotMoveToGoal over the waypoint graph (waypoints.sql): a step along the route to the target entity.
+-- Returns 1 when it stepped, 0 when the step was blocked, -1 when there is no route at all
+CREATE OR ALTER PROCEDURE bot_follow_route (eid INTEGER, target INTEGER, dist DOUBLE PRECISION)
+RETURNS (moved SMALLINT)
+AS
+DECLARE x DOUBLE PRECISION; DECLARE y DOUBLE PRECISION; DECLARE z DOUBLE PRECISION;
+DECLARE tx DOUBLE PRECISION; DECLARE ty DOUBLE PRECISION; DECLARE tz DOUBLE PRECISION;
+DECLARE nx DOUBLE PRECISION; DECLARE ny DOUBLE PRECISION; DECLARE nz DOUBLE PRECISION; DECLARE nk SMALLINT;
+DECLARE path VARCHAR(400); DECLARE s VARCHAR(400); DECLARE cut VARCHAR(400); DECLARE built DOUBLE PRECISION; DECLARE rtarget INTEGER;
+DECLARE dst INTEGER; DECLARE src INTEGER; DECLARE odst INTEGER; DECLARE nid INTEGER; DECLARE t DOUBLE PRECISION; DECLARE p INTEGER; DECLARE i INTEGER;
+DECLARE fails SMALLINT; DECLARE yaw DOUBLE PRECISION; DECLARE reach DOUBLE PRECISION;
+BEGIN
+  moved = 0;
+  t = now_();
+  SELECT e.x, e.y, e.z FROM ents e WHERE e.id = :eid INTO x, y, z;
+  SELECT g.x, g.y, g.z FROM ents g WHERE g.id = :target INTO tx, ty, tz;
+  IF (tx IS NULL OR x IS NULL) THEN EXIT;
+  SELECT r.target, r.dst_node, r.path, r.built, r.fails FROM bot_routes r WHERE r.ent_id = :eid INTO rtarget, odst, path, built, fails;
+  fails = COALESCE(fails, 0);
+  dst = wp_nearest(tx, ty, tz, 0);
+  IF (dst IS NULL) THEN BEGIN moved = -1; EXIT; END
+  -- a new route when the target is another one or stands at another node, when the old one ran out or
+  -- was blocked, and every few seconds anyway
+  IF (rtarget IS DISTINCT FROM target OR built IS NULL OR path IS NULL OR fails >= 3
+      OR (dst <> odst AND t - built > 0.7e0) OR t - built > 4) THEN
+  BEGIN
+    src = wp_nearest(x, y, z, 1);
+    path = wp_route(src, dst);
+    built = t; fails = 0;
+    IF (path IS NULL) THEN
+    BEGIN
+      UPDATE OR INSERT INTO bot_routes (ent_id, target, dst_node, path, built, fails) VALUES (:eid, :target, :dst, NULL, :t, 0) MATCHING (ent_id);
+      moved = -1;
+      EXIT;
+    END
+  END
+  -- drop the nodes reached, looking up to four ahead: a jump pad lands the bot past the pad's node
+  s = path; i = 0; cut = NULL;
+  WHILE (i < 4) DO
+  BEGIN
+    p = POSITION(',', s, 2);
+    IF (p = 0) THEN LEAVE;
+    nid = CAST(SUBSTRING(s FROM 2 FOR p - 2) AS INTEGER);
+    SELECT w.x, w.y, w.z, w.kind FROM waypoints w WHERE w.id = :nid INTO nx, ny, nz, nk;
+    IF (nx IS NULL) THEN LEAVE;
+    reach = IIF(nk = 4, 200, 40);
+    IF (vlen(nx - x, ny - y, 0) < reach AND ABS(nz - z) < IIF(nk = 4, 90, 48)) THEN cut = SUBSTRING(s FROM p);
+    s = SUBSTRING(s FROM p);
+    i = i + 1;
+  END
+  IF (cut IS NOT NULL) THEN path = cut;
+  p = POSITION(',', path, 2);
+  IF (p = 0) THEN
+  BEGIN
+    -- at the target's node: straight at it
+    EXECUTE PROCEDURE move_to_goal(eid, target, dist);
+    moved = 1;
+  END
+  ELSE
+  BEGIN
+    nid = CAST(SUBSTRING(path FROM 2 FOR p - 2) AS INTEGER);
+    SELECT w.x, w.y FROM waypoints w WHERE w.id = :nid INTO nx, ny;
+    yaw = vectoyaw(nx - x, ny - y);
+    UPDATE ents e SET e.ideal_yaw = :yaw WHERE e.id = :eid;
+    moved = step_direction(eid, yaw, dist);
+    IF (moved = 0) THEN moved = step_direction(eid, anglemod(yaw + 35), dist);
+    IF (moved = 0) THEN moved = step_direction(eid, anglemod(yaw - 35), dist);
+    IF (moved = 0) THEN fails = fails + 1; ELSE fails = 0;
+  END
+  UPDATE OR INSERT INTO bot_routes (ent_id, target, dst_node, path, built, fails) VALUES (:eid, :target, :dst, :path, :built, :fails) MATCHING (ent_id);
+END^
+
 -- ── the bot's senses ─────────────────────────────────────────────────────
 -- the bot characteristics of the skill levels (the bots' *_c.c files, boiled down): the seconds before a
 -- newly seen enemy is shot at, the aim's scatter as a fraction of the distance, how far and how wide it
@@ -104,7 +176,7 @@ BEGIN
   IF (k = 'hesitate') THEN RETURN CASE s WHEN 1 THEN 0.35e0 WHEN 2 THEN 0.2e0 WHEN 3 THEN 0.1e0 WHEN 4 THEN 0.03e0 ELSE 0 END;
   IF (k = 'speed') THEN RETURN CASE s WHEN 1 THEN 26 WHEN 2 THEN 29 ELSE 32 END;       -- units per think: 260 to 320 a second (the player runs 320)
   IF (k = 'pause') THEN RETURN CASE s WHEN 1 THEN 0.25e0 WHEN 2 THEN 0.2e0 WHEN 3 THEN 0.08e0 WHEN 4 THEN 0.03e0 ELSE 0 END;
-  IF (k = 'search') THEN RETURN 2 + s * 0.6e0;
+  IF (k = 'search') THEN RETURN 3 + s * 0.8e0;        -- seconds it hunts an enemy it lost sight of
   RETURN 0;
 END^
 
@@ -350,8 +422,18 @@ BEGIN
     END
     IF (goal IS NOT NULL AND NOT EXISTS (SELECT 1 FROM ents g WHERE g.id = :goal AND g.solid = 1)) THEN BEGIN goal = NULL; UPDATE ents e SET e.goal_id = NULL WHERE e.id = :eid; END
     IF (hesitate = 1) THEN BEGIN END
-    ELSE IF (goal IS NOT NULL) THEN EXECUTE PROCEDURE move_to_goal(eid, goal, spd);
-    ELSE IF (vis = 0 OR d > 350 OR w = 1) THEN EXECUTE PROCEDURE move_to_goal(eid, enemy, spd);
+    ELSE IF (goal IS NOT NULL) THEN
+    BEGIN
+      EXECUTE PROCEDURE bot_follow_route(eid, goal, spd) RETURNING_VALUES moved;
+      IF (moved <= 0) THEN EXECUTE PROCEDURE move_to_goal(eid, goal, spd);
+    END
+    ELSE IF (vis = 0 OR ABS(ez - z) > 48 OR d > 900) THEN
+    BEGIN
+      -- out of sight, or on another floor: hunt it along the waypoints (and over the jump pads)
+      EXECUTE PROCEDURE bot_follow_route(eid, enemy, spd) RETURNING_VALUES moved;
+      IF (moved <= 0) THEN EXECUTE PROCEDURE move_to_goal(eid, enemy, spd);
+    END
+    ELSE IF (d > 350 OR w = 1) THEN EXECUTE PROCEDURE move_to_goal(eid, enemy, spd);
     ELSE IF (RAND() < bot_char(skill, 'strafe')) THEN
     BEGIN
       -- close enough: circle-strafe, switching sides now and then or when blocked (BotAttackMove)
@@ -385,15 +467,20 @@ BEGIN
     END
     IF (goal IS NULL AND RAND() < 0.3e0) THEN
     BEGIN
-      SELECT FIRST 1 g.id FROM ents g WHERE g.classname = 'item' AND g.solid = 1 AND ABS(g.x - :x) < 1200 AND ABS(g.y - :y) < 1200 AND ABS(g.z - :z) < 300
-       ORDER BY ABS(g.x - :x) + ABS(g.y - :y) + RAND() * 600 INTO goal;
-      IF (goal IS NOT NULL AND visible(eid, goal) = 0) THEN goal = NULL;
+      -- roam to an item anywhere near, over the graph (BotRoamGoal); the good ones draw it, as Q3's item weights do
+      SELECT FIRST 1 g.id FROM ents g JOIN item_defs i ON i.cls = g.item WHERE g.classname = 'item' AND g.solid = 1 AND ABS(g.x - :x) < 1800 AND ABS(g.y - :y) < 1800
+       ORDER BY ABS(g.x - :x) + ABS(g.y - :y) + ABS(g.z - :z) * 2 + RAND() * 1200 - IIF(i.kind IN ('W', 'P', 'A'), 400, 0) INTO goal;
       UPDATE ents e SET e.goal_id = :goal WHERE e.id = :eid;
     END
     IF (BIN_AND(flags, 512) <> 0 AND tt < t AND hesitate = 0) THEN
     BEGIN
-      IF (goal IS NOT NULL) THEN EXECUTE PROCEDURE move_to_goal(eid, goal, spd * 0.9e0);
-      ELSE
+      IF (goal IS NOT NULL) THEN
+      BEGIN
+        EXECUTE PROCEDURE bot_follow_route(eid, goal, spd * 0.9e0) RETURNING_VALUES moved;
+        IF (moved < 0) THEN BEGIN goal = NULL; UPDATE ents e SET e.goal_id = NULL WHERE e.id = :eid; END
+        ELSE IF (moved = 0) THEN EXECUTE PROCEDURE move_to_goal(eid, goal, spd * 0.9e0);
+      END
+      IF (goal IS NULL) THEN
       BEGIN
         IF (RAND() < 0.1e0) THEN UPDATE ents e SET e.ideal_yaw = anglemod(e.ideal_yaw + crand() * 90) WHERE e.id = :eid;
         EXECUTE PROCEDURE change_yaw(eid);
@@ -801,6 +888,8 @@ BEGIN
   UPDATE game g SET g.sky = :skyname WHERE g.id = 1;
   UPDATE bot_defs b SET b.skill = :skill;
   EXECUTE PROCEDURE spawn_map_ents;
+  EXECUTE PROCEDURE build_waypoints;
+  DELETE FROM bot_routes;
   -- the player
   EXECUTE PROCEDURE spawn_ent('player', 0, 0, 0) RETURNING_VALUES pe;
   UPDATE ents e SET e.pmodel = 'sarge', e.pskin = 'default', e.viewheight = 26 WHERE e.id = :pe;

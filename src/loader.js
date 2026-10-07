@@ -74,7 +74,7 @@ export async function bulkLoad(db, table, rows) {
   await flush();
 }
 
-export const SQL_FILES = ['schema', 'physics', 'game', 'player', 'bots', 'render'];
+export const SQL_FILES = ['schema', 'physics', 'game', 'waypoints', 'player', 'bots', 'render'];
 
 export async function createSchema(db, sql) {
   await db.exec(sql.schema);
@@ -229,7 +229,9 @@ function geometryRows(bsp, res) {
 }
 
 /** SV_SpawnServer: replace the current map with `name` from the PK3. */
-export async function loadMap(db, pak, res, name, { skill = 2, newGame = true, bots = 3 } = {}) {
+// `link`: finish the bots' waypoint graph now (the Node scripts), or leave it to buildWaypoints a few
+// columns a frame (the browser, so the arena opens at once)
+export async function loadMap(db, pak, res, name, { skill = 2, newGame = true, bots = 3, link = true } = {}) {
   const bsp = new Bsp(pak.buffer(`maps/${name}.bsp`), `maps/${name}.bsp`);
   await db.exec(`DELETE FROM sound_events; DELETE FROM fx_events; DELETE FROM messages; DELETE FROM ents; DELETE FROM map_ents; DELETE FROM vis_faces; UPDATE viewcfg SET vis_cluster = NULL;
     DELETE FROM face_verts; DELETE FROM faces; DELETE FROM textures; DELETE FROM nodes; DELETE FROM leaves; DELETE FROM leaffaces; DELETE FROM leafbrushes;
@@ -261,7 +263,15 @@ export async function loadMap(db, pak, res, name, { skill = 2, newGame = true, b
   await bulkLoad(db, 'map_ents', entRows);
 
   await db.exec(`EXECUTE PROCEDURE init_map('${name}', ${geo.modelIds[0]}, ${skill}, ${newGame ? 1 : 0}, ${bots})`);
+  if (link) while ((await buildWaypoints(db, 1e9, 1e9)) > 0);
   return bsp;
+}
+
+// go on building the bots' waypoint graph: up to `cols` grid columns scanned, or up to `links` nodes'
+// edges traced once the grid is done; returns how much is left, 0 when the graph is complete
+export async function buildWaypoints(db, cols, links) {
+  const { rows } = await db.query(`SELECT remaining r FROM wp_build_chunk(${cols}, ${links})`);
+  return rows[0].R;
 }
 
 export { SURF, CONTENTS };
