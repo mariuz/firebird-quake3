@@ -1,0 +1,33 @@
+{
+  "name": "firebird-quake3",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Quake III Arena simulated and rendered inside Firebird SQL, running in the browser via Firebird WASM",
+  "type": "module",
+  "scripts": {
+    "fetch-pak": "node scripts/fetch-pak.mjs",
+    "build": "node scripts/build.mjs",
+    "serve": "node scripts/build.mjs --serve",
+    "test": "node scripts/sql-smoke.mjs",
+    "test:dm7": "node scripts/sql-smoke.mjs q3dm7",
+    "test:bots": "node scripts/bots-test.mjs",
+    "bench": "node scripts/bench.mjs",
+    "bench:tic": "node scripts/tic-bench.mjs",
+    "screenshots": "node scripts/screenshot.mjs q3dm1 docs/screenshot --at=300,2300,56,250 --bright=4",
+    "check": "node scripts/sql-check.mjs",
+    "inspect": "node scripts/inspect.mjs",
+    "bench:raster": "node scripts/raster-bench.mjs q3dm1 --at=212,2360,63,270",
+    "test:dm17": "node scripts/sql-smoke.mjs q3dm17"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "firebird-wasm": "^0.3.0",
+    "jpeg-js": "^0.4.4"
+  },
+  "devDependencies": {
+    "esbuild-wasm": "^0.25.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

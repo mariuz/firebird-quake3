@@ -1,0 +1,131 @@
+// hud.js – cg_draw.c's status bar from the game's own pictures: the ammo,
+// health and armour counters in the 32×32 digits, the weapon and powerup
+// icons, the frag counter, the pickup and centre messages in bigchars,
+// the obituaries, the crosshair, and the scoreboard.
+
+import { loadImage } from './image.js';
+import { WEAPONS, AMMO_ICONS, FRAGLIMIT } from './gamedata.js';
+
+const DIGITS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine'];
+
+export class Hud {
+  constructor(pak, renderer) {
+    this.pak = pak;
+    this.r = renderer;
+    this.cache = new Map();
+    this.font = this.pic('gfx/2d/bigchars');
+    this.nums = DIGITS.map((n) => this.pic(`gfx/2d/numbers/${n}_32b`));
+    this.minus = this.pic('gfx/2d/numbers/minus_32b');
+    this.crosshair = this.pic('gfx/2d/crosshaira');
+    this.lastScores = [];
+  }
+
+  pic(name) {
+    let p = this.cache.get(name);
+    if (p !== undefined) return p;
+    p = null;
+    const file = this.pak.imageName(name);
+    if (file) { try { p = loadImage(this.pak.get(file), file); } catch { p = null; } }
+    this.cache.set(name, p);
+    return p;
+  }
+
+  /** CG_DrawField: a right-aligned number of up to `width` digits, `dh` pixels tall. */
+  drawNum(x, y, num, width, dh, tint) {
+    const r = this.r;
+    let s = String(Math.max(-999, Math.min(999, Math.round(num))));
+    if (s.length > width) s = s.slice(s.length - width);
+    const dw = (dh * 2) / 3;
+    x += dw * (width - s.length);
+    for (const ch of s) {
+      const p = ch === '-' ? this.minus : this.nums[Number(ch)];
+      r.drawPic(p, x, y, dw, dh, tint);
+      x += dw;
+    }
+  }
+
+  /** hud: the Q3_TIC row; messages: the console lines. */
+  draw(r, hud, time, messages = [], opts = {}) {
+    const w = r.w, h = r.h;
+    const k = w / 640;            // Q3 lays the HUD out on a 640×480 screen
+    const dh = Math.round(48 * k), ih = Math.round(48 * k);
+    const yb = h - Math.round(60 * k);
+    // ammo
+    const wp = WEAPONS[hud.WEAPON];
+    if (wp && wp.ammo) {
+      const cnt = hud[['', '', 'BULLETS', 'SHELLS', 'GRENADES', 'ROCKETS', 'LIGHTNING', 'SLUGS', 'CELLS', 'BFG'][wp.ammo]] ?? 0;
+      this.drawNum(Math.round(4 * k), yb, cnt, 3, dh, cnt <= 0 ? [1, 0.3, 0.3] : null);
+      r.drawPic(this.pic(wp.icon), Math.round(108 * k), yb, ih, ih);
+    } else if (wp) r.drawPic(this.pic(wp.icon), Math.round(108 * k), yb, ih, ih);
+    // health
+    const hp = hud.HEALTH;
+    const red = hp <= 25 && Math.floor(time * 4) % 2 === 0;
+    this.drawNum(Math.round(176 * k), yb, hp, 3, dh, red ? [1, 0.2, 0.2] : hp > 100 ? [1, 1, 1] : null);
+    r.drawPic(this.pic('icons/iconh_red'), Math.round(280 * k), yb, ih, ih);
+    // armour
+    if (hud.ARMOR > 0) {
+      this.drawNum(Math.round(366 * k), yb, hud.ARMOR, 3, dh, null);
+      r.drawPic(this.pic('icons/iconr_yellow'), Math.round(470 * k), yb, ih, ih);
+    }
+    // frags
+    const fs = Math.round(16 * k);
+    const frag = `${hud.FRAGS}`;
+    r.drawString(this.font, frag, w - Math.round(8 * k) - frag.length * fs, Math.round(8 * k), fs, [1, 1, 1]);
+    r.drawString(this.font, `${hud.LEAD ?? 0}`, w - Math.round(8 * k) - String(hud.LEAD ?? 0).length * fs, Math.round(8 * k) + fs + 2, fs, [1, 0.4, 0.4]);
+    // powerups with the seconds left, up the right edge
+    let py = h - Math.round(130 * k);
+    for (const [key, icon] of [['QUAD', 'icons/quad'], ['HASTE', 'icons/haste'], ['INVIS', 'icons/invis'], ['REGEN', 'icons/regen'], ['ENVIRO', 'icons/envirosuit'], ['FLIGHT', 'icons/flight']]) {
+      if (hud[key] > 0) {
+        r.drawPic(this.pic(icon), w - Math.round(44 * k), py, Math.round(36 * k), Math.round(36 * k));
+        r.drawString(this.font, String(Math.ceil(hud[key])), w - Math.round(80 * k), py + Math.round(10 * k), Math.round(12 * k));
+        py -= Math.round(40 * k);
+      }
+    }
+    if (hud.HOLDABLE) r.drawPic(this.pic(hud.HOLDABLE === 1 ? 'icons/teleporter' : 'icons/medkit'), w - Math.round(44 * k), py, Math.round(36 * k), Math.round(36 * k));
+    // the pickup line and the centre print
+    const cs = Math.max(8, Math.round(12 * k));
+    if (hud.MSG) r.drawString(this.font, hud.MSG, (w - hud.MSG.length * cs) >> 1, h - Math.round(120 * k), cs, [1, 1, 1]);
+    if (hud.CPRINT) this.drawCenter(hud.CPRINT, Math.floor(h * 0.32), Math.round(16 * k));
+    // the console lines of the last seconds
+    let cy = Math.round(4 * k);
+    for (const m of messages) {
+      if (time - m.time > 5) continue;
+      r.drawString(this.font, m.text, Math.round(4 * k), cy, Math.max(7, Math.round(10 * k)), [1, 1, 1]);
+      cy += Math.max(7, Math.round(10 * k)) + 1;
+    }
+    // crosshair
+    if (!hud.DEAD && this.crosshair) { const cz = Math.round(24 * k); r.drawPic(this.crosshair, (w - cz) >> 1, (h - cz) >> 1, cz, cz); }
+    if (hud.DEAD && !hud.MATCH_OVER && time - hud.DEAD_TIME_ > 0) this.drawCenter('press fire to respawn', Math.floor(h * 0.6), Math.round(12 * k));
+    if (hud.MATCH_OVER || opts.scoreboard) this.drawScoreboard(hud, opts.scores ?? this.lastScores, k);
+  }
+
+  drawCenter(msg, y, size) {
+    const lines = String(msg).split(/\\n|\n/);
+    for (const line of lines) {
+      this.r.drawString(this.font, line, (this.r.w - line.length * size) >> 1, y, size, [1, 1, 1]);
+      y += size + 2;
+    }
+  }
+
+  /** The scoreboard: rows of [name, frags, deaths, isPlayer]. */
+  drawScoreboard(hud, scores, k) {
+    const r = this.r;
+    const cs = Math.max(8, Math.round(12 * k));
+    const rows = scores.length ? scores : [['You', hud.FRAGS, hud.DEATHS, 1]];
+    const bw = Math.round(300 * k), bh = (rows.length + 2) * (cs + 4) + cs;
+    const bx = (r.w - bw) >> 1, by = Math.round(r.h * 0.2);
+    r.fillRect(bx, by, bw, bh, 0xff000000, 0.6);
+    const title = hud.MATCH_OVER ? (hud.WINNER === 'You' ? 'You win' : `${hud.WINNER} wins`) : `Frag limit ${FRAGLIMIT}`;
+    r.drawString(this.font, title, bx + ((bw - title.length * cs) >> 1), by + 4, cs, [1, 0.9, 0.4]);
+    let y = by + cs + 10;
+    for (const [name, frags, deaths, isPlayer] of rows) {
+      r.drawString(this.font, String(name).slice(0, 14), bx + 8, y, cs, isPlayer ? [1, 1, 0.5] : [1, 1, 1]);
+      const sf = String(frags), sd = String(deaths);
+      r.drawString(this.font, sf, bx + bw - 8 - (sd.length + sf.length + 2) * cs, y, cs, [1, 1, 1]);
+      r.drawString(this.font, sd, bx + bw - 8 - sd.length * cs, y, cs, [0.7, 0.7, 0.7]);
+      y += cs + 4;
+    }
+  }
+}
+
+export { AMMO_ICONS };

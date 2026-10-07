@@ -1,0 +1,631 @@
+-- player.sql – bg_pmove.c, g_weapon.c, g_client.c and g_active.c: what the
+-- client does each tic: the movement (ground, air and water moves, jumps,
+-- the 18-unit step), the nine weapons, dying and respawning.
+
+SET TERM ^ ;
+
+-- the eye and the view vectors
+CREATE OR ALTER PROCEDURE view_vectors
+RETURNS (ex DOUBLE PRECISION, ey DOUBLE PRECISION, ez DOUBLE PRECISION,
+         fx DOUBLE PRECISION, fy DOUBLE PRECISION, fz DOUBLE PRECISION,
+         rx DOUBLE PRECISION, ry DOUBLE PRECISION, rz DOUBLE PRECISION,
+         ux DOUBLE PRECISION, uy DOUBLE PRECISION, uz DOUBLE PRECISION)
+AS
+DECLARE yaw DOUBLE PRECISION; DECLARE pitch DOUBLE PRECISION;
+DECLARE sy DOUBLE PRECISION; DECLARE cy DOUBLE PRECISION; DECLARE sp DOUBLE PRECISION; DECLARE cp DOUBLE PRECISION;
+BEGIN
+  SELECT e.x, e.y, e.z + p.view_ofs, e.yaw, p.pitch FROM player p JOIN ents e ON e.id = p.ent_id WHERE p.id = 1 INTO ex, ey, ez, yaw, pitch;
+  sy = SIN(yaw * 0.0174532925e0); cy = COS(yaw * 0.0174532925e0);
+  sp = SIN(pitch * 0.0174532925e0); cp = COS(pitch * 0.0174532925e0);
+  fx = cp * cy; fy = cp * sy; fz = -sp;
+  rx = sy; ry = -cy; rz = 0;
+  ux = sp * cy; uy = sp * sy; uz = cp;
+  SUSPEND;
+END^
+
+-- the eye and forward vector of any player or bot (the bots aim from here)
+CREATE OR ALTER PROCEDURE eye_of (eid INTEGER)
+RETURNS (ex DOUBLE PRECISION, ey DOUBLE PRECISION, ez DOUBLE PRECISION, fx DOUBLE PRECISION, fy DOUBLE PRECISION, fz DOUBLE PRECISION)
+AS
+DECLARE yaw DOUBLE PRECISION; DECLARE pitch DOUBLE PRECISION;
+BEGIN
+  SELECT e.x, e.y, e.z + e.viewheight, e.yaw, e.pitch FROM ents e WHERE e.id = :eid INTO ex, ey, ez, yaw, pitch;
+  fx = COS(pitch * 0.0174532925e0) * COS(yaw * 0.0174532925e0); fy = COS(pitch * 0.0174532925e0) * SIN(yaw * 0.0174532925e0); fz = -SIN(pitch * 0.0174532925e0);
+  SUSPEND;
+END^
+
+-- Bullet_Fire / ShotgunPattern: `cnt` traces 8192 units out, spread in Q3's units
+CREATE OR ALTER PROCEDURE fire_bullets (shooter INTEGER, cnt INTEGER,
+  ox DOUBLE PRECISION, oy DOUBLE PRECISION, oz DOUBLE PRECISION,
+  dx DOUBLE PRECISION, dy DOUBLE PRECISION, dz DOUBLE PRECISION, spread DOUBLE PRECISION, dmg INTEGER, mod_ SMALLINT)
+AS
+DECLARE rx DOUBLE PRECISION; DECLARE ry DOUBLE PRECISION; DECLARE rz DOUBLE PRECISION;
+DECLARE ux DOUBLE PRECISION; DECLARE uy DOUBLE PRECISION; DECLARE uz DOUBLE PRECISION;
+DECLARE ax DOUBLE PRECISION; DECLARE ay DOUBLE PRECISION; DECLARE az DOUBLE PRECISION; DECLARE al DOUBLE PRECISION;
+DECLARE f DOUBLE PRECISION; DECLARE hx DOUBLE PRECISION; DECLARE hy DOUBLE PRECISION; DECLARE hz DOUBLE PRECISION;
+DECLARE nx DOUBLE PRECISION; DECLARE ny DOUBLE PRECISION; DECLARE nz DOUBLE PRECISION;
+DECLARE sf INTEGER; DECLARE ct INTEGER; DECLARE als SMALLINT; DECLARE sts SMALLINT; DECLARE hit INTEGER;
+DECLARE i INTEGER = 0; DECLARE r DOUBLE PRECISION; DECLARE u DOUBLE PRECISION; DECLARE a DOUBLE PRECISION;
+DECLARE td SMALLINT; DECLARE hp INTEGER; DECLARE hits INTEGER = 0;
+BEGIN
+  al = vlen(dx, dy, dz);
+  IF (al = 0) THEN EXIT;
+  dx = dx / al; dy = dy / al; dz = dz / al;
+  rx = dy; ry = -dx; rz = 0;
+  al = vlen(rx, ry, rz);
+  IF (al < 1e-6) THEN BEGIN rx = 1; ry = 0; rz = 0; al = 1; END
+  rx = rx / al; ry = ry / al; rz = rz / al;
+  ux = ry * dz - rz * dy; uy = rz * dx - rx * dz; uz = rx * dy - ry * dx;
+  WHILE (i < cnt) DO
+  BEGIN
+    a = RAND() * 6.2831853e0;
+    r = COS(a) * crand() * spread * 16; u = SIN(a) * crand() * spread * 16;
+    ax = dx * 131072 + r * rx + u * ux; ay = dy * 131072 + r * ry + u * uy; az = dz * 131072 + r * rz + u * uz;
+    EXECUTE PROCEDURE trace_move(shooter, 0, 0, 0, 0, 0, 0, ox, oy, oz, ox + ax, oy + ay, oz + az, 100663297)
+      RETURNING_VALUES f, hx, hy, hz, nx, ny, nz, sf, ct, als, sts, hit;
+    IF (f < 1) THEN
+    BEGIN
+      td = 0;
+      IF (hit > 0) THEN SELECT e.takedamage, e.health FROM ents e WHERE e.id = :hit INTO td, hp;
+      IF (td > 0) THEN
+      BEGIN
+        IF (hits = 0) THEN EXECUTE PROCEDURE fx(3, hx, hy, hz, 0, 0, 0, dmg);
+        hits = hits + 1;
+        EXECUTE PROCEDURE t_damage(hit, shooter, shooter, dmg, dmg, 0, mod_);
+      END
+      ELSE IF (BIN_AND(sf, 4) = 0 AND (cnt = 1 OR MOD(i, 3) = 0)) THEN
+        EXECUTE PROCEDURE fx(IIF(cnt > 1, 11, 1), hx, hy, hz, nx, ny, nz, 0);
+    END
+    i = i + 1;
+  END
+END^
+
+-- Weapon_RailgunFire: a slug through everything in its path
+CREATE OR ALTER PROCEDURE fire_rail (shooter INTEGER, ox DOUBLE PRECISION, oy DOUBLE PRECISION, oz DOUBLE PRECISION,
+  dx DOUBLE PRECISION, dy DOUBLE PRECISION, dz DOUBLE PRECISION, dmg INTEGER)
+AS
+DECLARE f DOUBLE PRECISION; DECLARE hx DOUBLE PRECISION; DECLARE hy DOUBLE PRECISION; DECLARE hz DOUBLE PRECISION;
+DECLARE nx DOUBLE PRECISION; DECLARE ny DOUBLE PRECISION; DECLARE nz DOUBLE PRECISION;
+DECLARE sf INTEGER; DECLARE ct INTEGER; DECLARE als SMALLINT; DECLARE sts SMALLINT; DECLARE hit INTEGER;
+DECLARE sx DOUBLE PRECISION; DECLARE sy DOUBLE PRECISION; DECLARE sz DOUBLE PRECISION; DECLARE ignore INTEGER; DECLARE i INTEGER = 0;
+DECLARE ex DOUBLE PRECISION; DECLARE ey DOUBLE PRECISION; DECLARE ez DOUBLE PRECISION; DECLARE dl DOUBLE PRECISION;
+BEGIN
+  dl = vlen(dx, dy, dz);
+  IF (dl = 0) THEN EXIT;
+  dx = dx / dl; dy = dy / dl; dz = dz / dl;
+  ex = ox + dx * 8192; ey = oy + dy * 8192; ez = oz + dz * 8192;
+  sx = ox; sy = oy; sz = oz; ignore = shooter;
+  WHILE (i < 10) DO
+  BEGIN
+    EXECUTE PROCEDURE trace_move(ignore, 0, 0, 0, 0, 0, 0, sx, sy, sz, ex, ey, ez, 100663297)
+      RETURNING_VALUES f, hx, hy, hz, nx, ny, nz, sf, ct, als, sts, hit;
+    IF (hit > 0 AND EXISTS (SELECT 1 FROM ents e WHERE e.id = :hit AND e.takedamage > 0)) THEN
+    BEGIN
+      EXECUTE PROCEDURE t_damage(hit, shooter, shooter, dmg, dmg, 0, 17);
+      -- continue from just past the hit, ignoring what we just shot
+      ignore = hit;
+      sx = hx + dx * 8; sy = hy + dy * 8; sz = hz + dz * 8;
+      i = i + 1;
+      CONTINUE;
+    END
+    LEAVE;
+  END
+  EXECUTE PROCEDURE fx(4, ox, oy, oz, hx, hy, hz, 0);
+END^
+
+-- Weapon_LightningFire: 768 units, 8 damage, the beam drawn by the browser
+CREATE OR ALTER PROCEDURE fire_lightning (shooter INTEGER, ox DOUBLE PRECISION, oy DOUBLE PRECISION, oz DOUBLE PRECISION,
+  dx DOUBLE PRECISION, dy DOUBLE PRECISION, dz DOUBLE PRECISION, dmg INTEGER)
+AS
+DECLARE f DOUBLE PRECISION; DECLARE hx DOUBLE PRECISION; DECLARE hy DOUBLE PRECISION; DECLARE hz DOUBLE PRECISION;
+DECLARE nx DOUBLE PRECISION; DECLARE ny DOUBLE PRECISION; DECLARE nz DOUBLE PRECISION;
+DECLARE sf INTEGER; DECLARE ct INTEGER; DECLARE als SMALLINT; DECLARE sts SMALLINT; DECLARE hit INTEGER; DECLARE dl DOUBLE PRECISION;
+BEGIN
+  dl = vlen(dx, dy, dz);
+  IF (dl = 0) THEN EXIT;
+  EXECUTE PROCEDURE trace_move(shooter, 0, 0, 0, 0, 0, 0, ox, oy, oz, ox + dx / dl * 768, oy + dy / dl * 768, oz + dz / dl * 768, 100663297)
+    RETURNING_VALUES f, hx, hy, hz, nx, ny, nz, sf, ct, als, sts, hit;
+  EXECUTE PROCEDURE fx(12, ox, oy, oz, hx, hy, hz, shooter);
+  IF (f < 1 AND hit > 0 AND EXISTS (SELECT 1 FROM ents e WHERE e.id = :hit AND e.takedamage > 0)) THEN
+  BEGIN
+    EXECUTE PROCEDURE t_damage(hit, shooter, shooter, dmg, dmg, 0, 16);
+    EXECUTE PROCEDURE snd_at(hx, hy, hz, 'sound/weapons/lightning/lg_hit' || TRIM(CASE CAST(FLOOR(RAND() * 3) AS INTEGER) WHEN 0 THEN '' WHEN 1 THEN '2' ELSE '3' END) || '.wav', 1, 1);
+  END
+  ELSE IF (f < 1 AND BIN_AND(sf, 4) = 0) THEN EXECUTE PROCEDURE fx(7, hx, hy, hz, nx, ny, nz, 4);
+END^
+
+-- Weapon_Gauntlet: 32 units, 50 damage
+CREATE OR ALTER FUNCTION fire_gauntlet (shooter INTEGER, ox DOUBLE PRECISION, oy DOUBLE PRECISION, oz DOUBLE PRECISION,
+  dx DOUBLE PRECISION, dy DOUBLE PRECISION, dz DOUBLE PRECISION) RETURNS SMALLINT
+AS
+DECLARE f DOUBLE PRECISION; DECLARE hx DOUBLE PRECISION; DECLARE hy DOUBLE PRECISION; DECLARE hz DOUBLE PRECISION;
+DECLARE nx DOUBLE PRECISION; DECLARE ny DOUBLE PRECISION; DECLARE nz DOUBLE PRECISION;
+DECLARE sf INTEGER; DECLARE ct INTEGER; DECLARE als SMALLINT; DECLARE sts SMALLINT; DECLARE hit INTEGER; DECLARE dl DOUBLE PRECISION;
+BEGIN
+  dl = vlen(dx, dy, dz);
+  IF (dl = 0) THEN RETURN 0;
+  EXECUTE PROCEDURE trace_move(shooter, -15, -15, -15, 15, 15, 15, ox, oy, oz, ox + dx / dl * 32, oy + dy / dl * 32, oz + dz / dl * 32, 100663297)
+    RETURNING_VALUES f, hx, hy, hz, nx, ny, nz, sf, ct, als, sts, hit;
+  IF (f < 1 AND hit > 0 AND EXISTS (SELECT 1 FROM ents e WHERE e.id = :hit AND e.takedamage > 0 AND e.health > 0)) THEN
+  BEGIN
+    EXECUTE PROCEDURE fx(3, hx, hy, hz, 0, 0, 0, 50);
+    EXECUTE PROCEDURE t_damage(hit, shooter, shooter, 50, 50, 0, 1);
+    RETURN 1;
+  END
+  RETURN 0;
+END^
+
+-- the weapon's muzzle: 14 forward of the eye (CalcMuzzlePoint)
+CREATE OR ALTER PROCEDURE muzzle
+RETURNS (mx DOUBLE PRECISION, my DOUBLE PRECISION, mz DOUBLE PRECISION, fx DOUBLE PRECISION, fy DOUBLE PRECISION, fz DOUBLE PRECISION,
+         rx DOUBLE PRECISION, ry DOUBLE PRECISION, rz DOUBLE PRECISION)
+AS
+DECLARE ex DOUBLE PRECISION; DECLARE ey DOUBLE PRECISION; DECLARE ez DOUBLE PRECISION;
+DECLARE ux DOUBLE PRECISION; DECLARE uy DOUBLE PRECISION; DECLARE uz DOUBLE PRECISION;
+BEGIN
+  EXECUTE PROCEDURE view_vectors RETURNING_VALUES ex, ey, ez, fx, fy, fz, rx, ry, rz, ux, uy, uz;
+  mx = ex + fx * 14; my = ey + fy * 14; mz = ez + fz * 14;
+  SUSPEND;
+END^
+
+-- fire the weapon `w` of any shooter from (ox..) toward (dx..) – the player and the bots share this
+CREATE OR ALTER PROCEDURE fire_weapon (shooter INTEGER, w INTEGER, ox DOUBLE PRECISION, oy DOUBLE PRECISION, oz DOUBLE PRECISION,
+  dx DOUBLE PRECISION, dy DOUBLE PRECISION, dz DOUBLE PRECISION, vol DOUBLE PRECISION)
+AS
+DECLARE h SMALLINT;
+BEGIN
+  IF (w = 1) THEN
+  BEGIN
+    h = fire_gauntlet(shooter, ox, oy, oz, dx, dy, dz);
+    EXECUTE PROCEDURE snd(shooter, 1, IIF(h = 1, 'sound/weapons/melee/fstatck.wav', 'sound/weapons/melee/fstrun.wav'), vol, 1);
+  END
+  ELSE IF (w = 2) THEN
+  BEGIN
+    EXECUTE PROCEDURE fire_bullets(shooter, 1, ox, oy, oz, dx, dy, dz, 200, 7, 2);
+    EXECUTE PROCEDURE snd(shooter, 1, 'sound/weapons/machinegun/machgf' || CAST(1 + FLOOR(RAND() * 4) AS INTEGER) || 'b.wav', vol, 1);
+  END
+  ELSE IF (w = 4) THEN
+  BEGIN
+    EXECUTE PROCEDURE fire_bullets(shooter, 11, ox, oy, oz, dx, dy, dz, 700, 10, 3);
+    EXECUTE PROCEDURE snd(shooter, 1, 'sound/weapons/shotgun/sshotf1b.wav', vol, 1);
+  END
+  ELSE IF (w = 8) THEN
+  BEGIN
+    EXECUTE PROCEDURE launch_grenade(shooter, ox, oy, oz, dx, dy, dz);
+    EXECUTE PROCEDURE snd(shooter, 1, 'sound/weapons/grenade/grenlf1a.wav', vol, 1);
+  END
+  ELSE IF (w = 16) THEN
+  BEGIN
+    EXECUTE PROCEDURE launch_missile(shooter, 'rocket', 'models/ammo/rocket/rocket.md3', ox, oy, oz, dx, dy, dz, 900, 100, 100, 120, 16, 10);
+    EXECUTE PROCEDURE snd(shooter, 1, 'sound/weapons/rocket/rocklf1a.wav', vol, 1);
+  END
+  ELSE IF (w = 32) THEN
+  BEGIN
+    EXECUTE PROCEDURE fire_lightning(shooter, ox, oy, oz, dx, dy, dz, 8);
+    EXECUTE PROCEDURE snd(shooter, 1, 'sound/weapons/lightning/lg_fire.wav', vol, 1);
+  END
+  ELSE IF (w = 64) THEN
+  BEGIN
+    EXECUTE PROCEDURE fire_rail(shooter, ox, oy, oz, dx, dy, dz, 100);
+    EXECUTE PROCEDURE snd(shooter, 1, 'sound/weapons/railgun/railgf1a.wav', vol, 1);
+  END
+  ELSE IF (w = 128) THEN
+  BEGIN
+    EXECUTE PROCEDURE launch_missile(shooter, 'plasma', 'sprites/plasmaa', ox, oy, oz, dx, dy, dz, 2000, 20, 15, 20, 8, 10);
+    EXECUTE PROCEDURE snd(shooter, 1, 'sound/weapons/plasma/hyprbf1a.wav', vol, 1);
+  END
+  ELSE IF (w = 256) THEN
+  BEGIN
+    EXECUTE PROCEDURE launch_missile(shooter, 'bfg', 'models/weaphits/bfg.md3', ox, oy, oz, dx, dy, dz, 2000, 100, 100, 120, 64, 10);
+    EXECUTE PROCEDURE snd(shooter, 1, 'sound/weapons/rocket/rocklf1a.wav', vol, 1);
+  END
+END^
+
+-- the firing time of a weapon in seconds (bg_pmove's addTime)
+CREATE OR ALTER FUNCTION fire_time (w INTEGER) RETURNS DOUBLE PRECISION
+AS
+BEGIN
+  RETURN CASE w WHEN 1 THEN 0.4e0 WHEN 2 THEN 0.1e0 WHEN 4 THEN 1 WHEN 8 THEN 0.8e0 WHEN 16 THEN 0.8e0 WHEN 32 THEN 0.05e0 WHEN 64 THEN 1.5e0 WHEN 128 THEN 0.1e0 WHEN 256 THEN 0.2e0 ELSE 0.5e0 END;
+END^
+
+-- PM_Weapon: switching, firing when the button is held, the weapon is ready and there is ammo
+CREATE OR ALTER PROCEDURE player_fire (btn SMALLINT)
+AS
+DECLARE pe INTEGER; DECLARE w INTEGER; DECLARE af DOUBLE PRECISION; DECLARE t DOUBLE PRECISION; DECLARE pw INTEGER; DECLARE wt DOUBLE PRECISION; DECLARE ws SMALLINT;
+DECLARE mx DOUBLE PRECISION; DECLARE my DOUBLE PRECISION; DECLARE mz DOUBLE PRECISION;
+DECLARE fx_ DOUBLE PRECISION; DECLARE fy DOUBLE PRECISION; DECLARE fz DOUBLE PRECISION;
+DECLARE rx DOUBLE PRECISION; DECLARE ry DOUBLE PRECISION; DECLARE rz DOUBLE PRECISION;
+DECLARE ak SMALLINT; DECLARE quad DOUBLE PRECISION; DECLARE haste DOUBLE PRECISION; DECLARE ft DOUBLE PRECISION;
+BEGIN
+  SELECT p.ent_id, p.weapon, p.attack_finished, p.quad_finished, p.haste_finished, p.pending_weapon, p.weapon_time, p.weaponstate
+    FROM player p WHERE p.id = 1 INTO pe, w, af, quad, haste, pw, wt, ws;
+  t = now_();
+  -- a switch in progress: drop the old weapon, raise the new
+  IF (pw <> 0) THEN
+  BEGIN
+    IF (ws = 2 AND t >= wt) THEN
+    BEGIN
+      UPDATE player p SET p.weapon = :pw, p.weaponstate = 3, p.weapon_time = :t + 0.25e0 WHERE p.id = 1;
+      EXECUTE PROCEDURE snd(pe, 1, 'sound/weapons/change.wav', 1, 1);
+    END
+    ELSE IF (ws = 3 AND t >= wt) THEN
+      UPDATE player p SET p.weaponstate = 0, p.pending_weapon = 0 WHERE p.id = 1;
+    EXIT;
+  END
+  IF (btn = 0) THEN
+  BEGIN
+    UPDATE player p SET p.weapon_sound = 0 WHERE p.id = 1 AND p.weapon_sound <> 0;
+    EXIT;
+  END
+  IF (af > t OR w = 0) THEN EXIT;
+
+  -- ammo
+  ak = weapon_ammo(w);
+  IF (ak > 0 AND ammo_count(ak) <= 0) THEN
+  BEGIN
+    IF (EXISTS (SELECT 1 FROM player p WHERE p.id = 1 AND p.pain_finished < :t)) THEN
+    BEGIN
+      EXECUTE PROCEDURE snd(pe, 1, 'sound/weapons/noammo.wav', 1, 1);
+      UPDATE player p SET p.pain_finished = :t + 0.5e0 WHERE p.id = 1;
+    END
+    UPDATE player p SET p.pending_weapon = best_weapon(), p.weaponstate = 2, p.weapon_time = :t + 0.2e0, p.attack_finished = :t + 0.3e0 WHERE p.id = 1 AND best_weapon() <> p.weapon;
+    EXIT;
+  END
+  EXECUTE PROCEDURE muzzle RETURNING_VALUES mx, my, mz, fx_, fy, fz, rx, ry, rz;
+  EXECUTE PROCEDURE fire_weapon(pe, w, mx, my, mz, fx_, fy, fz, 1);
+  ft = fire_time(w);
+  IF (haste > t) THEN ft = ft / 1.3e0;
+  UPDATE player p SET p.attack_finished = :t + :ft, p.attack_start = :t, p.punchangle = -IIF(:w IN (16, 64, 4), 2, 0.5e0), p.weapon_sound = IIF(:w = 32, 1, 0),
+         p.bullets = IIF(:ak = 2, p.bullets - 1, p.bullets), p.shells = IIF(:ak = 3, p.shells - 1, p.shells), p.grenades = IIF(:ak = 4, p.grenades - 1, p.grenades),
+         p.rockets = IIF(:ak = 5, p.rockets - 1, p.rockets), p.lightning = IIF(:ak = 6, p.lightning - 1, p.lightning), p.slugs = IIF(:ak = 7, p.slugs - 1, p.slugs),
+         p.cells = IIF(:ak = 8, p.cells - 1, p.cells), p.bfg = IIF(:ak = 9, p.bfg - 1, p.bfg) WHERE p.id = 1;
+  EXECUTE PROCEDURE set_anims(pe, NULL, IIF(w = 1, 8, 7));
+  IF (quad > t) THEN EXECUTE PROCEDURE snd(pe, 3, 'sound/items/damage3.wav', 1, 1);
+END^
+
+-- "weapon N" for a key 1..9, cycling (12 next, 14 previous), the holdable (13), and the cheats
+CREATE OR ALTER PROCEDURE player_impulse (imp SMALLINT)
+AS
+DECLARE have INTEGER; DECLARE w INTEGER; DECLARE i INTEGER; DECLARE pe INTEGER; DECLARE hold SMALLINT; DECLARE t DOUBLE PRECISION;
+DECLARE x DOUBLE PRECISION; DECLARE y DOUBLE PRECISION; DECLARE z DOUBLE PRECISION; DECLARE yaw DOUBLE PRECISION;
+BEGIN
+  SELECT p.weapons, COALESCE(NULLIF(p.pending_weapon, 0), p.weapon), p.ent_id, p.holdable FROM player p WHERE p.id = 1 INTO have, w, pe, hold;
+  t = now_();
+  IF (imp = 99) THEN                                                     -- give all
+  BEGIN
+    UPDATE player p SET p.weapons = 511, p.bullets = 200, p.shells = 200, p.rockets = 200, p.grenades = 200, p.lightning = 200, p.slugs = 200, p.cells = 200, p.bfg = 200, p.armor = 200 WHERE p.id = 1;
+    UPDATE ents e SET e.health = 200 WHERE e.id = :pe;
+    EXECUTE PROCEDURE sprint('Very impressive');
+    EXIT;
+  END
+  IF (imp = 13) THEN                                                     -- use the holdable item
+  BEGIN
+    IF (hold = 1) THEN
+    BEGIN
+      EXECUTE PROCEDURE select_spawn(pe) RETURNING_VALUES x, y, z, yaw;
+      EXECUTE PROCEDURE teleport_ent(pe, x, y, z, yaw);
+    END
+    ELSE IF (hold = 2) THEN
+    BEGIN
+      UPDATE ents e SET e.health = e.max_health + 25 WHERE e.id = :pe;
+      EXECUTE PROCEDURE snd(pe, 3, 'sound/items/use_medkit.wav', 1, 1);
+    END
+    ELSE EXECUTE PROCEDURE snd(pe, 3, 'sound/items/use_nothing.wav', 1, 1);
+    UPDATE player p SET p.holdable = 0 WHERE p.id = 1;
+    EXIT;
+  END
+  IF (imp = 12 OR imp = 14) THEN                                         -- cycle to the next / previous weapon held with ammo
+  BEGIN
+    i = 0;
+    WHILE (i < 9) DO
+    BEGIN
+      IF (imp = 12) THEN w = IIF(w >= 256, 1, w * 2); ELSE w = IIF(w <= 1, 256, w / 2);
+      IF (BIN_AND(have, w) <> 0 AND (weapon_ammo(w) = 0 OR ammo_count(weapon_ammo(w)) > 0)) THEN LEAVE;
+      i = i + 1;
+    END
+  END
+  ELSE
+  BEGIN
+    w = CASE imp WHEN 1 THEN 1 WHEN 2 THEN 2 WHEN 3 THEN 4 WHEN 4 THEN 8 WHEN 5 THEN 16 WHEN 6 THEN 32 WHEN 7 THEN 64 WHEN 8 THEN 128 WHEN 9 THEN 256 ELSE 0 END;
+    IF (w = 0 OR BIN_AND(have, w) = 0) THEN EXIT;
+    IF (weapon_ammo(w) > 0 AND ammo_count(weapon_ammo(w)) <= 0) THEN EXIT;
+  END
+  IF (w <> (SELECT p.weapon FROM player p WHERE p.id = 1)) THEN
+    UPDATE player p SET p.pending_weapon = :w, p.weaponstate = 2, p.weapon_time = :t + 0.2e0, p.weapon_sound = 0 WHERE p.id = 1;
+END^
+
+-- ClientSpawn: put the player at a spawn point with the starting inventory
+CREATE OR ALTER PROCEDURE player_respawn
+AS
+DECLARE pe INTEGER; DECLARE x DOUBLE PRECISION; DECLARE y DOUBLE PRECISION; DECLARE z DOUBLE PRECISION; DECLARE yaw DOUBLE PRECISION; DECLARE t DOUBLE PRECISION;
+BEGIN
+  pe = player_ent();
+  t = now_();
+  EXECUTE PROCEDURE select_spawn(pe) RETURNING_VALUES x, y, z, yaw;
+  UPDATE ents e SET e.x = :x, e.y = :y, e.z = :z + 9, e.yaw = COALESCE(:yaw, 0), e.pitch = 0, e.vx = 0, e.vy = 0, e.vz = 0,
+         e.minx = -15, e.miny = -15, e.minz = -24, e.maxx = 15, e.maxy = 15, e.maxz = 32, e.viewheight = 26,
+         e.solid = 3, e.movetype = 3, e.clipmask = 33619969, e.health = 125, e.max_health = 100, e.takedamage = 2, e.mass = 200,
+         e.flags = BIN_AND(e.flags, 16), e.deadflag = 0, e.model_id = NULL, e.alpha = 1, e.legs_anim = 22, e.legs_time = :t, e.torso_anim = 11, e.torso_time = :t,
+         e.weapon = 2, e.teleport_time = :t + 0.3e0, e.lx = NULL WHERE e.id = :pe;
+  UPDATE player p SET p.armor = 0, p.bullets = 100, p.shells = 0, p.grenades = 0, p.rockets = 0, p.lightning = 0, p.slugs = 0, p.cells = 0, p.bfg = 0,
+         p.weapons = 3, p.weapon = 2, p.pending_weapon = 0, p.weaponstate = 0, p.attack_finished = :t + 0.3e0, p.attack_start = 0, p.pain_finished = 0, p.punchangle = 0, p.view_ofs = 26,
+         p.dmg_take = 0, p.dmg_save = 0, p.dmg_time = -10, p.bonus_time = -10, p.quad_finished = 0, p.haste_finished = 0, p.invis_finished = 0, p.regen_finished = 0, p.enviro_finished = 0, p.flight_finished = 0,
+         p.holdable = 0, p.jump_released = 1, p.air_finished = :t + 12, p.drown_dmg = 2, p.pitch = 0, p.stepz = 0, p.dead_time = 0, p.weapon_sound = 0, p.health_decay = :t + 1, p.spawn_protect = :t + 0.5e0 WHERE p.id = 1;
+  EXECUTE PROCEDURE link_ent(pe);
+  EXECUTE PROCEDURE snd_at(x, y, z, 'sound/world/telein.wav', 1, 1);
+  EXECUTE PROCEDURE fx(5, x, y, z + 9, 0, 0, 0, 1);
+END^
+
+-- player_die: the obituary, the score, the corpse; the view falls with the body
+CREATE OR ALTER PROCEDURE player_die (attacker INTEGER, mod_ SMALLINT)
+AS
+DECLARE pe INTEGER; DECLARE hp INTEGER; DECLARE t DOUBLE PRECISION; DECLARE c INTEGER; DECLARE pm VARCHAR(16); DECLARE ps VARCHAR(16);
+BEGIN
+  pe = player_ent();
+  t = now_();
+  SELECT e.health, e.pmodel, e.pskin FROM ents e WHERE e.id = :pe INTO hp, pm, ps;
+  EXECUTE PROCEDURE say(obituary(pe, attacker, mod_));
+  EXECUTE PROCEDURE score_frag(attacker, pe, mod_);
+  UPDATE ents e SET e.deadflag = 1, e.solid = 0, e.movetype = 6, e.takedamage = 0, e.viewheight = -8, e.minz = -24, e.maxz = -8, e.weapon = 0 WHERE e.id = :pe;
+  UPDATE player p SET p.dead_time = :t, p.deaths = p.deaths + 1, p.view_ofs = -8, p.weapon = 0, p.pending_weapon = 0, p.weaponstate = 0, p.quad_finished = 0, p.haste_finished = 0, p.invis_finished = 0, p.regen_finished = 0, p.enviro_finished = 0, p.flight_finished = 0 WHERE p.id = 1;
+  IF (hp < -40) THEN
+  BEGIN
+    EXECUTE PROCEDURE gib_ent(pe, -hp);
+    EXIT;
+  END
+  EXECUTE PROCEDURE snd(pe, 2, 'sound/player/' || COALESCE(pm, 'sarge') || '/death' || CAST(1 + FLOOR(RAND() * 3) AS INTEGER) || '.wav', 1, 1);
+  -- the body: a corpse entity with the player's model in a death animation
+  EXECUTE PROCEDURE spawn_ent('corpse', (SELECT e.x FROM ents e WHERE e.id = :pe), (SELECT e.y FROM ents e WHERE e.id = :pe), (SELECT e.z FROM ents e WHERE e.id = :pe)) RETURNING_VALUES c;
+  UPDATE ents e SET e.pmodel = :pm, e.pskin = :ps, e.yaw = (SELECT o.yaw FROM ents o WHERE o.id = :pe), e.solid = 2, e.movetype = 6, e.clipmask = 65537, e.takedamage = 1, e.health = 0, e.deadflag = 1,
+         e.minx = -15, e.miny = -15, e.minz = -24, e.maxx = 15, e.maxy = 15, e.maxz = -8, e.legs_anim = CAST(FLOOR(RAND() * 3) AS INTEGER) * 2, e.legs_time = :t, e.torso_anim = -1,
+         e.vx = (SELECT o.vx FROM ents o WHERE o.id = :pe), e.vy = (SELECT o.vy FROM ents o WHERE o.id = :pe), e.weapon = 0,
+         e.think = 'remove', e.nextthink = :t + 8 WHERE e.id = :c;
+  EXECUTE PROCEDURE link_ent(c);
+END^
+
+-- ClientThink + Pmove + ClientEndServerFrame for one tic
+CREATE OR ALTER PROCEDURE player_think (dt DOUBLE PRECISION, fwd DOUBLE PRECISION, side DOUBLE PRECISION,
+  yaw_d DOUBLE PRECISION, pitch_d DOUBLE PRECISION, fire SMALLINT, jump SMALLINT, run SMALLINT, imp SMALLINT)
+AS
+DECLARE pe INTEGER; DECLARE t DOUBLE PRECISION; DECLARE dead SMALLINT; DECLARE flags INTEGER; DECLARE wl SMALLINT; DECLARE wt INTEGER; DECLARE owl SMALLINT;
+DECLARE yaw DOUBLE PRECISION; DECLARE pitch DOUBLE PRECISION;
+DECLARE vx DOUBLE PRECISION; DECLARE vy DOUBLE PRECISION; DECLARE vz DOUBLE PRECISION;
+DECLARE spd DOUBLE PRECISION; DECLARE ns DOUBLE PRECISION; DECLARE control DOUBLE PRECISION; DECLARE drop_ DOUBLE PRECISION;
+DECLARE fx_ DOUBLE PRECISION; DECLARE fy DOUBLE PRECISION; DECLARE fz DOUBLE PRECISION;
+DECLARE rx DOUBLE PRECISION; DECLARE ry DOUBLE PRECISION;
+DECLARE wx DOUBLE PRECISION; DECLARE wy DOUBLE PRECISION; DECLARE wz DOUBLE PRECISION; DECLARE wspd DOUBLE PRECISION; DECLARE maxspd DOUBLE PRECISION;
+DECLARE cur DOUBLE PRECISION; DECLARE add_ DOUBLE PRECISION; DECLARE acc DOUBLE PRECISION;
+DECLARE jr SMALLINT; DECLARE onground SMALLINT;
+DECLARE px DOUBLE PRECISION; DECLARE py DOUBLE PRECISION; DECLARE pz DOUBLE PRECISION;
+DECLARE f DOUBLE PRECISION; DECLARE ex DOUBLE PRECISION; DECLARE ey DOUBLE PRECISION; DECLARE ez DOUBLE PRECISION;
+DECLARE gnx DOUBLE PRECISION; DECLARE gny DOUBLE PRECISION; DECLARE gnz DOUBLE PRECISION;
+DECLARE sf INTEGER; DECLARE ct INTEGER; DECLARE als SMALLINT; DECLARE sts SMALLINT; DECLARE hit INTEGER; DECLARE cb SMALLINT;
+DECLARE tst SMALLINT; DECLARE tid INTEGER;
+DECLARE afin DOUBLE PRECISION; DECLARE hp INTEGER; DECLARE deadt DOUBLE PRECISION; DECLARE oldz DOUBLE PRECISION;
+DECLARE enviro DOUBLE PRECISION; DECLARE haste DOUBLE PRECISION; DECLARE regen DOUBLE PRECISION; DECLARE ndt DOUBLE PRECISION; DECLARE ddmg INTEGER; DECLARE mhp INTEGER;
+DECLARE grav DOUBLE PRECISION; DECLARE tt DOUBLE PRECISION; DECLARE legs INTEGER; DECLARE hdecay DOUBLE PRECISION; DECLARE rt DOUBLE PRECISION; DECLARE stept DOUBLE PRECISION;
+DECLARE mover SMALLINT; DECLARE pm VARCHAR(16); DECLARE match_done SMALLINT;
+BEGIN
+  SELECT p.ent_id, p.jump_released, p.air_finished, p.dead_time, p.enviro_finished, p.haste_finished, p.regen_finished, p.next_drown_time, p.drown_dmg, p.health_decay, p.regen_time, p.step_time
+    FROM player p WHERE p.id = 1 INTO pe, jr, afin, deadt, enviro, haste, regen, ndt, ddmg, hdecay, rt, stept;
+  IF (pe IS NULL) THEN EXIT;
+  SELECT e.deadflag, e.flags, e.waterlevel, e.watertype, e.yaw, e.health, e.z, e.max_health, e.teleport_time, e.legs_anim, e.pmodel
+    FROM ents e WHERE e.id = :pe INTO dead, flags, owl, wt, yaw, hp, oldz, mhp, tt, legs, pm;
+  t = now_();
+  SELECT g.gravity, g.match_over FROM game g WHERE g.id = 1 INTO grav, match_done;
+
+  IF (dead = 1) THEN
+  BEGIN
+    -- the view falls with the body; respawn on fire or jump after a moment
+    EXECUTE PROCEDURE toss_move(pe, dt);
+    IF (t > deadt + 1.7e0 AND (fire = 1 OR jump = 1)) THEN
+    BEGIN
+      IF (match_done = 1) THEN UPDATE game g SET g.exit_kind = 3 WHERE g.id = 1;
+      ELSE EXECUTE PROCEDURE player_respawn;
+    END
+    EXIT;
+  END
+  IF (match_done = 1) THEN
+  BEGIN
+    IF (fire = 1 AND t > (SELECT g.over_time FROM game g WHERE g.id = 1) + 3) THEN UPDATE game g SET g.exit_kind = 3 WHERE g.id = 1;
+    EXIT;
+  END
+
+  -- view angles
+  yaw = anglemod(yaw + yaw_d);
+  UPDATE player p SET p.pitch = MAXVALUE(-89, MINVALUE(89, p.pitch + :pitch_d)), p.punchangle = MINVALUE(0, p.punchangle + 10 * :dt) WHERE p.id = 1 RETURNING p.pitch INTO pitch;
+  UPDATE ents e SET e.yaw = :yaw, e.pitch = :pitch WHERE e.id = :pe;
+  IF (imp > 0) THEN EXECUTE PROCEDURE player_impulse(imp);
+
+  -- P_WorldEffects: water, slime, lava, drowning
+  EXECUTE PROCEDURE check_water(pe) RETURNING_VALUES wl, wt;
+  IF (owl = 0 AND wl > 0) THEN EXECUTE PROCEDURE snd(pe, 0, 'sound/player/watr_in.wav', 1, 1);
+  ELSE IF (owl > 0 AND wl = 0) THEN EXECUTE PROCEDURE snd(pe, 0, 'sound/player/watr_out.wav', 1, 1);
+  IF (owl <> 3 AND wl = 3) THEN EXECUTE PROCEDURE snd(pe, 0, 'sound/player/watr_un.wav', 1, 1);
+  IF (owl = 3 AND wl <> 3 AND afin < t + 11) THEN EXECUTE PROCEDURE snd(pe, 2, 'sound/player/' || pm || '/gasp.wav', 1, 1);
+  IF (wl = 3) THEN
+  BEGIN
+    IF (afin < t AND ndt < t) THEN
+    BEGIN
+      ddmg = MINVALUE(15, ddmg + 2);
+      UPDATE player p SET p.next_drown_time = :t + 1, p.drown_dmg = :ddmg WHERE p.id = 1;
+      EXECUTE PROCEDURE snd(pe, 2, IIF(hp <= ddmg, 'sound/player/' || pm || '/drown.wav', 'sound/player/gurp' || CAST(1 + FLOOR(RAND() * 2) AS INTEGER) || '.wav'), 1, 1);
+      EXECUTE PROCEDURE t_damage(pe, 0, 0, ddmg, 0, 2 + 8, 21);
+    END
+  END
+  ELSE UPDATE player p SET p.air_finished = :t + 12, p.drown_dmg = 2 WHERE p.id = 1;
+  IF (wl > 0 AND BIN_AND(wt, 24) <> 0) THEN
+  BEGIN
+    IF ((SELECT p.dmg_lava_time FROM player p WHERE p.id = 1) < t) THEN
+    BEGIN
+      UPDATE player p SET p.dmg_lava_time = :t + 0.1e0 WHERE p.id = 1;
+      IF (BIN_AND(wt, 8) <> 0) THEN EXECUTE PROCEDURE t_damage(pe, 0, 0, 3 * wl, 0, 2, 14);   -- lava: 30 a second
+      ELSE EXECUTE PROCEDURE t_damage(pe, 0, 0, 1 * wl, 0, 2, 15);                           -- slime: 10 a second
+      IF (BIN_AND(wt, 8) <> 0 AND RAND() < 0.1e0) THEN EXECUTE PROCEDURE snd(pe, 2, 'sound/player/fry.wav', 1, 1);
+    END
+  END
+  IF (NOT EXISTS (SELECT 1 FROM ents e WHERE e.id = :pe AND e.deadflag = 0)) THEN EXIT;
+
+  -- PM_GroundTrace: a quarter unit down
+  SELECT e.vx, e.vy, e.vz, e.flags, e.x, e.y, e.z FROM ents e WHERE e.id = :pe INTO vx, vy, vz, flags, px, py, pz;
+  EXECUTE PROCEDURE trace_move(pe, -15, -15, -24, 15, 15, 32, px, py, pz, px, py, pz - 0.25e0, 33619969)
+    RETURNING_VALUES f, ex, ey, ez, gnx, gny, gnz, sf, ct, als, sts, hit;
+  onground = IIF(f < 1 AND gnz >= 0.7e0 AND NOT (vz > 0 AND vx * gnx + vy * gny + vz * gnz > 10), 1, 0);
+  IF (als = 1 OR sts = 1) THEN onground = 1;
+  mover = IIF(hit > 0 AND onground = 1, 1, 0);
+  IF (onground = 1 AND BIN_AND(flags, 512) = 0 AND vz < -300) THEN
+  BEGIN
+    -- landed: PM_CrashLand through impact's falling-damage path
+    UPDATE ents e SET e.vz = :vz WHERE e.id = :pe;
+    EXECUTE PROCEDURE impact(pe, 0, 0);
+  END
+  flags = IIF(onground = 1, BIN_OR(flags, 512), BIN_AND(flags, BIN_NOT(512)));
+  maxspd = IIF(run = 1, 320, 160);
+  IF (haste > t) THEN maxspd = maxspd * 1.3e0;
+
+  -- PM_CheckJump
+  IF (jump = 1) THEN
+  BEGIN
+    IF (wl >= 2) THEN
+    BEGIN
+      vz = MAXVALUE(vz, 50);
+      onground = 0; flags = BIN_AND(flags, BIN_NOT(512));
+    END
+    ELSE IF (onground = 1 AND jr = 1 AND tt < t) THEN
+    BEGIN
+      vz = 270;
+      flags = BIN_AND(flags, BIN_NOT(512));
+      onground = 0;
+      UPDATE player p SET p.jump_released = 0 WHERE p.id = 1;
+      EXECUTE PROCEDURE snd(pe, 2, 'sound/player/' || pm || '/jump1.wav', 1, 1);
+      EXECUTE PROCEDURE set_anims(pe, IIF(fwd >= 0, 18, 20), NULL);
+      legs = 18;
+    END
+  END
+  ELSE UPDATE player p SET p.jump_released = 1 WHERE p.id = 1;
+
+  -- PM_Friction: on the ground (not while a jump pad or teleporter has us) and in water
+  IF ((onground = 1 AND tt < t) OR wl >= 2) THEN
+  BEGIN
+    spd = IIF(wl >= 2, vlen(vx, vy, vz), vlen(vx, vy, 0));
+    IF (spd > 1) THEN
+    BEGIN
+      drop_ = 0;
+      IF (onground = 1 AND wl < 2) THEN
+      BEGIN
+        control = IIF(spd < 100, 100, spd);
+        drop_ = drop_ + control * 6 * dt;
+      END
+      IF (wl >= 2) THEN drop_ = drop_ + spd * 1 * wl * dt;
+      ns = MAXVALUE(0, spd - drop_) / spd;
+      vx = vx * ns; vy = vy * ns;
+      IF (wl >= 2) THEN vz = vz * ns;
+    END
+  END
+
+  -- the wish direction
+  fx_ = COS(yaw * 0.0174532925e0); fy = SIN(yaw * 0.0174532925e0);
+  rx = fy; ry = -fx_;
+  IF (wl >= 2) THEN
+  BEGIN
+    -- PM_WaterMove: the forward vector follows the pitch; sink slowly when idle; half speed
+    fz = -SIN(pitch * 0.0174532925e0);
+    fx_ = fx_ * COS(pitch * 0.0174532925e0); fy = fy * COS(pitch * 0.0174532925e0);
+    wx = fx_ * fwd * maxspd + rx * side * maxspd; wy = fy * fwd * maxspd + ry * side * maxspd; wz = fz * fwd * maxspd;
+    IF (fwd = 0 AND side = 0 AND jump = 0) THEN wz = wz - 60;
+    ELSE IF (jump = 1) THEN wz = wz + 200;
+    wspd = vlen(wx, wy, wz);
+    IF (wspd > maxspd) THEN BEGIN wx = wx * maxspd / wspd; wy = wy * maxspd / wspd; wz = wz * maxspd / wspd; wspd = maxspd; END
+    wspd = wspd * 0.5e0;
+    IF (wspd > 0) THEN
+    BEGIN
+      cur = (vx * wx + vy * wy + vz * wz) / vlen(wx, wy, wz);
+      add_ = wspd - cur;
+      IF (add_ > 0) THEN
+      BEGIN
+        acc = MINVALUE(add_, 4 * wspd * dt);
+        vx = vx + acc * wx / vlen(wx, wy, wz); vy = vy + acc * wy / vlen(wx, wy, wz); vz = vz + acc * wz / vlen(wx, wy, wz);
+      END
+    END
+  END
+  ELSE
+  BEGIN
+    wx = fx_ * fwd * maxspd + rx * side * maxspd; wy = fy * fwd * maxspd + ry * side * maxspd;
+    wspd = vlen(wx, wy, 0);
+    IF (wspd > maxspd) THEN BEGIN wx = wx * maxspd / wspd; wy = wy * maxspd / wspd; wspd = maxspd; END
+    IF (wspd > 0 AND tt < t) THEN
+    BEGIN
+      -- PM_Accelerate: 10 on the ground, 1 in the air (air control by the clipped wish direction)
+      cur = (vx * wx + vy * wy) / wspd;
+      add_ = wspd - cur;
+      IF (add_ > 0) THEN
+      BEGIN
+        acc = MINVALUE(add_, IIF(onground = 1, 10, 1) * wspd * dt);
+        vx = vx + acc * wx / wspd; vy = vy + acc * wy / wspd;
+      END
+    END
+    IF (onground = 1 AND vz < 0 AND BIN_AND(flags, 512) <> 0) THEN
+    BEGIN
+      -- PM_WalkMove: slide along the ground plane rather than into it
+      EXECUTE PROCEDURE clip_velocity(vx, vy, vz, gnx, gny, gnz, 1.001e0) RETURNING_VALUES vx, vy, vz, cb;
+    END
+  END
+  -- gravity
+  IF (onground = 0 AND wl < 2) THEN vz = vz - grav * dt;
+  ELSE IF (onground = 1 AND wl < 2 AND mover = 0) THEN vz = MINVALUE(vz, 0);
+  UPDATE ents e SET e.vx = :vx, e.vy = :vy, e.vz = :vz, e.flags = :flags WHERE e.id = :pe;
+
+  -- move
+  IF (wl >= 2) THEN
+  BEGIN
+    UPDATE ents e SET e.flags = BIN_AND(e.flags, BIN_NOT(512)) WHERE e.id = :pe;
+    EXECUTE PROCEDURE fly_move(pe, dt) RETURNING_VALUES tst, tid;
+  END
+  ELSE EXECUTE PROCEDURE walk_move(pe, dt);
+  IF (NOT EXISTS (SELECT 1 FROM ents e WHERE e.id = :pe)) THEN EXIT;
+  EXECUTE PROCEDURE link_ent(pe);
+  -- smooth the view over steps
+  SELECT e.z, e.vx, e.vy FROM ents e WHERE e.id = :pe INTO pz, vx, vy;
+  UPDATE player p SET p.stepz = IIF(:onground = 1 AND :pz - :oldz > 0 AND :pz - :oldz <= 18, MINVALUE(p.stepz + (:pz - :oldz), 18), MAXVALUE(0, p.stepz - 160 * :dt)),
+         p.move_speed = vlen(:vx, :vy, 0), p.onground = :onground WHERE p.id = 1;
+
+  -- the legs: run, back-pedal, idle, or still in the air
+  IF (onground = 1 AND legs IN (18, 20) AND tt < t) THEN BEGIN EXECUTE PROCEDURE set_anims(pe, 19, NULL); legs = 19; END
+  ELSE IF (onground = 1 AND legs <> 19) THEN
+  BEGIN
+    IF (vlen(vx, vy, 0) > 40 AND legs NOT IN (IIF(fwd < 0, 16, 15))) THEN EXECUTE PROCEDURE set_anims(pe, IIF(fwd < 0, 16, 15), NULL);
+    ELSE IF (vlen(vx, vy, 0) <= 40 AND legs <> 22) THEN EXECUTE PROCEDURE set_anims(pe, 22, NULL);
+  END
+  -- footsteps
+  IF (onground = 1 AND vlen(vx, vy, 0) > 100 AND stept < t) THEN
+  BEGIN
+    UPDATE player p SET p.step_time = :t + 0.3e0 WHERE p.id = 1;
+    EXECUTE PROCEDURE snd(pe, 2, IIF(wl > 0, 'sound/player/footsteps/splash' || CAST(1 + FLOOR(RAND() * 4) AS INTEGER) || '.wav', 'sound/player/footsteps/step' || CAST(1 + FLOOR(RAND() * 4) AS INTEGER) || '.wav'), 0.6e0, 1);
+  END
+
+  -- G_TouchTriggers: triggers, jump pads, teleporters and items
+  EXECUTE PROCEDURE touch_triggers(pe);
+  IF (NOT EXISTS (SELECT 1 FROM ents e WHERE e.id = :pe AND e.deadflag = 0)) THEN EXIT;
+
+  -- health above the maximum counts down, regeneration counts up
+  IF (hdecay < t) THEN
+  BEGIN
+    UPDATE player p SET p.health_decay = :t + 1 WHERE p.id = 1;
+    IF (regen > t) THEN
+    BEGIN
+      UPDATE ents e SET e.health = IIF(e.health < e.max_health, MINVALUE(e.health + 15, e.max_health * 1.1e0), IIF(e.health < e.max_health * 2, e.health + 5, e.health)) WHERE e.id = :pe;
+      EXECUTE PROCEDURE snd(pe, 3, 'sound/items/regen.wav', 1, 1);
+    END
+    ELSE UPDATE ents e SET e.health = e.health - 1 WHERE e.id = :pe AND e.health > e.max_health;
+    UPDATE player p SET p.armor = p.armor - 1 WHERE p.id = 1 AND p.armor > 100;
+  END
+  -- powerups wearing off
+  IF (EXISTS (SELECT 1 FROM player p WHERE p.id = 1 AND ((p.quad_finished > :t - :dt AND p.quad_finished <= :t) OR (p.haste_finished > :t - :dt AND p.haste_finished <= :t)
+       OR (p.invis_finished > :t - :dt AND p.invis_finished <= :t) OR (p.regen_finished > :t - :dt AND p.regen_finished <= :t) OR (p.enviro_finished > :t - :dt AND p.enviro_finished <= :t)))) THEN
+    EXECUTE PROCEDURE snd(pe, 3, 'sound/items/wearoff.wav', 1, 1);
+
+  -- weapon
+  EXECUTE PROCEDURE player_fire(fire);
+END^
+
+SET TERM ; ^

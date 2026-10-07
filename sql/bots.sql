@@ -1,0 +1,768 @@
+-- bots.sql – the opponents (a small AI in the spirit of ai_main.c: see,
+-- chase, strafe, shoot, pick things up, respawn), the scoring and the
+-- announcer, the pushers (g_mover.c's G_RunMover), and the per-tic driver
+-- (G_RunFrame) and level setup (G_InitGame / ClientBegin).
+
+SET TERM ^ ;
+
+CREATE OR ALTER PROCEDURE run_think (eid INTEGER, think VARCHAR(24)) AS BEGIN END^
+CREATE OR ALTER PROCEDURE mover_blocked (eid INTEGER, other INTEGER) AS BEGIN END^
+
+-- ── player model animation ───────────────────────────────────────────────
+-- the legs and torso animations of a player or bot (animNumber_t), restarted when they change
+CREATE OR ALTER PROCEDURE set_anims (eid INTEGER, legs INTEGER, torso INTEGER)
+AS
+DECLARE t DOUBLE PRECISION;
+BEGIN
+  t = now_();
+  IF (legs IS NOT NULL) THEN UPDATE ents e SET e.legs_anim = :legs, e.legs_time = :t WHERE e.id = :eid AND e.legs_anim <> :legs;
+  IF (torso IS NOT NULL) THEN UPDATE ents e SET e.torso_anim = :torso, e.torso_time = :t WHERE e.id = :eid AND (e.torso_anim <> :torso OR :torso IN (7, 8));
+END^
+
+-- ── movement helpers (g_ai.c, as Quake 2 had them) ──────────────────────
+CREATE OR ALTER PROCEDURE change_yaw (eid INTEGER)
+AS
+DECLARE cur DOUBLE PRECISION; DECLARE ideal DOUBLE PRECISION; DECLARE spd DOUBLE PRECISION; DECLARE mv DOUBLE PRECISION;
+BEGIN
+  SELECT anglemod(e.yaw), e.ideal_yaw, e.yaw_speed FROM ents e WHERE e.id = :eid INTO cur, ideal, spd;
+  IF (cur = ideal) THEN EXIT;
+  mv = ideal - cur;
+  IF (ideal > cur) THEN BEGIN IF (mv >= 180) THEN mv = mv - 360; END
+  ELSE BEGIN IF (mv <= -180) THEN mv = mv + 360; END
+  IF (mv > 0) THEN BEGIN IF (mv > spd) THEN mv = spd; END
+  ELSE BEGIN IF (mv < -spd) THEN mv = -spd; END
+  UPDATE ents e SET e.yaw = anglemod(:cur + :mv) WHERE e.id = :eid;
+END^
+
+-- SV_StepDirection: turn to yaw and try to step dist that way
+CREATE OR ALTER FUNCTION step_direction (eid INTEGER, yaw DOUBLE PRECISION, dist DOUBLE PRECISION) RETURNS SMALLINT
+AS
+BEGIN
+  RETURN move_step(eid, COS(yaw * 0.0174532925e0) * dist, SIN(yaw * 0.0174532925e0) * dist, 0);
+END^
+
+-- SV_NewChaseDir: pick a direction toward the goal, trying the sides
+CREATE OR ALTER PROCEDURE new_chase_dir (eid INTEGER, goal INTEGER, dist DOUBLE PRECISION)
+AS
+DECLARE olddir DOUBLE PRECISION; DECLARE turnaround DOUBLE PRECISION;
+DECLARE dx DOUBLE PRECISION; DECLARE dy DOUBLE PRECISION; DECLARE d1 DOUBLE PRECISION; DECLARE d2 DOUBLE PRECISION; DECLARE tdir DOUBLE PRECISION;
+DECLARE nodir DOUBLE PRECISION = -1;
+BEGIN
+  SELECT anglemod(FLOOR(e.ideal_yaw / 45) * 45) FROM ents e WHERE e.id = :eid INTO olddir;
+  turnaround = anglemod(olddir - 180);
+  SELECT g.x - e.x, g.y - e.y FROM ents e CROSS JOIN ents g WHERE e.id = :eid AND g.id = :goal INTO dx, dy;
+  IF (dx IS NULL) THEN EXIT;
+  d1 = IIF(dx > 10, 0, IIF(dx < -10, 180, nodir));
+  d2 = IIF(dy < -10, 270, IIF(dy > 10, 90, nodir));
+  IF (d1 <> nodir AND d2 <> nodir) THEN
+  BEGIN
+    tdir = IIF(d1 = 0, IIF(d2 = 90, 45, 315), IIF(d2 = 90, 135, 215));
+    IF (tdir <> turnaround AND step_direction(eid, tdir, dist) = 1) THEN BEGIN UPDATE ents e SET e.ideal_yaw = :tdir WHERE e.id = :eid; EXIT; END
+  END
+  IF (RAND() < 0.5e0 OR ABS(dy) > ABS(dx)) THEN BEGIN tdir = d1; d1 = d2; d2 = tdir; END
+  IF (d1 <> nodir AND d1 <> turnaround AND step_direction(eid, d1, dist) = 1) THEN BEGIN UPDATE ents e SET e.ideal_yaw = :d1 WHERE e.id = :eid; EXIT; END
+  IF (d2 <> nodir AND d2 <> turnaround AND step_direction(eid, d2, dist) = 1) THEN BEGIN UPDATE ents e SET e.ideal_yaw = :d2 WHERE e.id = :eid; EXIT; END
+  IF (olddir <> nodir AND step_direction(eid, olddir, dist) = 1) THEN BEGIN UPDATE ents e SET e.ideal_yaw = :olddir WHERE e.id = :eid; EXIT; END
+  tdir = IIF(RAND() < 0.5e0, 0, 315);
+  d1 = 0;
+  WHILE (d1 < 8) DO
+  BEGIN
+    d2 = anglemod(tdir + IIF(tdir = 0, 45, -45) * d1);
+    IF (step_direction(eid, d2, dist) = 1) THEN BEGIN UPDATE ents e SET e.ideal_yaw = :d2 WHERE e.id = :eid; EXIT; END
+    d1 = d1 + 1;
+  END
+  IF (turnaround <> nodir AND step_direction(eid, turnaround, dist) = 1) THEN BEGIN UPDATE ents e SET e.ideal_yaw = :turnaround WHERE e.id = :eid; EXIT; END
+END^
+
+-- M_MoveToGoal: a step toward the goal entity
+CREATE OR ALTER PROCEDURE move_to_goal (eid INTEGER, goal INTEGER, dist DOUBLE PRECISION)
+AS
+DECLARE gx DOUBLE PRECISION; DECLARE gy DOUBLE PRECISION; DECLARE yaw DOUBLE PRECISION;
+BEGIN
+  SELECT g.x, g.y FROM ents g WHERE g.id = :goal INTO gx, gy;
+  IF (gx IS NULL) THEN EXIT;
+  SELECT vectoyaw(:gx - e.x, :gy - e.y) FROM ents e WHERE e.id = :eid INTO yaw;
+  IF (FLOOR(RAND() * 4) = 1 OR step_direction(eid, yaw, dist) = 0) THEN
+    EXECUTE PROCEDURE new_chase_dir(eid, goal, dist);
+END^
+
+-- ── the bot's senses ─────────────────────────────────────────────────────
+-- the nearest player or bot in sight (BotFindEnemy, without the team rules)
+CREATE OR ALTER FUNCTION bot_find_target (eid INTEGER) RETURNS INTEGER
+AS
+DECLARE c INTEGER; DECLARE d DOUBLE PRECISION; DECLARE best INTEGER; DECLARE bestd DOUBLE PRECISION = 1e9; DECLARE inv DOUBLE PRECISION;
+BEGIN
+  SELECT p.invis_finished FROM player p WHERE p.id = 1 INTO inv;
+  FOR SELECT o.id, vlen(o.x - e.x, o.y - e.y, o.z - e.z) FROM ents o CROSS JOIN ents e
+       WHERE e.id = :eid AND o.id <> :eid AND o.classname IN ('player', 'bot') AND o.health > 0 AND o.deadflag = 0 AND BIN_AND(o.flags, 64) = 0
+         AND NOT (o.classname = 'player' AND :inv > now_())
+         AND ABS(o.x - e.x) < 3000 AND ABS(o.y - e.y) < 3000 AND ABS(o.z - e.z) < 3000
+       ORDER BY 2 INTO c, d
+  DO
+  BEGIN
+    IF (d >= bestd) THEN LEAVE;
+    IF (visible(eid, c) = 1) THEN BEGIN best = c; bestd = d; END
+  END
+  RETURN best;
+END^
+
+-- the weapon a bot likes best for the distance among those it holds
+CREATE OR ALTER FUNCTION bot_best_weapon (eid INTEGER, dist DOUBLE PRECISION) RETURNS INTEGER
+AS
+DECLARE w INTEGER;
+BEGIN
+  SELECT e.weapons FROM ents e WHERE e.id = :eid INTO w;
+  IF (BIN_AND(w, 64) <> 0 AND dist > 500) THEN RETURN 64;
+  IF (BIN_AND(w, 16) <> 0 AND dist > 180) THEN RETURN 16;
+  IF (BIN_AND(w, 32) <> 0 AND dist < 700) THEN RETURN 32;
+  IF (BIN_AND(w, 128) <> 0) THEN RETURN 128;
+  IF (BIN_AND(w, 4) <> 0 AND dist < 600) THEN RETURN 4;
+  IF (BIN_AND(w, 64) <> 0) THEN RETURN 64;
+  IF (BIN_AND(w, 16) <> 0) THEN RETURN 16;
+  IF (BIN_AND(w, 8) <> 0 AND dist > 150) THEN RETURN 8;
+  IF (BIN_AND(w, 4) <> 0) THEN RETURN 4;
+  IF (BIN_AND(w, 2) <> 0) THEN RETURN 2;
+  RETURN 1;
+END^
+
+-- aim at the enemy (leading a little, scattered by the skill) and fire the weapon in hand
+CREATE OR ALTER PROCEDURE bot_fire (eid INTEGER)
+AS
+DECLARE enemy INTEGER; DECLARE w INTEGER; DECLARE skill SMALLINT;
+DECLARE ex DOUBLE PRECISION; DECLARE ey DOUBLE PRECISION; DECLARE ez DOUBLE PRECISION; DECLARE fx DOUBLE PRECISION; DECLARE fy DOUBLE PRECISION; DECLARE fz DOUBLE PRECISION;
+DECLARE tx DOUBLE PRECISION; DECLARE ty DOUBLE PRECISION; DECLARE tz DOUBLE PRECISION; DECLARE dl DOUBLE PRECISION; DECLARE err DOUBLE PRECISION;
+DECLARE dx DOUBLE PRECISION; DECLARE dy DOUBLE PRECISION; DECLARE dz DOUBLE PRECISION; DECLARE lead DOUBLE PRECISION;
+BEGIN
+  SELECT e.enemy_id, e.weapon, COALESCE(b.skill, 2) FROM ents e LEFT JOIN bot_defs b ON b.name = e.bot WHERE e.id = :eid INTO enemy, w, skill;
+  IF (enemy IS NULL) THEN EXIT;
+  EXECUTE PROCEDURE eye_of(eid) RETURNING_VALUES ex, ey, ez, fx, fy, fz;
+  -- aim at the chest, leading projectiles by the target's velocity
+  lead = CASE w WHEN 16 THEN 1 / 900e0 WHEN 128 THEN 1 / 2000e0 WHEN 8 THEN 1 / 700e0 ELSE 0 END;
+  SELECT o.x + o.vx * :lead * vlen(o.x - :ex, o.y - :ey, o.z - :ez), o.y + o.vy * :lead * vlen(o.x - :ex, o.y - :ey, o.z - :ez), o.z + (o.minz + o.maxz) / 2 + 8
+    FROM ents o WHERE o.id = :enemy INTO tx, ty, tz;
+  dx = tx - ex; dy = ty - ey; dz = tz - ez;
+  dl = vlen(dx, dy, dz);
+  IF (dl = 0) THEN EXIT;
+  -- the scatter: a fraction of the distance, less with skill
+  err = dl * (0.09e0 - skill * 0.015e0);
+  dx = dx + crand() * err; dy = dy + crand() * err; dz = dz + crand() * err;
+  UPDATE ents e SET e.pitch = -ATAN2(:dz, vlen(:dx, :dy, 0)) * 57.29578e0 WHERE e.id = :eid;
+  EXECUTE PROCEDURE fire_weapon(eid, w, ex + fx * 14, ey + fy * 14, ez + fz * 14, dx, dy, dz, 1);
+  EXECUTE PROCEDURE set_anims(eid, NULL, IIF(w = 1, 8, 7));
+END^
+
+-- Touch_Item for a bot: no inventory beyond health, armour, weapons and the quad
+CREATE OR ALTER PROCEDURE bot_item_touch (item INTEGER, other INTEGER)
+AS
+DECLARE cls VARCHAR(40); DECLARE kind CHAR(1); DECLARE qty INTEGER; DECLARE resp DOUBLE PRECISION; DECLARE bit_ INTEGER; DECLARE snd_ VARCHAR(64);
+DECLARE hp INTEGER; DECLARE mhp INTEGER; DECLARE av INTEGER; DECLARE have INTEGER;
+BEGIN
+  SELECT d.cls, d.kind, IIF(e.count_ > 0, e.count_, d.qty), d.respawn, d.bit, d.snd FROM ents e JOIN item_defs d ON d.cls = e.item WHERE e.id = :item AND e.solid = 1
+    INTO cls, kind, qty, resp, bit_, snd_;
+  IF (cls IS NULL) THEN EXIT;
+  SELECT e.health, e.max_health, e.armor, e.weapons FROM ents e WHERE e.id = :other AND e.classname = 'bot' AND e.health > 0 INTO hp, mhp, av, have;
+  IF (hp IS NULL) THEN EXIT;
+  IF (kind = 'H') THEN
+  BEGIN
+    IF (hp >= IIF(qty = 5 OR qty = 100, mhp * 2, mhp)) THEN EXIT;
+    UPDATE ents e SET e.health = MINVALUE(e.health + :qty, IIF(:qty = 5 OR :qty = 100, e.max_health * 2, e.max_health)) WHERE e.id = :other;
+  END
+  ELSE IF (kind = 'A') THEN
+  BEGIN
+    IF (av >= mhp * 2) THEN EXIT;
+    UPDATE ents e SET e.armor = MINVALUE(e.armor + :qty, e.max_health * 2) WHERE e.id = :other;
+  END
+  ELSE IF (kind = 'W') THEN
+  BEGIN
+    IF (BIN_AND(have, bit_) <> 0 AND RAND() < 0.7e0) THEN EXIT;   -- usually leaves what it has
+    UPDATE ents e SET e.weapons = BIN_OR(e.weapons, :bit_) WHERE e.id = :other;
+  END
+  ELSE IF (kind = 'P' AND bit_ = 1) THEN
+    UPDATE ents e SET e.quad_finished = MAXVALUE(e.quad_finished, now_()) + :qty WHERE e.id = :other;
+  ELSE IF (kind = 'M') THEN
+  BEGIN
+    IF (RAND() < 0.5e0) THEN EXIT;
+  END
+  ELSE EXIT;
+  EXECUTE PROCEDURE snd(other, 3, snd_, 1, 1);
+  EXECUTE PROCEDURE item_taken(item, IIF(kind = 'W', 5, resp));
+END^
+
+-- ── pain, death, respawn ─────────────────────────────────────────────────
+CREATE OR ALTER PROCEDURE bot_pain (eid INTEGER, attacker INTEGER, damage INTEGER)
+AS
+DECLARE pf DOUBLE PRECISION; DECLARE hp INTEGER; DECLARE pm VARCHAR(16);
+BEGIN
+  SELECT e.pain_finished, e.health, e.pmodel FROM ents e WHERE e.id = :eid INTO pf, hp, pm;
+  -- whoever hurt it is the enemy now
+  IF (attacker > 0 AND attacker <> eid AND EXISTS (SELECT 1 FROM ents a WHERE a.id = :attacker AND a.classname IN ('player', 'bot'))) THEN
+    UPDATE ents e SET e.enemy_id = :attacker, e.search_time = now_() + 4, e.st = 'run' WHERE e.id = :eid;
+  IF (pf > now_()) THEN EXIT;
+  UPDATE ents e SET e.pain_finished = now_() + 0.7e0 WHERE e.id = :eid;
+  EXECUTE PROCEDURE snd(eid, 2, 'sound/player/' || pm || '/pain' || TRIM(CASE WHEN hp < 25 THEN '25' WHEN hp < 50 THEN '50' WHEN hp < 75 THEN '75' ELSE '100' END) || '_1.wav', 1, 1);
+END^
+
+CREATE OR ALTER PROCEDURE bot_die (eid INTEGER, attacker INTEGER, mod_ SMALLINT)
+AS
+DECLARE hp INTEGER; DECLARE pm VARCHAR(16); DECLARE ps VARCHAR(16); DECLARE t DOUBLE PRECISION; DECLARE c INTEGER;
+BEGIN
+  t = now_();
+  SELECT e.health, e.pmodel, e.pskin FROM ents e WHERE e.id = :eid INTO hp, pm, ps;
+  EXECUTE PROCEDURE say(obituary(eid, attacker, mod_));
+  EXECUTE PROCEDURE score_frag(attacker, eid, mod_);
+  UPDATE ents e SET e.deadflag = 1, e.st = 'dead', e.solid = 0, e.movetype = 0, e.takedamage = 0, e.alpha = 1, e.enemy_id = NULL, e.goal_id = NULL,
+         e.respawn_time = :t + 2.5e0 + RAND() * 2, e.deaths = e.deaths + 1, e.vx = 0, e.vy = 0, e.vz = 0, e.quad_finished = 0, e.nextthink = :t + 0.5e0 WHERE e.id = :eid;
+  IF (hp < -40) THEN
+  BEGIN
+    EXECUTE PROCEDURE gib_ent(eid, -hp);
+    EXIT;
+  END
+  EXECUTE PROCEDURE snd(eid, 2, 'sound/player/' || pm || '/death' || CAST(1 + FLOOR(RAND() * 3) AS INTEGER) || '.wav', 1, 1);
+  EXECUTE PROCEDURE spawn_ent('corpse', (SELECT e.x FROM ents e WHERE e.id = :eid), (SELECT e.y FROM ents e WHERE e.id = :eid), (SELECT e.z FROM ents e WHERE e.id = :eid)) RETURNING_VALUES c;
+  UPDATE ents e SET e.pmodel = :pm, e.pskin = :ps, e.yaw = (SELECT o.yaw FROM ents o WHERE o.id = :eid), e.solid = 2, e.movetype = 6, e.clipmask = 65537, e.takedamage = 1, e.health = 0, e.deadflag = 1,
+         e.minx = -15, e.miny = -15, e.minz = -24, e.maxx = 15, e.maxy = 15, e.maxz = -8, e.legs_anim = CAST(FLOOR(RAND() * 3) AS INTEGER) * 2, e.legs_time = :t, e.torso_anim = -1, e.weapon = 0,
+         e.think = 'remove', e.nextthink = :t + 8 WHERE e.id = :c;
+  EXECUTE PROCEDURE link_ent(c);
+END^
+
+CREATE OR ALTER PROCEDURE bot_respawn (eid INTEGER)
+AS
+DECLARE x DOUBLE PRECISION; DECLARE y DOUBLE PRECISION; DECLARE z DOUBLE PRECISION; DECLARE yaw DOUBLE PRECISION; DECLARE t DOUBLE PRECISION;
+BEGIN
+  t = now_();
+  EXECUTE PROCEDURE select_spawn(eid) RETURNING_VALUES x, y, z, yaw;
+  UPDATE ents e SET e.x = :x, e.y = :y, e.z = :z + 9, e.yaw = COALESCE(:yaw, 0), e.ideal_yaw = COALESCE(:yaw, 0), e.pitch = 0, e.vx = 0, e.vy = 0, e.vz = 0,
+         e.solid = 3, e.movetype = 4, e.takedamage = 2, e.alpha = 0, e.deadflag = 0, e.health = 125, e.armor = 0, e.weapons = 3, e.weapon = 2,
+         e.flags = 32, e.st = 'stand', e.legs_anim = 22, e.legs_time = :t, e.torso_anim = 11, e.torso_time = :t, e.enemy_id = NULL, e.goal_id = NULL,
+         e.attack_finished = :t + 1, e.teleport_time = :t + 0.3e0, e.lx = NULL, e.nextthink = :t + 0.1e0, e.think = 'bot_think', e.respawn_time = 0 WHERE e.id = :eid;
+  EXECUTE PROCEDURE link_ent(eid);
+  EXECUTE PROCEDURE snd_at(x, y, z, 'sound/world/telein.wav', 1, 1);
+  EXECUTE PROCEDURE fx(5, x, y, z + 9, 0, 0, 0, 1);
+END^
+
+-- ── the 10 Hz bot frame ──────────────────────────────────────────────────
+CREATE OR ALTER PROCEDURE bot_think (eid INTEGER)
+AS
+DECLARE t DOUBLE PRECISION; DECLARE nt DOUBLE PRECISION; DECLARE st VARCHAR(12); DECLARE enemy INTEGER; DECLARE flags INTEGER; DECLARE goal INTEGER;
+DECLARE rt DOUBLE PRECISION; DECLARE srch DOUBLE PRECISION; DECLARE af DOUBLE PRECISION; DECLARE lefty SMALLINT; DECLARE legs INTEGER; DECLARE skill SMALLINT; DECLARE tt DOUBLE PRECISION;
+DECLARE x DOUBLE PRECISION; DECLARE y DOUBLE PRECISION; DECLARE z DOUBLE PRECISION; DECLARE ex DOUBLE PRECISION; DECLARE ey DOUBLE PRECISION; DECLARE ez DOUBLE PRECISION; DECLARE ehp INTEGER;
+DECLARE d DOUBLE PRECISION; DECLARE vis SMALLINT; DECLARE yaw DOUBLE PRECISION; DECLARE moved SMALLINT = 0; DECLARE w INTEGER; DECLARE diff DOUBLE PRECISION; DECLARE spd DOUBLE PRECISION;
+DECLARE ox DOUBLE PRECISION; DECLARE oy DOUBLE PRECISION; DECLARE match_done SMALLINT;
+BEGIN
+  t = now_();
+  nt = t + 0.1e0;
+  SELECT e.st, e.enemy_id, e.flags, e.goal_id, e.respawn_time, e.search_time, e.attack_finished, e.lefty, e.legs_anim, e.x, e.y, e.z, e.yaw, e.teleport_time, COALESCE(b.skill, 2)
+    FROM ents e LEFT JOIN bot_defs b ON b.name = e.bot WHERE e.id = :eid INTO st, enemy, flags, goal, rt, srch, af, lefty, legs, x, y, z, yaw, tt, skill;
+  IF (st IS NULL) THEN EXIT;
+  SELECT g.match_over FROM game g WHERE g.id = 1 INTO match_done;
+  IF (st = 'dead') THEN
+  BEGIN
+    IF (rt <= t AND match_done = 0) THEN EXECUTE PROCEDURE bot_respawn(eid);
+    ELSE UPDATE ents e SET e.nextthink = :t + 0.5e0 WHERE e.id = :eid;
+    EXIT;
+  END
+  ox = x; oy = y;
+  -- what we are standing in or on
+  EXECUTE PROCEDURE touch_triggers(eid);
+  IF (NOT EXISTS (SELECT 1 FROM ents e WHERE e.id = :eid AND e.health > 0)) THEN EXIT;
+
+  -- the enemy: lost when dead, or unseen for a while
+  IF (enemy IS NOT NULL) THEN
+  BEGIN
+    SELECT e.health FROM ents e WHERE e.id = :enemy INTO ehp;
+    IF (ehp IS NULL OR ehp <= 0) THEN enemy = NULL;
+  END
+  IF (enemy IS NOT NULL AND srch < t) THEN enemy = NULL;
+  IF (enemy IS NULL OR MOD(CAST(t * 10 AS INTEGER), 10) = 0) THEN
+  BEGIN
+    w = bot_find_target(eid);
+    IF (w IS NOT NULL AND (enemy IS NULL OR w <> enemy)) THEN BEGIN enemy = w; srch = t + 3; END
+  END
+  IF (enemy IS NOT NULL) THEN
+  BEGIN
+    SELECT e.x, e.y, e.z FROM ents e WHERE e.id = :enemy INTO ex, ey, ez;
+    d = vlen(ex - x, ey - y, ez - z);
+    vis = visible(eid, enemy);
+    IF (vis = 1) THEN srch = t + 3;
+    UPDATE ents e SET e.enemy_id = :enemy, e.search_time = :srch, e.st = 'run', e.ideal_yaw = vectoyaw(:ex - :x, :ey - :y), e.goal_id = NULL WHERE e.id = :eid;
+    EXECUTE PROCEDURE change_yaw(eid);
+    -- in the air (a jump pad, a knock): nothing to do but aim
+    IF (BIN_AND(flags, 512) = 0 OR tt > t) THEN
+    BEGIN
+      IF (vis = 1 AND af <= t) THEN EXECUTE PROCEDURE bot_fire(eid);
+      UPDATE ents e SET e.nextthink = :nt, e.attack_finished = IIF(:vis = 1 AND :af <= :t, :t + fire_time(e.weapon), e.attack_finished) WHERE e.id = :eid;
+      EXIT;
+    END
+    w = bot_best_weapon(eid, d);
+    UPDATE ents e SET e.weapon = :w WHERE e.id = :eid AND e.weapon <> :w;
+    spd = 32 + skill * 6;
+    IF (vis = 0 OR d > 350 OR w = 1) THEN EXECUTE PROCEDURE move_to_goal(eid, enemy, spd);
+    ELSE
+    BEGIN
+      -- close enough: circle-strafe, switching sides now and then or when blocked
+      IF (RAND() < 0.08e0) THEN BEGIN lefty = 1 - lefty; UPDATE ents e SET e.lefty = :lefty WHERE e.id = :eid; END
+      IF (step_direction(eid, anglemod(vectoyaw(ex - x, ey - y) + IIF(lefty = 1, 90, -90)), spd * 0.8e0) = 0) THEN
+      BEGIN
+        lefty = 1 - lefty;
+        UPDATE ents e SET e.lefty = :lefty WHERE e.id = :eid;
+        IF (d < 120) THEN moved = step_direction(eid, anglemod(vectoyaw(ex - x, ey - y) + 180), spd);
+      END
+      -- keep facing the enemy while sidestepping
+      UPDATE ents e SET e.ideal_yaw = vectoyaw(:ex - e.x, :ey - e.y) WHERE e.id = :eid;
+      EXECUTE PROCEDURE change_yaw(eid);
+    END
+    -- fire when facing it
+    SELECT anglemod(e.yaw - e.ideal_yaw) FROM ents e WHERE e.id = :eid INTO diff;
+    IF (vis = 1 AND af <= t AND (diff < 25 OR diff > 335)) THEN
+    BEGIN
+      EXECUTE PROCEDURE bot_fire(eid);
+      UPDATE ents e SET e.attack_finished = :t + fire_time(e.weapon) * (1 + RAND() * (5 - :skill) * 0.3e0) WHERE e.id = :eid;
+    END
+  END
+  ELSE
+  BEGIN
+    -- nothing in sight: wander toward an item, or just roam
+    UPDATE ents e SET e.enemy_id = NULL, e.st = 'stand' WHERE e.id = :eid AND e.enemy_id IS NOT NULL;
+    IF (goal IS NOT NULL AND NOT EXISTS (SELECT 1 FROM ents g WHERE g.id = :goal AND g.solid = 1 AND vlen(g.x - :x, g.y - :y, 0) > 40)) THEN
+    BEGIN
+      goal = NULL;
+      UPDATE ents e SET e.goal_id = NULL WHERE e.id = :eid;
+    END
+    IF (goal IS NULL AND RAND() < 0.3e0) THEN
+    BEGIN
+      SELECT FIRST 1 g.id FROM ents g WHERE g.classname = 'item' AND g.solid = 1 AND ABS(g.x - :x) < 1200 AND ABS(g.y - :y) < 1200 AND ABS(g.z - :z) < 300
+       ORDER BY ABS(g.x - :x) + ABS(g.y - :y) + RAND() * 600 INTO goal;
+      IF (goal IS NOT NULL AND visible(eid, goal) = 0) THEN goal = NULL;
+      UPDATE ents e SET e.goal_id = :goal WHERE e.id = :eid;
+    END
+    IF (BIN_AND(flags, 512) <> 0 AND tt < t) THEN
+    BEGIN
+      IF (goal IS NOT NULL) THEN EXECUTE PROCEDURE move_to_goal(eid, goal, 30);
+      ELSE
+      BEGIN
+        IF (RAND() < 0.1e0) THEN UPDATE ents e SET e.ideal_yaw = anglemod(e.ideal_yaw + crand() * 90) WHERE e.id = :eid;
+        EXECUTE PROCEDURE change_yaw(eid);
+        SELECT e.ideal_yaw FROM ents e WHERE e.id = :eid INTO yaw;
+        IF (step_direction(eid, yaw, 25) = 0) THEN UPDATE ents e SET e.ideal_yaw = anglemod(e.ideal_yaw + 90 + RAND() * 180) WHERE e.id = :eid;
+      END
+    END
+  END
+  -- the legs follow the feet
+  SELECT e.x, e.y FROM ents e WHERE e.id = :eid INTO x, y;
+  moved = IIF(ABS(x - ox) + ABS(y - oy) > 1, 1, 0);
+  IF (BIN_AND(flags, 512) = 0) THEN BEGIN IF (legs NOT IN (18, 20)) THEN EXECUTE PROCEDURE set_anims(eid, 18, NULL); END
+  ELSE IF (moved = 1 AND legs <> 15) THEN EXECUTE PROCEDURE set_anims(eid, 15, NULL);
+  ELSE IF (moved = 0 AND legs <> 22) THEN EXECUTE PROCEDURE set_anims(eid, 22, NULL);
+  UPDATE ents e SET e.nextthink = :nt WHERE e.id = :eid;
+END^
+
+-- a bot joins the arena
+CREATE OR ALTER PROCEDURE spawn_bot (bname VARCHAR(16))
+RETURNS (id INTEGER)
+AS
+DECLARE mdl VARCHAR(16); DECLARE sk VARCHAR(16); DECLARE x DOUBLE PRECISION; DECLARE y DOUBLE PRECISION; DECLARE z DOUBLE PRECISION; DECLARE yaw DOUBLE PRECISION; DECLARE t DOUBLE PRECISION;
+BEGIN
+  SELECT b.model, b.skin FROM bot_defs b WHERE b.name = :bname INTO mdl, sk;
+  IF (mdl IS NULL) THEN EXIT;
+  t = now_();
+  EXECUTE PROCEDURE select_spawn(NULL) RETURNING_VALUES x, y, z, yaw;
+  EXECUTE PROCEDURE spawn_ent('bot', x, y, z + 9) RETURNING_VALUES id;
+  UPDATE ents e SET e.bot = :bname, e.pmodel = :mdl, e.pskin = :sk, e.yaw = COALESCE(:yaw, 0), e.ideal_yaw = COALESCE(:yaw, 0),
+         e.minx = -15, e.miny = -15, e.minz = -24, e.maxx = 15, e.maxy = 15, e.maxz = 32, e.viewheight = 26,
+         e.solid = 3, e.movetype = 4, e.clipmask = 33619969, e.health = 125, e.max_health = 100, e.takedamage = 2, e.mass = 200, e.flags = 32,
+         e.yaw_speed = 35, e.st = 'stand', e.weapons = 3, e.weapon = 2, e.legs_time = :t, e.torso_time = :t,
+         e.think = 'bot_think', e.nextthink = :t + 0.5e0 + RAND() * 0.5e0, e.attack_finished = :t + 2 WHERE e.id = :id;
+  EXECUTE PROCEDURE link_ent(id);
+  EXECUTE PROCEDURE say(bname || ' entered the game');
+  SUSPEND;
+END^
+
+-- ── scoring and the announcer ────────────────────────────────────────────
+CREATE OR ALTER PROCEDURE score_frag (attacker INTEGER, victim INTEGER, mod_ SMALLINT)
+AS
+DECLARE pe INTEGER; DECLARE t DOUBLE PRECISION; DECLARE pf INTEGER; DECLARE bf INTEGER; DECLARE lead SMALLINT; DECLARE oldlead SMALLINT; DECLARE lim INTEGER;
+DECLARE lk DOUBLE PRECISION; DECLARE wname VARCHAR(32); DECLARE top INTEGER; DECLARE left_ INTEGER;
+BEGIN
+  pe = player_ent();
+  t = now_();
+  IF (attacker IS NULL OR attacker <= 0 OR attacker = victim) THEN
+  BEGIN
+    -- a suicide costs a frag
+    IF (victim = pe) THEN UPDATE player p SET p.frags = p.frags - 1 WHERE p.id = 1;
+    ELSE UPDATE ents e SET e.frags = e.frags - 1 WHERE e.id = :victim;
+  END
+  ELSE IF (attacker = pe) THEN
+  BEGIN
+    SELECT p.last_kill FROM player p WHERE p.id = 1 INTO lk;
+    UPDATE player p SET p.frags = p.frags + 1, p.last_kill = :t WHERE p.id = 1;
+    IF (t - lk < 2) THEN BEGIN EXECUTE PROCEDURE snd_local('sound/feedback/excellent.wav'); EXECUTE PROCEDURE cprint('Excellent!'); END
+    ELSE IF (mod_ = 1) THEN BEGIN EXECUTE PROCEDURE snd_local('sound/feedback/humiliation.wav'); EXECUTE PROCEDURE cprint('Humiliation!'); END
+    ELSE IF (mod_ = 17 AND RAND() < 0.3e0) THEN BEGIN EXECUTE PROCEDURE snd_local('sound/feedback/impressive.wav'); EXECUTE PROCEDURE cprint('Impressive!'); END
+    EXECUTE PROCEDURE sprint('You fragged ' || ent_name(victim));
+  END
+  ELSE
+  BEGIN
+    UPDATE ents e SET e.frags = e.frags + 1 WHERE e.id = :attacker;
+    IF (victim = pe AND mod_ = 1) THEN EXECUTE PROCEDURE snd_local('sound/feedback/humiliation.wav');
+  END
+  -- the lead
+  SELECT p.frags, p.lead_state FROM player p WHERE p.id = 1 INTO pf, oldlead;
+  SELECT COALESCE(MAX(e.frags), 0) FROM ents e WHERE e.classname = 'bot' INTO bf;
+  lead = IIF(pf > bf, 2, IIF(pf = bf, 1, 0));
+  IF (lead <> oldlead AND (attacker = pe OR victim = pe OR oldlead = 2 OR lead = 2)) THEN
+  BEGIN
+    UPDATE player p SET p.lead_state = :lead WHERE p.id = 1;
+    EXECUTE PROCEDURE snd_local(CASE lead WHEN 2 THEN 'sound/feedback/takenlead.wav' WHEN 1 THEN 'sound/feedback/tiedlead.wav' ELSE 'sound/feedback/lostlead.wav' END);
+  END
+  -- frags left, and the end of the match
+  SELECT g.fraglimit FROM game g WHERE g.id = 1 INTO lim;
+  top = MAXVALUE(pf, bf);
+  left_ = lim - top;
+  IF (left_ IN (1, 2, 3) AND ((attacker = pe AND pf = top) OR (attacker <> pe AND bf = top))) THEN
+    EXECUTE PROCEDURE snd_local(CASE left_ WHEN 1 THEN 'sound/feedback/1_frag.wav' WHEN 2 THEN 'sound/feedback/2_frags.wav' ELSE 'sound/feedback/3_frags.wav' END);
+  IF (top >= lim) THEN
+  BEGIN
+    IF (pf >= lim) THEN wname = 'You'; ELSE SELECT FIRST 1 e.bot FROM ents e WHERE e.classname = 'bot' ORDER BY e.frags DESC INTO wname;
+    UPDATE game g SET g.match_over = 1, g.winner = :wname, g.over_time = :t WHERE g.id = 1;
+    EXECUTE PROCEDURE cprint(IIF(wname = 'You', 'You win!', wname || ' wins'));
+    EXECUTE PROCEDURE snd_local(IIF(wname = 'You', 'music/win.wav', 'music/loss.wav'));
+  END
+END^
+
+-- ── the pushers (G_RunMover) ─────────────────────────────────────────────
+SET TERM ; ^
+CREATE GLOBAL TEMPORARY TABLE pushed (
+  ent INTEGER NOT NULL PRIMARY KEY,
+  ox DOUBLE PRECISION NOT NULL, oy DOUBLE PRECISION NOT NULL, oz DOUBLE PRECISION NOT NULL
+) ON COMMIT DELETE ROWS;
+SET TERM ^ ;
+
+CREATE OR ALTER PROCEDURE push_move (eid INTEGER, movetime DOUBLE PRECISION)
+AS
+DECLARE vx DOUBLE PRECISION; DECLARE vy DOUBLE PRECISION; DECLARE vz DOUBLE PRECISION;
+DECLARE ap DOUBLE PRECISION; DECLARE ay DOUBLE PRECISION; DECLARE ar DOUBLE PRECISION;
+DECLARE mx DOUBLE PRECISION; DECLARE my DOUBLE PRECISION; DECLARE mz DOUBLE PRECISION;
+DECLARE px DOUBLE PRECISION; DECLARE py DOUBLE PRECISION; DECLARE pz DOUBLE PRECISION;
+DECLARE mnx DOUBLE PRECISION; DECLARE mny DOUBLE PRECISION; DECLARE mnz DOUBLE PRECISION;
+DECLARE mxx DOUBLE PRECISION; DECLARE mxy DOUBLE PRECISION; DECLARE mxz DOUBLE PRECISION;
+DECLARE c INTEGER; DECLARE cmt SMALLINT; DECLARE cx DOUBLE PRECISION; DECLARE cy DOUBLE PRECISION; DECLARE cz DOUBLE PRECISION;
+DECLARE csolid SMALLINT; DECLARE pe INTEGER; DECLARE r INTEGER; DECLARE grow DOUBLE PRECISION;
+BEGIN
+  SELECT e.vx, e.vy, e.vz, e.avel_pitch, e.avel_yaw, e.avel_roll, e.x, e.y, e.z, e.minx, e.miny, e.minz, e.maxx, e.maxy, e.maxz FROM ents e WHERE e.id = :eid
+    INTO vx, vy, vz, ap, ay, ar, px, py, pz, mnx, mny, mnz, mxx, mxy, mxz;
+  IF (vx = 0 AND vy = 0 AND vz = 0 AND ap = 0 AND ay = 0 AND ar = 0) THEN
+  BEGIN
+    UPDATE ents e SET e.ltime = e.ltime + :movetime WHERE e.id = :eid;
+    EXIT;
+  END
+  pe = player_ent();
+
+  -- rotation: turn, then make sure nobody is caught inside
+  IF (ap <> 0 OR ay <> 0 OR ar <> 0) THEN
+  BEGIN
+    UPDATE ents e SET e.pitch = e.pitch + :ap * :movetime, e.yaw = e.yaw + :ay * :movetime, e.roll = e.roll + :ar * :movetime, e.ltime = e.ltime + :movetime WHERE e.id = :eid;
+    grow = MAXVALUE(mxx - mnx, MAXVALUE(mxy - mny, mxz - mnz));
+    FOR SELECT e.id, e.x, e.y, e.z FROM ents e
+         WHERE e.id <> :eid AND e.solid IN (2, 3) AND e.health > 0 AND e.movetype IN (3, 4, 5)
+           AND e.x + e.maxx >= :px + :mnx - :grow AND e.x + e.minx <= :px + :mxx + :grow
+           AND e.y + e.maxy >= :py + :mny - :grow AND e.y + e.miny <= :py + :mxy + :grow
+           AND e.z + e.maxz >= :pz + :mnz - :grow AND e.z + e.minz <= :pz + :mxz + :grow
+          INTO c, cx, cy, cz
+    DO
+    BEGIN
+      IF (test_position(c, cx, cy, cz) = 1) THEN
+      BEGIN
+        -- blocked: turn back
+        UPDATE ents e SET e.pitch = e.pitch - :ap * :movetime, e.yaw = e.yaw - :ay * :movetime, e.roll = e.roll - :ar * :movetime, e.ltime = e.ltime - :movetime WHERE e.id = :eid;
+        EXECUTE PROCEDURE mover_blocked(eid, c);
+        EXIT;
+      END
+    END
+    IF (vx = 0 AND vy = 0 AND vz = 0) THEN EXIT;
+    UPDATE ents e SET e.ltime = e.ltime - :movetime WHERE e.id = :eid;   -- the translation below adds it back
+  END
+
+  mx = vx * movetime; my = vy * movetime; mz = vz * movetime;
+  UPDATE ents e SET e.x = e.x + :mx, e.y = e.y + :my, e.z = e.z + :mz, e.ltime = e.ltime + :movetime WHERE e.id = :eid;
+  EXECUTE PROCEDURE link_ent(eid);
+  DELETE FROM pushed;
+
+  FOR SELECT e.id, e.movetype, e.x, e.y, e.z, e.solid FROM ents e
+       WHERE e.id <> :eid AND e.movetype NOT IN (0, 7, 8) AND e.solid <> 0 AND e.health > -1
+         AND e.x + e.maxx >= :px + :mnx + MINVALUE(0, :mx) - 1 AND e.x + e.minx <= :px + :mxx + MAXVALUE(0, :mx) + 1
+         AND e.y + e.maxy >= :py + :mny + MINVALUE(0, :my) - 1 AND e.y + e.miny <= :py + :mxy + MAXVALUE(0, :my) + 1
+         AND e.z + e.maxz >= :pz + :mnz + MINVALUE(0, :mz) - 1 AND e.z + e.minz <= :pz + :mxz + MAXVALUE(0, :mz) + 1
+        INTO c, cmt, cx, cy, cz, csolid
+  DO
+  BEGIN
+    -- riding on top, or now inside the pusher?
+    IF (test_position(c, cx, cy, cz) = 0 AND NOT (cz + 1 >= pz - mz + mxz - 0.5e0 AND cz - 1 <= pz - mz + mxz + 0.5e0 AND mz <> 0)) THEN
+    BEGIN
+      IF (cz + (SELECT e.minz FROM ents e WHERE e.id = :c) < pz - mz + mxz - 2 OR cz + (SELECT e.minz FROM ents e WHERE e.id = :c) > pz - mz + mxz + 2) THEN CONTINUE;
+      IF (cx + (SELECT e.maxx FROM ents e WHERE e.id = :c) < px + mnx OR cx + (SELECT e.minx FROM ents e WHERE e.id = :c) > px + mxx) THEN CONTINUE;
+      IF (cy + (SELECT e.maxy FROM ents e WHERE e.id = :c) < py + mny OR cy + (SELECT e.miny FROM ents e WHERE e.id = :c) > py + mxy) THEN CONTINUE;
+      IF (mz < 0) THEN CONTINUE;         -- standing on a sinking plat: gravity brings us down
+    END
+    INSERT INTO pushed (ent, ox, oy, oz) VALUES (:c, :cx, :cy, :cz);
+    UPDATE ents e SET e.x = e.x + :mx, e.y = e.y + :my, e.z = e.z + :mz WHERE e.id = :c;
+    IF (test_position(c, cx + mx, cy + my, cz + mz) = 0) THEN
+    BEGIN
+      EXECUTE PROCEDURE link_ent(c);
+      IF (c = pe) THEN UPDATE player p SET p.oldz = p.oldz + :mz WHERE p.id = 1;
+      CONTINUE;
+    END
+    -- if it is ok to leave in the old position, do it
+    IF (cmt <> 3) THEN
+    BEGIN
+      UPDATE ents e SET e.x = :cx, e.y = :cy, e.z = :cz WHERE e.id = :c;
+      IF (test_position(c, cx, cy, cz) = 0) THEN
+      BEGIN
+        DELETE FROM pushed WHERE ent = :c;
+        CONTINUE;
+      END
+    END
+    -- corpses and items get crushed out of the way
+    IF (csolid IN (0, 1) OR cmt IN (6, 10)) THEN
+    BEGIN
+      UPDATE ents e SET e.solid = 0, e.minx = 0, e.miny = 0, e.minz = 0, e.maxx = 0, e.maxy = 0, e.maxz = 0 WHERE e.id = :c;
+      CONTINUE;
+    END
+    -- blocked: move everything back
+    UPDATE ents e SET e.x = :cx, e.y = :cy, e.z = :cz WHERE e.id = :c;
+    UPDATE ents e SET e.x = e.x - :mx, e.y = e.y - :my, e.z = e.z - :mz, e.ltime = e.ltime - :movetime WHERE e.id = :eid;
+    EXECUTE PROCEDURE link_ent(eid);
+    FOR SELECT p.ent, p.ox, p.oy, p.oz FROM pushed p WHERE p.ent <> :c INTO r, cx, cy, cz DO
+    BEGIN
+      UPDATE ents e SET e.x = :cx, e.y = :cy, e.z = :cz WHERE e.id = :r;
+      EXECUTE PROCEDURE link_ent(r);
+    END
+    EXECUTE PROCEDURE mover_blocked(eid, c);
+    EXIT;
+  END
+END^
+
+-- func_bobbing: the velocity that puts it on its sine next tic
+CREATE OR ALTER PROCEDURE bob_think (eid INTEGER)
+AS
+DECLARE t DOUBLE PRECISION; DECLARE spd DOUBLE PRECISION; DECLARE hgt DOUBLE PRECISION; DECLARE ph DOUBLE PRECISION; DECLARE s DOUBLE PRECISION;
+BEGIN
+  t = now_() + 0.05e0;
+  SELECT e.speed, e.height, e.phase FROM ents e WHERE e.id = :eid INTO spd, hgt, ph;
+  s = hgt * SIN(6.2831853e0 * (t / spd + ph));
+  UPDATE ents e SET e.vx = (e.p1x + e.p2x * :s - e.x) / 0.05e0, e.vy = (e.p1y + e.p2y * :s - e.y) / 0.05e0, e.vz = (e.p1z + e.p2z * :s - e.z) / 0.05e0,
+         e.think = 'bob_think', e.nextthink = e.ltime + 0.05e0 WHERE e.id = :eid;
+END^
+
+-- func_pendulum: the roll that puts it on its swing next tic
+CREATE OR ALTER PROCEDURE pendulum_think (eid INTEGER)
+AS
+DECLARE t DOUBLE PRECISION; DECLARE spd DOUBLE PRECISION; DECLARE per DOUBLE PRECISION; DECLARE ph DOUBLE PRECISION; DECLARE s DOUBLE PRECISION;
+BEGIN
+  t = now_() + 0.05e0;
+  SELECT e.speed, e.height, e.phase FROM ents e WHERE e.id = :eid INTO spd, per, ph;
+  s = spd * SIN(6.2831853e0 * (t / per + ph));
+  UPDATE ents e SET e.avel_roll = (:s - e.roll) / 0.05e0, e.think = 'pendulum_think', e.nextthink = e.ltime + 0.05e0 WHERE e.id = :eid;
+END^
+
+CREATE OR ALTER PROCEDURE run_pushers (dt DOUBLE PRECISION)
+AS
+DECLARE eid INTEGER; DECLARE lt DOUBLE PRECISION; DECLARE mvt DOUBLE PRECISION; DECLARE done VARCHAR(24); DECLARE movetime DOUBLE PRECISION;
+DECLARE tx DOUBLE PRECISION; DECLARE ty DOUBLE PRECISION; DECLARE tz DOUBLE PRECISION; DECLARE think VARCHAR(24); DECLARE nt DOUBLE PRECISION;
+BEGIN
+  FOR SELECT e.id FROM ents e WHERE e.movetype = 7 AND (e.mv_time IS NOT NULL OR e.think IS NOT NULL OR e.avel_pitch <> 0 OR e.avel_yaw <> 0 OR e.avel_roll <> 0 OR e.vx <> 0 OR e.vy <> 0 OR e.vz <> 0) INTO eid DO
+  BEGIN
+    SELECT e.ltime, e.mv_time, e.mv_done, e.dstx, e.dsty, e.dstz, e.think, e.nextthink FROM ents e WHERE e.id = :eid INTO lt, mvt, done, tx, ty, tz, think, nt;
+    IF (mvt IS NOT NULL) THEN
+    BEGIN
+      movetime = MINVALUE(dt, MAXVALUE(0, mvt - lt));
+      IF (movetime > 0) THEN EXECUTE PROCEDURE push_move(eid, movetime);
+      ELSE UPDATE ents e SET e.ltime = e.ltime + :dt WHERE e.id = :eid;
+      SELECT e.ltime, e.mv_time FROM ents e WHERE e.id = :eid INTO lt, mvt;
+      IF (mvt IS NOT NULL AND lt >= mvt - 1e-6) THEN
+      BEGIN
+        -- Reached_*: snap to the destination and run the think
+        UPDATE ents e SET e.x = :tx, e.y = :ty, e.z = :tz, e.vx = 0, e.vy = 0, e.vz = 0, e.mv_time = NULL, e.mv_done = NULL WHERE e.id = :eid;
+        EXECUTE PROCEDURE link_ent(eid);
+        EXECUTE PROCEDURE run_think(eid, done);
+      END
+    END
+    ELSE
+    BEGIN
+      -- rotating, bobbing and swinging things move every tic; the rest just wait for their thinks
+      IF (EXISTS (SELECT 1 FROM ents e WHERE e.id = :eid AND (e.avel_pitch <> 0 OR e.avel_yaw <> 0 OR e.avel_roll <> 0 OR e.vx <> 0 OR e.vy <> 0 OR e.vz <> 0))) THEN EXECUTE PROCEDURE push_move(eid, dt);
+      ELSE UPDATE ents e SET e.ltime = e.ltime + :dt WHERE e.id = :eid;
+      IF (think IS NOT NULL AND nt IS NOT NULL AND nt <= lt + dt + 1e-6) THEN
+      BEGIN
+        UPDATE ents e SET e.think = NULL, e.nextthink = NULL WHERE e.id = :eid;
+        EXECUTE PROCEDURE run_think(eid, think);
+      END
+    END
+  END
+END^
+
+-- dispatch a think by name
+CREATE OR ALTER PROCEDURE run_think (eid INTEGER, think VARCHAR(24))
+AS
+BEGIN
+  IF (think IS NULL) THEN EXIT;
+  IF (think = 'door_go_down') THEN EXECUTE PROCEDURE door_go_down(eid);
+  ELSE IF (think = 'door_go_up') THEN EXECUTE PROCEDURE door_go_up(eid, player_ent());
+  ELSE IF (think = 'door_hit_top') THEN EXECUTE PROCEDURE door_hit_top(eid);
+  ELSE IF (think = 'door_hit_bottom') THEN EXECUTE PROCEDURE door_hit_bottom(eid);
+  ELSE IF (think = 'plat_go_down') THEN EXECUTE PROCEDURE plat_go_down(eid);
+  ELSE IF (think = 'plat_go_up') THEN EXECUTE PROCEDURE plat_go_up(eid);
+  ELSE IF (think = 'plat_hit_top') THEN EXECUTE PROCEDURE plat_hit_top(eid);
+  ELSE IF (think = 'plat_hit_bottom') THEN EXECUTE PROCEDURE plat_hit_bottom(eid);
+  ELSE IF (think = 'button_wait') THEN EXECUTE PROCEDURE button_wait(eid);
+  ELSE IF (think = 'button_return') THEN EXECUTE PROCEDURE button_return(eid);
+  ELSE IF (think = 'button_done') THEN EXECUTE PROCEDURE button_done(eid);
+  ELSE IF (think = 'train_next') THEN EXECUTE PROCEDURE train_next(eid);
+  ELSE IF (think = 'train_wait') THEN EXECUTE PROCEDURE train_wait(eid);
+  ELSE IF (think = 'train_find') THEN EXECUTE PROCEDURE train_find(eid);
+  ELSE IF (think = 'bob_think') THEN EXECUTE PROCEDURE bob_think(eid);
+  ELSE IF (think = 'pendulum_think') THEN EXECUTE PROCEDURE pendulum_think(eid);
+  ELSE IF (think = 'timer_think') THEN EXECUTE PROCEDURE timer_think(eid);
+  ELSE IF (think = 'speaker_think') THEN EXECUTE PROCEDURE speaker_think(eid);
+  ELSE IF (think = 'always_fire') THEN EXECUTE PROCEDURE always_fire(eid);
+  ELSE IF (think = 'multi_wait') THEN EXECUTE PROCEDURE multi_wait(eid);
+  ELSE IF (think = 'delayed_use') THEN EXECUTE PROCEDURE delayed_use(eid);
+  ELSE IF (think = 'missile_explode') THEN EXECUTE PROCEDURE missile_explode(eid);
+  ELSE IF (think = 'item_respawn') THEN EXECUTE PROCEDURE item_respawn(eid);
+  ELSE IF (think = 'remove') THEN DELETE FROM ents e WHERE e.id = :eid;
+  ELSE IF (think = 'bot_think') THEN EXECUTE PROCEDURE bot_think(eid);
+END^
+
+-- G_RunFrame's physics for everything but the player and the pushers
+CREATE OR ALTER PROCEDURE run_physics (dt DOUBLE PRECISION)
+AS
+DECLARE eid INTEGER; DECLARE mt SMALLINT; DECLARE think VARCHAR(24); DECLARE t DOUBLE PRECISION;
+DECLARE flags INTEGER; DECLARE wl SMALLINT; DECLARE tid INTEGER; DECLARE vz DOUBLE PRECISION;
+DECLARE f DOUBLE PRECISION; DECLARE ex DOUBLE PRECISION; DECLARE ey DOUBLE PRECISION; DECLARE ez DOUBLE PRECISION;
+DECLARE nx DOUBLE PRECISION; DECLARE ny DOUBLE PRECISION; DECLARE nz DOUBLE PRECISION; DECLARE sf INTEGER; DECLARE ct INTEGER; DECLARE als SMALLINT; DECLARE sts SMALLINT; DECLARE hit INTEGER;
+DECLARE px DOUBLE PRECISION; DECLARE py DOUBLE PRECISION; DECLARE pz DOUBLE PRECISION;
+BEGIN
+  t = now_();
+  -- thinks that are due (non-pushers)
+  FOR SELECT e.id, e.think FROM ents e WHERE e.nextthink IS NOT NULL AND e.nextthink <= :t + 1e-6 AND e.movetype <> 7 AND e.think IS NOT NULL ORDER BY e.id INTO eid, think DO
+  BEGIN
+    UPDATE ents e SET e.nextthink = NULL WHERE e.id = :eid AND e.think = :think AND e.think NOT IN ('bot_think');
+    EXECUTE PROCEDURE run_think(eid, think);
+  END
+  -- missiles, grenades, gibs, corpses; and bots that are not on the ground fall
+  FOR SELECT e.id, e.movetype, e.flags, e.vz, e.x, e.y, e.z FROM ents e WHERE e.movetype IN (6, 9, 10) OR (e.movetype = 4 AND e.health > 0 AND (BIN_AND(e.flags, 512) = 0 OR e.vz <> 0 OR e.vx <> 0 OR e.vy <> 0))
+        INTO eid, mt, flags, vz, px, py, pz DO
+  BEGIN
+    IF (mt = 4) THEN
+    BEGIN
+      -- a bot in the air: gravity and a slide, until it lands
+      UPDATE ents e SET e.vz = e.vz - (SELECT g.gravity FROM game g WHERE g.id = 1) * :dt, e.flags = BIN_AND(e.flags, BIN_NOT(512)) WHERE e.id = :eid;
+      EXECUTE PROCEDURE fly_move(eid, dt) RETURNING_VALUES wl, tid;
+      IF (NOT EXISTS (SELECT 1 FROM ents e WHERE e.id = :eid)) THEN CONTINUE;
+      IF (wl = 3) THEN UPDATE ents e SET e.flags = BIN_OR(e.flags, 512) WHERE e.id = :eid;   -- could not move at all: it is standing in the floor
+      IF (EXISTS (SELECT 1 FROM ents e WHERE e.id = :eid AND BIN_AND(e.flags, 512) <> 0)) THEN
+      BEGIN
+        -- landed: shed the velocity (knocks fade on the ground), the legs land
+        UPDATE ents e SET e.vx = e.vx * 0.5e0, e.vy = e.vy * 0.5e0, e.vz = 0 WHERE e.id = :eid;
+        UPDATE ents e SET e.vx = 0, e.vy = 0 WHERE e.id = :eid AND ABS(e.vx) + ABS(e.vy) < 30;
+      END
+      EXECUTE PROCEDURE link_ent(eid);
+      CONTINUE;
+    END
+    IF (BIN_AND(flags, 512) <> 0 AND mt <> 9) THEN CONTINUE;      -- resting
+    EXECUTE PROCEDURE toss_move(eid, dt);
+  END
+  -- items in lava or slime are not there; corpses in them burn away
+  -- (nothing to do: Q3 removes things that fall into NODROP; the maps' hurt triggers do the rest)
+END^
+
+-- ── the tic ─────────────────────────────────────────────────────────────
+CREATE OR ALTER PROCEDURE q3_tic (
+  tics INTEGER, fwd DOUBLE PRECISION, side DOUBLE PRECISION, yaw_d DOUBLE PRECISION, pitch_d DOUBLE PRECISION,
+  fire SMALLINT, jump SMALLINT, run SMALLINT, imp SMALLINT)
+RETURNS (
+  tic INTEGER, time_ DOUBLE PRECISION, health INTEGER, max_health INTEGER, armor INTEGER,
+  bullets INTEGER, shells INTEGER, grenades INTEGER, rockets INTEGER, lightning INTEGER, slugs INTEGER, cells INTEGER, bfg INTEGER,
+  weapons INTEGER, weapon INTEGER, pending_weapon INTEGER, weaponstate SMALLINT, weapon_time DOUBLE PRECISION, attack_start DOUBLE PRECISION, attack_finished DOUBLE PRECISION,
+  px DOUBLE PRECISION, py DOUBLE PRECISION, pz DOUBLE PRECISION, yaw DOUBLE PRECISION, pitch DOUBLE PRECISION,
+  view_z DOUBLE PRECISION, punch DOUBLE PRECISION,
+  msg VARCHAR(200), cprint VARCHAR(400), dmg_take INTEGER, dmg_save INTEGER, dmg_time DOUBLE PRECISION, dmg_x DOUBLE PRECISION, dmg_y DOUBLE PRECISION, bonus_time DOUBLE PRECISION,
+  dead SMALLINT, exit_kind SMALLINT, frags INTEGER, deaths INTEGER, waterlevel SMALLINT, watertype INTEGER, map_name VARCHAR(32),
+  level_msg VARCHAR(200), quad DOUBLE PRECISION, haste DOUBLE PRECISION, invis DOUBLE PRECISION, regen DOUBLE PRECISION, enviro DOUBLE PRECISION, flight DOUBLE PRECISION, holdable SMALLINT,
+  leaf INTEGER, cluster INTEGER, match_over SMALLINT, winner VARCHAR(32), land_time DOUBLE PRECISION, onground SMALLINT, move_speed DOUBLE PRECISION, weapon_sound SMALLINT, lead INTEGER)
+AS
+DECLARE i INTEGER = 0;
+BEGIN
+  SELECT g.tic FROM game g WHERE g.id = 1 INTO tic;
+  DELETE FROM sound_events s WHERE s.tic < :tic - 40;
+  DELETE FROM fx_events f WHERE f.tic < :tic - 40;
+  WHILE (i < tics) DO
+  BEGIN
+    UPDATE game g SET g.tic = g.tic + 1, g.time_ = g.time_ + 0.05e0 WHERE g.id = 1;
+    EXECUTE PROCEDURE player_think(0.05e0, fwd, side, yaw_d / tics, pitch_d / tics, fire, jump, run, IIF(i = 0, imp, 0));
+    EXECUTE PROCEDURE run_pushers(0.05e0);
+    EXECUTE PROCEDURE run_physics(0.05e0);
+    i = i + 1;
+  END
+  SELECT g.tic, g.time_, e.health, e.max_health, p.armor, p.bullets, p.shells, p.grenades, p.rockets, p.lightning, p.slugs, p.cells, p.bfg,
+         p.weapons, p.weapon, p.pending_weapon, p.weaponstate, p.weapon_time, p.attack_start, p.attack_finished,
+         e.x, e.y, e.z, e.yaw, p.pitch + p.punchangle, e.z + p.view_ofs - p.stepz, p.punchangle,
+         IIF(p.msg_time > g.time_, p.msg, NULL), IIF(p.cprint_time > g.time_, p.cprint, NULL),
+         p.dmg_take, p.dmg_save, p.dmg_time, p.dmg_x, p.dmg_y, p.bonus_time, e.deadflag, g.exit_kind, p.frags, p.deaths, e.waterlevel, e.watertype, g.map_name, g.level_msg,
+         MAXVALUE(0, p.quad_finished - g.time_), MAXVALUE(0, p.haste_finished - g.time_), MAXVALUE(0, p.invis_finished - g.time_), MAXVALUE(0, p.regen_finished - g.time_),
+         MAXVALUE(0, p.enviro_finished - g.time_), MAXVALUE(0, p.flight_finished - g.time_), p.holdable,
+         e.leaf, e.cluster, g.match_over, g.winner, p.land_time, p.onground, p.move_speed, p.weapon_sound,
+         (SELECT COALESCE(MAX(b.frags), 0) FROM ents b WHERE b.classname = 'bot')
+    FROM game g CROSS JOIN player p JOIN ents e ON e.id = p.ent_id
+   WHERE g.id = 1 AND p.id = 1
+    INTO tic, time_, health, max_health, armor, bullets, shells, grenades, rockets, lightning, slugs, cells, bfg,
+         weapons, weapon, pending_weapon, weaponstate, weapon_time, attack_start, attack_finished,
+         px, py, pz, yaw, pitch, view_z, punch, msg, cprint, dmg_take, dmg_save, dmg_time, dmg_x, dmg_y, bonus_time, dead, exit_kind, frags, deaths, waterlevel, watertype, map_name, level_msg,
+         quad, haste, invis, regen, enviro, flight, holdable, leaf, cluster, match_over, winner, land_time, onground, move_speed, weapon_sound, lead;
+  UPDATE player p SET p.dmg_take = 0, p.dmg_save = 0 WHERE p.id = 1 AND p.dmg_time < :time_ - 0.05e0;
+  SUSPEND;
+END^
+
+-- the scoreboard: the player and the bots by frags
+CREATE OR ALTER PROCEDURE scoreboard
+RETURNS (name VARCHAR(32), frags INTEGER, deaths INTEGER, is_player SMALLINT)
+AS
+BEGIN
+  FOR SELECT x.name, x.frags, x.deaths, x.is_player FROM (
+        SELECT 'You' AS name, p.frags, p.deaths, 1 AS is_player FROM player p WHERE p.id = 1
+        UNION ALL
+        SELECT e.bot, e.frags, e.deaths, 0 FROM ents e WHERE e.classname = 'bot') x
+      ORDER BY x.frags DESC, x.deaths INTO name, frags, deaths, is_player DO SUSPEND;
+END^
+
+-- G_InitGame + ClientBegin: the map's entities, the player and the bots
+CREATE OR ALTER PROCEDURE init_map (map_name VARCHAR(32), world_model INTEGER, skill SMALLINT, new_game SMALLINT, num_bots INTEGER)
+AS
+DECLARE pe INTEGER; DECLARE b VARCHAR(16); DECLARE i INTEGER = 0; DECLARE n INTEGER; DECLARE skyname VARCHAR(64);
+BEGIN
+  UPDATE game g SET g.tic = 0, g.time_ = 0, g.map_name = :map_name, g.next_map = NULL, g.exit_kind = 0, g.skill = :skill, g.world_model = :world_model,
+         g.level_msg = NULL, g.gravity = 800, g.match_over = 0, g.winner = NULL, g.over_time = 0, g.num_bots = :num_bots WHERE g.id = 1;
+  -- the sky: the first sky shader the map's faces use
+  SELECT FIRST 1 t.name FROM textures t WHERE BIN_AND(t.flags, 4) <> 0 INTO skyname;
+  UPDATE game g SET g.sky = :skyname WHERE g.id = 1;
+  UPDATE bot_defs b SET b.skill = :skill;
+  EXECUTE PROCEDURE spawn_map_ents;
+  -- the player
+  EXECUTE PROCEDURE spawn_ent('player', 0, 0, 0) RETURNING_VALUES pe;
+  UPDATE ents e SET e.pmodel = 'sarge', e.pskin = 'default', e.viewheight = 26 WHERE e.id = :pe;
+  UPDATE player p SET p.ent_id = :pe, p.frags = 0, p.deaths = 0, p.lead_state = 1, p.last_kill = -10, p.msg = NULL, p.msg_time = 0, p.cprint = NULL, p.cprint_time = 0, p.step_time = 0, p.land_time = -10 WHERE p.id = 1;
+  EXECUTE PROCEDURE player_respawn;
+  UPDATE ents e SET e.teleport_time = 0 WHERE e.id = :pe;
+  -- the bots, in the order of bot_defs
+  SELECT COUNT(*) FROM bot_defs INTO n;
+  WHILE (i < num_bots AND i < n) DO
+  BEGIN
+    SELECT FIRST 1 SKIP (:i) d.name FROM bot_defs d ORDER BY d.name INTO b;
+    EXECUTE PROCEDURE spawn_bot(b) RETURNING_VALUES pe;
+    i = i + 1;
+  END
+  -- the level name, and "fight"
+  UPDATE player p SET p.cprint = (SELECT g.level_msg FROM game g WHERE g.id = 1), p.cprint_time = 3 WHERE p.id = 1;
+  EXECUTE PROCEDURE snd_local('sound/feedback/fight.wav');
+END^
+
+SET TERM ; ^

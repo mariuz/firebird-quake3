@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Firebird Quake III Arena</title>
+  <meta name="description" content="Quake III Arena simulated and rendered inside the Firebird SQL database, running in your browser via Firebird WASM.">
+  <script src="./coi-serviceworker.js"></script>
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+  <header>
+    <h1>Firebird <span>Quake III Arena</span></h1>
+    <p class="tagline">Every game tic is a PSQL procedure. Every frame is a <code>SELECT</code>.
+      Firebird 6 runs in WebAssembly in a Worker in this tab; the bots think in SQL.</p>
+  </header>
+
+  <main>
+    <section class="game">
+      <div class="screen-wrap">
+        <canvas id="screen" width="320" height="240" tabindex="0" aria-label="Quake III Arena view rendered from Firebird query results"></canvas>
+        <div id="status" class="status">Loading…</div>
+      </div>
+      <div id="stats" class="stats">&nbsp;</div>
+      <div class="controls">
+        <label>PK3 <span id="pakname" class="pill">—</span>
+          <input id="pakfile" type="file" accept=".pk3,.PK3,.zip"></label>
+        <label>Arena <select id="map"></select></label>
+        <label>Bots <select id="bots">
+          <option value="0">none</option>
+          <option value="1">1</option>
+          <option value="2">2</option>
+          <option value="3">3</option>
+          <option value="4">4</option>
+          <option value="5">5</option>
+        </select></label>
+        <label>Skill <select id="skill">
+          <option value="1">I can win</option>
+          <option value="2">Bring it on</option>
+          <option value="3">Hurt me plenty</option>
+          <option value="4">Hardcore</option>
+          <option value="5">Nightmare</option>
+        </select></label>
+        <label>Detail <select id="detail">
+          <option value="high">640×480</option>
+          <option value="medium">320×240</option>
+          <option value="low">160×120</option>
+        </select></label>
+        <label title="The lightmaps' overbright shift: ×2 as a 1999 card showed them with hardware gamma, ×4 as ioquake3 shows them without">Brightness <select id="brightness">
+          <option value="2">×2</option>
+          <option value="3">×3</option>
+          <option value="4">×4</option>
+        </select></label>
+        <label title="How much of the renderer runs in SQL">Renderer <select id="renderer">
+          <option value="fast">SQL picks faces, JS projects (fast)</option>
+          <option value="sql">SQL projects every vertex</option>
+        </select></label>
+        <label title="Sound effects volume">Sound <input id="sfxvol" type="range" min="0" max="100" step="5"></label>
+        <label title="The map's music from the pak when it has it (the demo has none), or a synthesised drone">Music <select id="music">
+          <option value="tracks">From the pak</option>
+          <option value="synth">Synth drone</option>
+          <option value="off">Off</option>
+        </select> <input id="musicvol" type="range" min="0" max="100" step="5"></label>
+        <span id="engine" class="pill">Firebird</span>
+        <span id="mapname" class="pill"></span>
+      </div>
+      <p class="keys">Click the view to capture the mouse ·
+        <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> / arrows move · mouse looks ·
+        <kbd>Ctrl</kbd> or click fires · <kbd>Space</kbd> jumps · <kbd>Shift</kbd> walks ·
+        <kbd>1</kbd>–<kbd>9</kbd> weapons · <kbd>/</kbd> or wheel cycles · <kbd>Enter</kbd> uses the holdable · <kbd>Tab</kbd> scores · <kbd>G</kbd> gives everything · <kbd>P</kbd> pause.
+        On touch screens the left half moves, the right half looks, a tap fires.</p>
+    </section>
+
+    <section class="console">
+      <h2>SQL console <small>— the live game database</small></h2>
+      <div class="presets">
+        <button data-sql="SELECT * FROM player">player</button>
+        <button data-sql="SELECT * FROM scoreboard">scoreboard</button>
+        <button data-sql="SELECT id, bot, st, health, armor, weapon, frags, CAST(x AS INTEGER) x, CAST(y AS INTEGER) y, CAST(z AS INTEGER) z, enemy_id, goal_id FROM ents WHERE classname = 'bot'">bots</button>
+        <button data-sql="SELECT id, item, solid, CAST(x AS INTEGER) x, CAST(y AS INTEGER) y, CAST(z AS INTEGER) z, nextthink FROM ents WHERE classname = 'item' ORDER BY item">items</button>
+        <button data-sql="SELECT id, classname, mv_state, CAST(x AS INTEGER) x, CAST(y AS INTEGER) y, CAST(z AS INTEGER) z, targetname, target FROM ents WHERE movetype = 7 ORDER BY classname">movers</button>
+        <button data-sql="SELECT classname, COUNT(*) n FROM ents GROUP BY classname ORDER BY n DESC">entities</button>
+        <button data-sql="SELECT FIRST 40 * FROM frame_faces_fast">frame_faces_fast</button>
+        <button data-sql="SELECT FIRST 40 * FROM frame_faces">frame_faces</button>
+        <button data-sql="SELECT * FROM frame_ents">frame_ents</button>
+        <button data-sql="SELECT * FROM view_setup">view_setup</button>
+        <button data-sql="SELECT COUNT(*) brushes, (SELECT COUNT(*) FROM brushes WHERE facet = 1) patch_facets, (SELECT COUNT(*) FROM brushsides) sides, (SELECT COUNT(*) FROM leaves) leaves, (SELECT COUNT(*) FROM faces) faces, (SELECT COUNT(*) FROM face_verts) verts FROM brushes">geometry</button>
+        <button data-sql="EXECUTE PROCEDURE player_impulse(99)">give all</button>
+        <button data-sql="SELECT * FROM spawn_bot('Visor')">add Visor</button>
+        <button data-sql="UPDATE ents SET health = 1 WHERE classname = 'bot' AND health > 0">one-hit bots</button>
+        <button data-sql="UPDATE ents SET flags = BIN_OR(flags, 16) WHERE classname = 'player'">god</button>
+        <button data-sql="SELECT * FROM messages ORDER BY id">console</button>
+      </div>
+      <textarea id="sql" spellcheck="false" rows="4">SELECT * FROM scoreboard</textarea>
+      <div class="run"><button id="run-sql">Run</button> <small>Ctrl+Enter</small></div>
+      <pre id="sql-out" class="out"></pre>
+    </section>
+
+    <section class="about">
+      <h2>How it works</h2>
+      <ul>
+        <li><b>The BSP becomes tables.</b> A Quake III map (IBSP 46) is copied in lump by lump: <code>FACES</code> with their
+          plane and bounding sphere, <code>FACE_VERTS</code> with texture and lightmap coordinates (the Bézier patches tessellated
+          into triangles), <code>NODES</code>, <code>LEAVES</code> with their cluster and a decompressed PVS as a hex string,
+          <code>LEAFFACES</code>, and the collision geometry: <code>BRUSHES</code> and <code>BRUSHSIDES</code> with their planes and
+          contents, indexed through <code>LEAFBRUSHES</code> — the patches add one-sided facets to them, as cm_patch.c does. Every
+          MD3 is a row of <code>MODELS</code>; the entity lump becomes <code>MAP_ENTS</code>; bg_itemlist is <code>ITEM_DEFS</code>.</li>
+        <li><b>Collision is a recursive procedure.</b> <code>RHC</code> is <code>CM_TraceThroughTree</code>: the moving box's
+          extents push each split plane out, the segment is split at the plane and both sides are visited nearest first; in
+          every leaf reached, <code>CLIP_LEAF</code> clips the segment against each brush and facet whose contents match the mask.
+          <code>TRACE_MOVE</code> runs it against the world, every door and platform (brush models have a leaf of their own) and
+          the players' boxes. <code>FLY_MOVE</code> (PM_SlideMove), <code>WALK_MOVE</code> (the 18-unit step), <code>MOVE_STEP</code>
+          and <code>PUSH_MOVE</code> are bg_pmove.c and g_mover.c in PSQL.</li>
+        <li><b>The game is PSQL.</b> <code>Q3_TIC</code> runs at 20 Hz: the player's ground, air and water moves, jumps and
+          footsteps; doors, plats, buttons, bobbing and rotating platforms, pendulums and trains; jump pads that compute their
+          launch velocity from their target, teleporters, hurt triggers; the items of bg_itemlist with their respawn times;
+          the nine weapons from the gauntlet to the BFG10K; damage with armour and the quad, knockback, gibs; the obituaries,
+          the frag count and the announcer; and the bots — see, chase, strafe, pick things up, shoot, die, respawn — in
+          <code>BOT_THINK</code>.</li>
+        <li><b>The renderer is a query.</b> <code>FRAME_ALL</code> finds the leaf and cluster the eye is in and, once per
+          cluster, marks every face of every leaf whose cluster is in its PVS (R_MarkLeaves) with its plane and bounding
+          sphere. A frame is then a scan of the marked faces with the back-face and frustum tests as expressions, aggregated
+          with <code>LIST()</code> into one row of face ids; the brush models add a row each at their own origin. The same
+          result set carries the MD3 entities in the PVS with their pose and animations, the sounds, effects and console
+          lines of the tic: one round trip per frame. The other renderer mode, <code>FRAME_FACES</code>, projects every
+          vertex in SQL as well.</li>
+        <li><b>JavaScript only paints.</b> A 32-bit framebuffer and a z-buffer; perspective-correct spans, divided every 16
+          pixels, that multiply the texture by the lightmap page; triangle lists for the patches and meshes; MD3 models lit
+          from the light grid, the player parts hung on their tags; the sky's cloud layers by pixel direction; additive and
+          alpha blended surfaces; the status bar from the game's own pictures. Sounds are rows in <code>SOUND_EVENTS</code>,
+          spatialised with the Web Audio API.</li>
+      </ul>
+      <p>A port of <a href="https://github.com/mariuz/firebird-quake2">Firebird Quake 2</a> to Quake III Arena. The engine is
+        <a href="https://github.com/mariuz/electric-firebird">Electric Firebird</a> (<code>firebird-wasm</code>). The game
+        data is the Quake III Arena demo (id Software, 1999), which may be freely redistributed; drop in a registered
+        <code>pak0.pk3</code> to play the full game's arenas. Quake III Arena is a trademark of id Software.</p>
+    </section>
+  </main>
+  <script type="module" src="./main.js"></script>
+</body>
+</html>

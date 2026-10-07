@@ -1,0 +1,8 @@
+node_modules/
+dist/
+*.log
+.claude/
+public/pak/*.pk3
+public/music/*
+!public/music/README.txt
+.prof/
