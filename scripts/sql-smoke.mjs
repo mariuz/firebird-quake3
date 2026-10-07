@@ -149,7 +149,13 @@ const bots = (await db.query("SELECT bot, st, CAST(x AS INTEGER) x, CAST(y AS IN
 console.log('bots', bots);
 assert(bots.every((b) => b.CLUSTER !== null), 'every bot is linked into the world');
 
-// cheat, then rocket the floor: splash damage must hurt us
+// cheat, then rocket the floor: splash damage must hurt us. Alive for it (a bot's rocket in the idle
+// tics may have knocked us into a void, which kills through god mode), the bots holding their fire
+if (s.DEAD || s.HEALTH <= 0) {
+  await db.exec('EXECUTE PROCEDURE player_respawn');
+  await db.exec("UPDATE ents SET flags = BIN_OR(flags, 16) WHERE classname = 'player'");
+}
+await db.exec("UPDATE ents SET nextthink = 1e9 WHERE classname = 'bot'");
 s = await tic([1, 0, 0, 0, 0, 0, 0, 1, 99]);
 assert(s.ROCKETS === 200, 'impulse 99 gave ammo');
 const oldWeapon = s.WEAPON;
@@ -163,8 +169,7 @@ assert(states[0][0] === 2 && states[0][1] === oldWeapon && firstRaise > 0 && sta
   && firstReady > firstRaise && states.slice(firstRaise, firstReady).every(([st, w]) => st === 3 && w === 16),
   `the old weapon went down, then the new one came up (${states.map(([st]) => st).join('')})`);
 const hpBefore = s.HEALTH;
-// without god mode for this one (it would stop the splash), the bots holding their fire
-await db.exec("UPDATE ents SET nextthink = 1e9 WHERE classname = 'bot'");
+// without god mode for this one (it would stop the splash)
 await db.exec("UPDATE ents SET flags = BIN_AND(flags, BIN_NOT(16)) WHERE classname = 'player'");
 s = await tic([1, 0, 0, 0, 85, 1, 0, 1, 0]);
 for (let i = 0; i < 20; i++) s = await tic([1, 0, 0, 0, 0, 0, 0, 1, 0]);
@@ -356,6 +361,10 @@ if (pad) {
 // spectating (SetTeam, SpectatorThink, Cmd_FollowCycle_f, StopFollowing)
 {
   const pe = (await db.query('SELECT ent_id e FROM player')).rows[0].E;
+  // alive (a bot may have fragged us in the tics before; leaving dead costs nothing) and safe until we go
+  if (s.DEAD || s.HEALTH <= 0) await db.exec('EXECUTE PROCEDURE player_respawn');
+  await db.exec(`UPDATE ents SET flags = BIN_OR(flags, 16) WHERE id = ${(await db.query('SELECT ent_id e FROM player')).rows[0].E}`);
+  s = await tic([1, 0, 0, 0, 0, 0, 0, 1, 0]);
   const frags0 = s.FRAGS;
   await db.exec('EXECUTE PROCEDURE set_spectator(1)');
   s = await tic([1, 0, 0, 0, 0, 0, 0, 1, 0]);
