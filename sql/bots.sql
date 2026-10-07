@@ -430,7 +430,11 @@ BEGIN
       EXIT;
     END
     w = bot_best_weapon(eid, d);
-    UPDATE ents e SET e.weapon = :w WHERE e.id = :eid AND e.weapon <> :w;
+    IF (EXISTS (SELECT 1 FROM ents e WHERE e.id = :eid AND e.weapon <> :w)) THEN
+    BEGIN
+      UPDATE ents e SET e.weapon = :w WHERE e.id = :eid;
+      EXECUTE PROCEDURE set_anims(eid, NULL, 10);   -- TORSO_RAISE: the new gun comes up (it ends standing)
+    END
     -- hurt and a health item in sight: go for it (BotWantsToRetreat, roughly)
     SELECT e.goal_id FROM ents e WHERE e.id = :eid INTO goal;
     IF (hp < 40 AND goal IS NULL AND RAND() < 0.5e0) THEN

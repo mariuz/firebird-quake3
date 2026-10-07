@@ -152,9 +152,16 @@ assert(bots.every((b) => b.CLUSTER !== null), 'every bot is linked into the worl
 // cheat, then rocket the floor: splash damage must hurt us
 s = await tic([1, 0, 0, 0, 0, 0, 0, 1, 99]);
 assert(s.ROCKETS === 200, 'impulse 99 gave ammo');
+const oldWeapon = s.WEAPON;
 s = await tic([1, 0, 0, 0, 0, 0, 0, 1, 5]);
-for (let i = 0; i < 12; i++) s = await tic([1, 0, 0, 0, 0, 0, 0, 1, 0]);
+// the switch (PM_BeginWeaponChange, PM_FinishWeaponChange): the old weapon down, then the new one up
+const states = [[s.WEAPONSTATE, s.WEAPON]];
+for (let i = 0; i < 12; i++) { s = await tic([1, 0, 0, 0, 0, 0, 0, 1, 0]); states.push([s.WEAPONSTATE, s.WEAPON]); }
 assert(s.WEAPON === 16, `switched to the rocket launcher (weapon ${s.WEAPON})`);
+const firstRaise = states.findIndex(([st]) => st === 3), firstReady = states.findIndex(([st], i) => st === 0 && i > firstRaise);
+assert(states[0][0] === 2 && states[0][1] === oldWeapon && firstRaise > 0 && states.slice(0, firstRaise).every(([st, w]) => st === 2 && w === oldWeapon)
+  && firstReady > firstRaise && states.slice(firstRaise, firstReady).every(([st, w]) => st === 3 && w === 16),
+  `the old weapon went down, then the new one came up (${states.map(([st]) => st).join('')})`);
 const hpBefore = s.HEALTH;
 // without god mode for this one (it would stop the splash), the bots holding their fire
 await db.exec("UPDATE ents SET nextthink = 1e9 WHERE classname = 'bot'");

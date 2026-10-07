@@ -452,7 +452,14 @@ is, cosmetic state kept in `FrameState.kick`:
   walking, 0.5 crouched, 128 to a step; held in the air, reset standing still) gives `bobfracsin`,
   which tips the pitch and swings the roll a step each way (×0.002 of the speed, three times
   crouched) and lifts the eye up to 6 units (×0.005).
-- *The gun* follows the view, kicks and all, swaying with the steps and drifting at rest.
+- *The gun* follows the view, kicks and all, swaying with the steps and drifting at rest. It hangs on
+  the `tag_weapon` of the weapon's `_hand.md3`, whose 16 frames are played from the torso's animation
+  as `CG_MapTorsoToWeaponFrame` maps them: 0 at rest, 1 to 6 firing (`TORSO_ATTACK`, `ATTACK2` for the
+  gauntlet), 6 to 14 switching (`TORSO_DROP` then `TORSO_RAISE`, nine frames in a row in every demo
+  model). `viewTorsoFrame` picks the torso frame from the tic row: the drop from 0.2 s before
+  `WEAPON_TIME` while `WEAPONSTATE` is 2 (the old weapon going down), the raise from 0.25 s before it
+  while 3 (the new one coming up), so the hand carries the gun out of view and back as Quake III's
+  does. The bots play `TORSO_RAISE` when they change weapon.
 
 *The zoom* is the client's too (`CG_CalcFov`): Z or the right mouse button holds it, `zoomedFov`
 eases the field of view to 22.5 degrees in 150 ms and back as fast on release, the mouse slows to

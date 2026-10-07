@@ -5,7 +5,7 @@
 // flight, the pose of rotating brush models, the console lines.
 
 import { angleMatrix, yawAxis, anglesAxis, tagTransform, animFrame } from './renderer.js';
-import { ITEMS, WEAPONS } from './gamedata.js';
+import { ITEMS, WEAPONS, PLAYER_MODEL } from './gamedata.js';
 
 const WEAPON_DIR = { 1: 'gauntlet', 2: 'machinegun', 4: 'shotgun', 8: 'grenadel', 16: 'rocketl', 32: 'lightning', 64: 'railgun', 128: 'plasma', 256: 'bfg' };
 const RLBOOM = [1, 2, 3, 4, 5, 6, 7, 8].map((i) => `models/weaphits/rlboom/rlboom_${i}.jpg`);
@@ -156,6 +156,26 @@ export function zoomedFov(fov, zoomed, sinceMs, zoomFov = ZOOM_FOV) {
 /** The vertical field of view of a horizontal one on a w×h screen (CG_CalcFov's fov_y). */
 export const fovY = (fovX, w, h) => (Math.atan2(h, w / Math.tan((fovX * Math.PI) / 360)) * 360) / Math.PI;
 
+// CG_MapTorsoToWeaponFrame: the view's hand model has 16 frames of its own, played from the torso's
+// animation: 0 at rest, 1 to 6 the attack (TORSO_ATTACK, or ATTACK2 for the gauntlet), 6 to 14 the switch
+// (TORSO_DROP and TORSO_RAISE, nine frames in a row); its tag_weapon carries the gun down and up again
+export function mapTorsoToWeaponFrame(anims, frame) {
+  const drop = anims[9], atk = anims[7], atk2 = anims[8];
+  if (drop && frame >= drop.first && frame < drop.first + 9) return frame - drop.first + 6;
+  if (atk && frame >= atk.first && frame < atk.first + 6) return 1 + frame - atk.first;
+  if (atk2 && frame >= atk2.first && frame < atk2.first + 6) return 1 + frame - atk2.first;
+  return 0;
+}
+
+/** The torso frame of the player's own model (PM_TorsoAnimation, PM_BeginWeaponChange, PM_FinishWeaponChange):
+ *  the drop for the 0.2 s the old weapon goes down, the raise for the 0.25 s the new one comes up, the attack, or standing. */
+export function viewTorsoFrame(anims, last, time) {
+  if (last.WEAPONSTATE === 2) return animFrame(anims, 9, time - (last.WEAPON_TIME - 0.2));
+  if (last.WEAPONSTATE === 3) return animFrame(anims, 10, time - (last.WEAPON_TIME - 0.25));
+  if (last.ATTACK_START > 0 && time - last.ATTACK_START < 0.4) return animFrame(anims, last.WEAPON === 1 ? 8 : 7, time - last.ATTACK_START);
+  return anims[11]?.first ?? 0;
+}
+
 /** The whole picture of one frame into the renderer (not yet presented). Returns the screen tint. */
 export function drawScene(renderer, hud, res, bsp, last, frame, opts = {}) {
   const r = renderer;
@@ -230,27 +250,20 @@ function drawViewWeapon(r, res, bsp, last, time, view) {
   if (!gunId) return;
   const gun = res.models.get(gunId).mdl;
   const hand = handId ? res.models.get(handId).mdl : null;
-  // the hand sits at the eye, facing the view; the switch animation lowers it
+  // the hand sits at the eye, facing the view, and follows it, kicks and all, with the gun's own sway on
+  // top (CG_CalculateWeaponPosition); its animation does the switching. Without a hand model the gun
+  // is slid down instead
   const sw = last.WEAPONSTATE === 2 ? Math.min(1, (0.2 - (last.WEAPON_TIME - time)) / 0.2) : last.WEAPONSTATE === 3 ? Math.max(0, (last.WEAPON_TIME - time) / 0.25) : 0;
-  // the hand follows the view, kicks and all, with the gun's own sway on top (CG_CalculateWeaponPosition)
   const g = view.gun;
   const axis = anglesAxis(view.pitch + g.pitch, view.yaw + g.yaw, view.roll + g.roll);
-  const gx = 4, gz = -sw * 20;   // cg_gun_x: a little forward; the switch lowers it
+  const gx = 4, gz = hand ? 0 : -sw * 20;   // cg_gun_x: a little forward
   const org = [view.x + axis[0] * gx + axis[6] * gz, view.y + axis[1] * gx + axis[7] * gz, view.z + g.z + axis[2] * gx + axis[8] * gz + last.PUNCH * 0.5];
   const light = bsp.lightGrid(last.PX, last.PY, last.PZ);
   light.ambient = light.ambient.map((v) => Math.max(v, 96));   // RF_MINLIGHT: the gun is never black
   let gunOrigin = org, gunAxis = axis;
   if (hand) {
-    // the hand's frames follow the torso attack animation (TORSO_ATTACK is 6 frames at 15 fps)
-    const p = res.players.get('sarge') ?? res.players.values().next().value;
-    let frame = 0;
-    if (p) {
-      const atk = p.anims[last.WEAPON === 1 ? 8 : 7];
-      const idle = p.anims[11];
-      const firing = time - last.ATTACK_START < 0.4 && last.ATTACK_START > 0;
-      frame = firing ? animFrame(p.anims, last.WEAPON === 1 ? 8 : 7, time - last.ATTACK_START) : idle ? idle.first : 0;
-      if (frame >= hand.numFrames) frame = Math.min(hand.numFrames - 1, frame - atk.first);
-    }
+    const p = res.players.get(PLAYER_MODEL) ?? res.players.values().next().value;
+    const frame = p ? Math.min(hand.numFrames - 1, mapTorsoToWeaponFrame(p.anims, viewTorsoFrame(p.anims, last, time))) : 0;
     const t = tagTransform(hand, frame, 'tag_weapon', org, axis);
     if (t) { gunOrigin = t.origin; gunAxis = t.axis; }
   } else {

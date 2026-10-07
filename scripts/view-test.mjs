@@ -4,7 +4,11 @@
 //
 //   node scripts/view-test.mjs
 
-import { FrameState, firstPersonView, zoomedFov, fovY } from '../src/scene.js';
+import fs from 'node:fs';
+import { FrameState, firstPersonView, zoomedFov, fovY, mapTorsoToWeaponFrame, viewTorsoFrame } from '../src/scene.js';
+import { tagTransform } from '../src/renderer.js';
+import { Md3, parseAnimationCfg } from '../src/md3.js';
+import { Pk3 } from '../src/pk3.js';
 
 let failed = 0;
 const assert = (c, m) => { if (!c) { console.error(`FAIL: ${m}`); failed++; } else console.log(`ok   ${m}`); };
@@ -94,6 +98,31 @@ assert(weak.pitch <= -9.9 && strong.pitch >= -10.01, `low on health the kick is 
   const y = fovY(22.5, 640, 480);
   assert(Math.abs(y - 16.97) < 0.05 && Math.abs(y / 75 - 0.226) < 0.002, `zoomed on 4:3, fov_y ${y.toFixed(2)}, the mouse at ${(y / 75).toFixed(3)} of its speed`);
   assert(Math.abs(fovY(90, 640, 480) - 73.74) < 0.05, 'fov_y of 90 on 4:3 is 73.74');
+}
+
+// the switch (CG_MapTorsoToWeaponFrame): sarge's torso frames onto the hand's
+{
+  const anims = []; anims[7] = { first: 130, count: 6, loop: 0, fps: 15 }; anims[8] = { first: 136, count: 6, loop: 0, fps: 15 };
+  anims[9] = { first: 142, count: 5, loop: 0, fps: 20 }; anims[10] = { first: 147, count: 4, loop: 0, fps: 20 }; anims[11] = { first: 151, count: 1, loop: 0, fps: 15 };
+  const m = (f) => mapTorsoToWeaponFrame(anims, f);
+  assert(m(151) === 0 && m(130) === 1 && m(135) === 6 && m(136) === 1 && m(142) === 6 && m(146) === 10 && m(147) === 11 && m(150) === 14,
+    'the torso maps onto the hand: stand 0, attack 1–6, drop 6–10, raise 11–14');
+  const at = (state, wt, t, extra = {}) => viewTorsoFrame(anims, { WEAPONSTATE: state, WEAPON_TIME: wt, WEAPON: 2, ATTACK_START: 0, ...extra }, t);
+  assert(at(2, 10.2, 10.01) === 142 && at(2, 10.2, 10.12) === 144 && at(2, 10.2, 10.17) === 145, 'dropping: the drop from its start, 20 frames a second');
+  assert(at(3, 10.25, 10.01) === 147 && at(3, 10.25, 10.17) === 150 && at(3, 10.25, 10.24) === 150, 'raising: the raise, held on its last frame');
+  assert(at(0, 0, 10) === 151 && at(0, 0, 10.05, { ATTACK_START: 10 }) === 130 && at(0, 0, 10.05, { ATTACK_START: 10, WEAPON: 1 }) === 136, 'at rest standing; firing the attack, the gauntlet its own');
+}
+
+// and the hand model really carries the gun down on those frames (with the pak, when it is there)
+if (fs.existsSync('public/pak/pak0.pk3')) {
+  const pak = new Pk3(fs.readFileSync('public/pak/pak0.pk3').buffer);
+  const name = 'models/weapons2/machinegun/machinegun_hand.md3';
+  const hand = new Md3(pak.buffer(name), name);
+  const z = (f) => tagTransform(hand, f, 'tag_weapon', [0, 0, 0], [1, 0, 0, 0, 1, 0, 0, 0, 1]).origin[2];
+  const lowest = Math.min(...[6, 7, 8, 9, 10, 11, 12, 13, 14].map(z));
+  assert(z(0) - lowest > 5, `the machinegun's hand lowers the gun while switching (${(z(0) - lowest).toFixed(1)} units at the bottom)`);
+  const anims = parseAnimationCfg(pak.text('models/players/sarge/animation.cfg'));
+  assert(anims[9].first + anims[9].count === anims[10].first && anims[9].count + anims[10].count === 9, 'sarge\'s drop and raise are the nine frames in a row the mapping expects');
 }
 
 console.log(failed ? `${failed} FAILED` : 'all good');
