@@ -53,6 +53,10 @@ re-issues responses with the headers after a one-time reload.
 
 ## How it works
 
+The short tour follows; [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) is the long one, table by table
+and procedure by procedure, and [docs/ROADMAP.md](docs/ROADMAP.md) lists what the real Quake III engine
+has that this port does not, in the order a player feels it.
+
 ### The BSP becomes tables (`sql/schema.sql`, `src/bsp.js`, `src/loader.js`)
 
 A Quake III BSP (IBSP version 46) is a relational database in disguise, and more so than Quake 2's:
