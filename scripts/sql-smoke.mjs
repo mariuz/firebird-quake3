@@ -63,6 +63,7 @@ for (let i = 0; i < 20; i++) s = await tic([1, 1, 0, 0, 0, 0, 0, 1, 0]);
 console.log(`20 tics walking ${(t() - t0).toFixed(0)} ms`, { x: s.PX, y: s.PY, z: s.PZ, onground: s.ONGROUND, speed: s.MOVE_SPEED });
 const moved = Math.hypot(s.PX - settled.x, s.PY - settled.y);
 assert(moved > 150, `player ran forward (${moved.toFixed(1)} units in a second)`);
+for (let i = 0; i < 10 && s.ONGROUND !== 1; i++) s = await tic([1, 0, 0, 0, 0, 0, 0, 1, 0]);   // the last step may have been off a stair
 assert(s.ONGROUND === 1, 'player is on the ground after walking');
 
 // turn around and walk into whatever is behind: we must never be inside a wall

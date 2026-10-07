@@ -83,6 +83,11 @@ explosion sprites, beams) and nothing else. The renderers never query the databa
   disconnects the graph (the symptom: "N of M nodes can reach the spawn" collapses).
 - A trace that starts inside a brush returns `startsolid`; `wp_drop` turns it into −99999 so the
   column scan continues below instead of ending the column.
+- `move_step` never walks off an edge (Quake 2 monsters did not jump down); a bot following a drop
+  edge is launched by `bot_follow_route` setting its velocity instead. The bots tests are
+  randomised by the spawn points: run a failing one four times in parallel
+  (`for i in 1 2 3 4; do (node scripts/bots-test.mjs q3dm17 > .prof/h$i.txt 2>&1) & done; wait`)
+  before deciding it is fixed, and replay a stall with `.prof/hunt.mjs <map> bx by bz px py pz`.
 - `trace_move(NULL, …)` clips against the world, brush models and bounding-box entities (`solid` 2,
   3, 4) only; triggers and items (`solid` 1) are not obstacles.
 - The jump pad's `target_position` is the apex of the throw, not the landing; the landing is found by

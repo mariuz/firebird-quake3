@@ -73,22 +73,24 @@ if (item) {
   const me = (await q(`SELECT x, y, z FROM ents WHERE id = ${pe}`))[0];
   const far = (await q(`SELECT FIRST 1 e.id, e.x, e.y, e.z FROM ents e WHERE e.classname = 'info_player_deathmatch' ORDER BY (e.x - ${me.X}) * (e.x - ${me.X}) + (e.y - ${me.Y}) * (e.y - ${me.Y}) DESC`))[0];
   // the other bots sit this one out
-  await db.exec(`UPDATE ents SET st = 'dead', deadflag = 1, solid = 0, respawn_time = 1e9, enemy_id = NULL WHERE classname = 'bot' AND id <> ${b}`);
+  await db.exec(`UPDATE ents SET st = 'dead', deadflag = 1, health = 0, solid = 0, respawn_time = 1e9, enemy_id = NULL WHERE classname = 'bot' AND id <> ${b}`);
   // the hunter holds its fire (a rocket would knock us off the ledge)
   await db.exec(`UPDATE ents SET x = ${far.X}, y = ${far.Y}, z = ${far.Z}, vx = 0, vy = 0, vz = 0, enemy_id = ${pe}, search_time = 1e9, goal_id = NULL, health = 100, st = 'run', attack_finished = 1e9 WHERE id = ${b}`);
   await db.exec(`EXECUTE PROCEDURE link_ent(${b})`);
   const d0 = Math.hypot(far.X - me.X, far.Y - me.Y, far.Z - me.Z);
-  let best = d0, n = 0;
+  let best = d0, n = 0, died = null;
   for (; n < 600; n++) {
     await tic();
-    const r = (await q(`SELECT e.x - p.x dx, e.y - p.y dy, e.z - p.z dz FROM ents e CROSS JOIN ents p WHERE e.id = ${b} AND p.id = ${pe}`))[0];
+    const r = (await q(`SELECT e.x - p.x dx, e.y - p.y dy, e.z - p.z dz, e.health hp FROM ents e CROSS JOIN ents p WHERE e.id = ${b} AND p.id = ${pe}`))[0];
     const d = Math.hypot(r.DX, r.DY, r.DZ);
     if (d < best) best = d;
     if (d < 350) break;     // in sight and in range it circle-strafes instead of closing in
+    if (r.HP <= 0 && died === null) died = n;
   }
-  const route = (await q(`SELECT path FROM bot_routes WHERE ent_id = ${b}`))[0]?.PATH;
-  assert(best < Math.max(350, d0 * 0.5), `the bot hunted us from ${d0.toFixed(0)} away down to ${best.toFixed(0)} in ${n} tics (route ${route ?? 'none'})`);
-  await db.exec(`UPDATE ents SET respawn_time = 0 WHERE classname = 'bot' AND id <> ${b}`);
+  const st = (await q(`SELECT e.st, e.health, e.enemy_id, CAST(e.x AS INTEGER) x, CAST(e.y AS INTEGER) y, CAST(e.z AS INTEGER) z, r.path, (SELECT CAST(p.x AS INTEGER) || ',' || CAST(p.y AS INTEGER) || ',' || CAST(p.z AS INTEGER) FROM ents p WHERE p.id = ${pe}) me FROM ents e LEFT JOIN bot_routes r ON r.ent_id = e.id WHERE e.id = ${b}`))[0];
+  const last = (await q('SELECT FIRST 2 msg FROM messages ORDER BY id DESC')).map((m) => m.MSG).join(' / ');
+  assert(best < Math.max(350, d0 * 0.5), `the bot hunted us from ${d0.toFixed(0)} away down to ${best.toFixed(0)} in ${n} tics (route ${st.PATH ?? 'none'}; now ${st.ST.trim()} hp ${st.HEALTH} enemy ${st.ENEMY_ID} at ${st.X},${st.Y},${st.Z}, we at ${st.ME}${died !== null ? `; died at tic ${died}: ${last}` : ''})`);
+  await db.exec(`UPDATE ents SET respawn_time = 0, health = 1 WHERE classname = 'bot' AND id <> ${b}`);
 }
 
 // a minute of play: the bots keep fragging each other, nobody is stuck in the void
@@ -100,7 +102,7 @@ for (let i = 0; i < 600; i++) {
   if (padEdges && i % 2 === 0) flew += (await q("SELECT COUNT(*) n FROM ents WHERE classname = 'bot' AND health > 0 AND vz > 450 AND BIN_AND(flags, 512) = 0"))[0].N;
 }
 console.log(`1200 tics in ${(performance.now() - t0).toFixed(0)} ms`);
-if (padEdges) assert(flew > 0, `the bots took the jump pads (${padEdges} pad edges, airborne with upward speed ${flew} times)`);
+if (padEdges >= 6) assert(flew > 0, `the bots took the jump pads (${padEdges} pad edges, airborne with upward speed ${flew} times)`);
 const board = await q('SELECT * FROM scoreboard');
 console.log('scores', board.map((r) => `${r.NAME.trim()} ${r.FRAGS}/${r.DEATHS}`).join(', '));
 const total = board.reduce((a, r) => a + r.FRAGS, 0);

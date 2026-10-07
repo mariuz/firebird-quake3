@@ -35,6 +35,8 @@ DECLARE x DOUBLE PRECISION; DECLARE y DOUBLE PRECISION; DECLARE z DOUBLE PRECISI
 BEGIN
   IF (name IS NULL) THEN EXIT;
   name = TRIM(name);   -- IIF/CASE over literals of different lengths pads the shorter one
+  -- a "*" sound is the entity's player model's (CG_CustomSound)
+  IF (name STARTING WITH '*') THEN name = 'sound/player/' || COALESCE((SELECT e.pmodel FROM ents e WHERE e.id = :eid), 'sarge') || '/' || SUBSTRING(name FROM 2);
   SELECT e.x + (e.minx + e.maxx) / 2, e.y + (e.miny + e.maxy) / 2, e.z + (e.minz + e.maxz) / 2 FROM ents e WHERE e.id = :eid INTO x, y, z;
   SELECT g.tic FROM game g WHERE g.id = 1 INTO tic;
   INSERT INTO sound_events (id, tic, ent_id, chan, snd, vol, attn, x, y, z)
@@ -662,6 +664,8 @@ BEGIN
     ELSE IF (tcls = 'target_speaker') THEN
     BEGIN
       SELECT e.noise1, e.x, e.y, e.z, e.speed, e.height, e.spawnflags FROM ents e WHERE e.id = :t INTO n, x, y, z, vol, attn, sf;
+      -- a "*" sound is the activator's player model's (CG_CustomSound): q3dm17's void screams "*falling1.wav"
+      IF (n STARTING WITH '*') THEN n = 'sound/player/' || COALESCE((SELECT a.pmodel FROM ents a WHERE a.id = :activator), 'sarge') || '/' || SUBSTRING(n FROM 2);
       IF (BIN_AND(sf, 3) <> 0) THEN
         UPDATE ents e SET e.count_ = 1 - e.count_ WHERE e.id = :t;      -- a looped speaker toggles: the browser follows ents.count_
       ELSE IF (BIN_AND(sf, 8) <> 0 OR attn = 0) THEN EXECUTE PROCEDURE snd_local(n);   -- GLOBAL

@@ -37,7 +37,9 @@ CREATE TABLE bot_routes (
   dst_node INTEGER,
   path VARCHAR(400),
   built DOUBLE PRECISION,
-  fails SMALLINT DEFAULT 0 NOT NULL
+  fails SMALLINT DEFAULT 0 NOT NULL,
+  prog_d DOUBLE PRECISION,               -- the nearest it has been to its next node, and when:
+  prog_t DOUBLE PRECISION                -- no progress for a while means it is stuck, whatever the steps say
 );
 
 -- where the build of the graph has got to: the next grid column to scan, and the phase
@@ -129,7 +131,7 @@ BEGIN
   SUSPEND;
 END^
 
--- can a player walk from a to b? 0 no, 1 yes, 3 yes but only this way (a drop)
+-- can a player walk from a to b? 0 no, 1 yes, 3 yes but only this way (a drop of more than a step, up to 400)
 CREATE OR ALTER FUNCTION wp_walkable (ax DOUBLE PRECISION, ay DOUBLE PRECISION, az DOUBLE PRECISION, bx DOUBLE PRECISION, by_ DOUBLE PRECISION, bz DOUBLE PRECISION) RETURNS SMALLINT
 AS
 DECLARE f DOUBLE PRECISION; DECLARE ex DOUBLE PRECISION; DECLARE ey DOUBLE PRECISION; DECLARE ez DOUBLE PRECISION;
@@ -158,13 +160,12 @@ BEGIN
     END
     IF (ok = 1) THEN RETURN 1;
   END
-  -- on one level, a wall at chest height between them is a wall
-  IF (ABS(bz - az) < 40) THEN
-  BEGIN
-    EXECUTE PROCEDURE trace_move(NULL, 0, 0, 0, 0, 0, 0, ax, ay, az + 20, bx, by_, bz + 20, 1)
-      RETURNING_VALUES f, ex, ey, ez, nx, ny, nz, sf, ct, als, sts, hit;
-    IF (f < 1) THEN RETURN 0;
-  END
+  -- a wall or a pillar at chest height of the higher of the two is a wall: the walk up the stairs ends
+  -- there, the walk off the ledge starts there (a tunnel sloping under a low ceiling is the one case
+  -- this gets wrong, and the stepped walk below is too dear to run for every pair)
+  EXECUTE PROCEDURE trace_move(NULL, 0, 0, 0, 0, 0, 0, ax, ay, MAXVALUE(az, bz) + 20, bx, by_, MAXVALUE(az, bz) + 20, 1)
+    RETURNING_VALUES f, ex, ey, ez, nx, ny, nz, sf, ct, als, sts, hit;
+  IF (f < 1 OR sts = 1) THEN RETURN 0;
   -- the stepped walk: 40 units forward at step height, then settle onto the floor; climbs stairs, drops ledges
   steps = CAST(CEILING(len / 40) AS INTEGER);
   IF (steps > 14) THEN RETURN 0;
@@ -189,8 +190,9 @@ BEGIN
     END
     IF (f < 0.9e0) THEN RETURN 0;
     px = ex; py = ey;
-    -- the floor below: a step down, or a drop of up to 200 (one way)
-    EXECUTE PROCEDURE trace_move(NULL, -15, -15, -24, 15, 15, 32, px, py, ez, px, py, ez - 236, 65537)
+    -- the floor below: a step down, or a drop of up to 400 (one way; a fall that hurts a little, as the
+    -- AAS's "jump down" reachabilities allow)
+    EXECUTE PROCEDURE trace_move(NULL, -15, -15, -24, 15, 15, 32, px, py, ez, px, py, ez - 436, 65537)
       RETURNING_VALUES f, ex, ey, ez, nx, ny, nz, sf, ct, als, sts, hit;
     IF (f >= 1 OR sts = 1 OR nz < 0.7e0) THEN RETURN 0;
     IF (BIN_AND(point_contents(ex, ey, ez - 24), 24) <> 0) THEN RETURN 0;
@@ -273,7 +275,7 @@ END^
 CREATE OR ALTER PROCEDURE wp_link_chunk (cnt INTEGER)
 RETURNS (remaining INTEGER)
 AS
-DECLARE a INTEGER; DECLARE b INTEGER; DECLARE n INTEGER; DECLARE w SMALLINT; DECLARE done INTEGER = 0;
+DECLARE a INTEGER; DECLARE b INTEGER; DECLARE n INTEGER; DECLARE w SMALLINT; DECLARE done INTEGER = 0; DECLARE pass INTEGER;
 DECLARE ax DOUBLE PRECISION; DECLARE ay DOUBLE PRECISION; DECLARE az DOUBLE PRECISION; DECLARE bx DOUBLE PRECISION; DECLARE by_ DOUBLE PRECISION; DECLARE bz DOUBLE PRECISION;
 BEGIN
   FOR SELECT w1.id, w1.x, w1.y, w1.z FROM waypoints w1 WHERE w1.linked = 0 ORDER BY w1.id INTO a, ax, ay, az DO
@@ -281,22 +283,30 @@ BEGIN
     IF (done >= cnt) THEN LEAVE;
     done = done + 1;
     UPDATE waypoints w SET w.linked = 1 WHERE w.id = :a;
-    n = 0;
-    FOR SELECT w2.id, w2.x, w2.y, w2.z FROM waypoints w2
-         WHERE w2.id <> :a AND ABS(w2.x - :ax) < 420 AND ABS(w2.y - :ay) < 420 AND ABS(w2.z - :az) < 260
-         ORDER BY (w2.x - :ax) * (w2.x - :ax) + (w2.y - :ay) * (w2.y - :ay) + (w2.z - :az) * (w2.z - :az) * 2
-         INTO b, bx, by_, bz
-    DO
+    -- two passes: the ten nearest neighbours, then the four nearest on a lower level (the ten are
+    -- all on this one when the grid is dense), so a ledge gets its way down
+    pass = 0;
+    WHILE (pass < 2) DO
     BEGIN
-      IF (n >= 10) THEN LEAVE;
-      n = n + 1;
-      IF (EXISTS (SELECT 1 FROM wp_edges e WHERE e.a = :a AND e.b = :b)) THEN CONTINUE;
-      w = wp_walkable(ax, ay, az, bx, by_, bz);
-      IF (w = 0) THEN CONTINUE;
-      INSERT INTO wp_edges (a, b, len, kind) VALUES (:a, :b, vlen(:bx - :ax, :by_ - :ay, :bz - :az), IIF(:w = 3, 3, 0));
-      -- a flat walk goes both ways
-      IF (w = 1 AND ABS(bz - az) < 40 AND NOT EXISTS (SELECT 1 FROM wp_edges e WHERE e.a = :b AND e.b = :a)) THEN
-        INSERT INTO wp_edges (a, b, len, kind) VALUES (:b, :a, vlen(:bx - :ax, :by_ - :ay, :bz - :az), 0);
+      n = 0;
+      FOR SELECT w2.id, w2.x, w2.y, w2.z FROM waypoints w2
+           WHERE w2.id <> :a AND ABS(w2.x - :ax) < IIF(:pass = 0, 420, 300) AND ABS(w2.y - :ay) < IIF(:pass = 0, 420, 300) AND ABS(w2.z - :az) < 450
+             AND (:pass = 0 OR w2.z < :az - 48)
+           ORDER BY (w2.x - :ax) * (w2.x - :ax) + (w2.y - :ay) * (w2.y - :ay) + (w2.z - :az) * (w2.z - :az) * 2
+           INTO b, bx, by_, bz
+      DO
+      BEGIN
+        IF (n >= IIF(:pass = 0, 10, 3)) THEN LEAVE;
+        n = n + 1;
+        IF (EXISTS (SELECT 1 FROM wp_edges e WHERE e.a = :a AND e.b = :b)) THEN CONTINUE;
+        w = wp_walkable(ax, ay, az, bx, by_, bz);
+        IF (w = 0) THEN CONTINUE;
+        INSERT INTO wp_edges (a, b, len, kind) VALUES (:a, :b, vlen(:bx - :ax, :by_ - :ay, :bz - :az), IIF(:w = 3, 3, 0));
+        -- a flat walk goes both ways
+        IF (w = 1 AND ABS(bz - az) < 40 AND NOT EXISTS (SELECT 1 FROM wp_edges e WHERE e.a = :b AND e.b = :a)) THEN
+          INSERT INTO wp_edges (a, b, len, kind) VALUES (:b, :a, vlen(:bx - :ax, :by_ - :ay, :bz - :az), 0);
+      END
+      pass = pass + 1;
     END
   END
   SELECT COUNT(*) FROM waypoints w WHERE w.linked = 0 INTO remaining;

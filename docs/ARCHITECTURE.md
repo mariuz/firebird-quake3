@@ -319,13 +319,15 @@ wall beside the column), a column that finds nothing is tried 56 units to each s
 `wp_add` merges anything within 64 units of an existing node.
 
 **Edges** (`wp_edges`: `a → b`, length, kind 0 walk / 1 jump pad / 2 teleporter / 3 drop).
-`wp_link_chunk` links each node to its ten nearest neighbours within 420 units when `wp_walkable`
-says a player can get there: first a straight box trace with the floor probed at a third and two
-thirds of the way (no pits, no lava); if that fails and the two are on one level, a chest-height point
-trace rules out walls at once; otherwise a *stepped walk* of 40-unit steps, each one tried 18 units up
-(three times for stairs and ramps) and settled onto the floor below with a drop of up to 200 units
-allowed, which must end within 48 units of the target. A flat walk is stored both ways; a drop is one
-way. Pads and teleporters get their edges when their nodes are made.
+`wp_link_chunk` links each node to its ten nearest neighbours within 420 units, and then to the four
+nearest on a lower level (the ten are all on the node's own level when the grid is dense, and a
+ledge needs its way down), when `wp_walkable` says a player can get there: first a straight box
+trace with the floor probed at a third and two thirds of the way (no pits, no lava); if that fails
+and the two are on one level, a chest-height point trace rules out walls at once; otherwise a
+*stepped walk* of 40-unit steps, each one tried 18 units up (three times for stairs and ramps) and
+settled onto the floor below with a drop of up to 400 units allowed (a fall that hurts a little, the
+AAS's "jump down"), which must end within 48 units of the target. A flat walk is stored both ways; a
+drop is one way. Pads and teleporters get their edges when their nodes are made.
 
 **Routing.** `wp_nearest(x, y, z, see)` finds the node nearest a spot (height weighted ×4), the
 nearest *in sight* for the bot's own position. `wp_route(src, dst)` is a breadth-first search: the
@@ -339,7 +341,12 @@ re-routes when the target changed, moved to another node (not more than every 0.
 out or was blocked three times, and every 4 s anyway; it pops every node reached (within 40 units,
 200 for a pad landing, looking up to four nodes ahead because a pad lands a bot past the pad's own
 node), steps toward the next node (trying 35 degrees to either side when blocked), and walks straight
-at the target when at its node. Stepping onto a jump pad's node puts the bot in the pad's trigger;
+at the target when at its node. When the next node is down a ledge and the step refuses to walk off
+the edge (`move_step` wants ground under its feet, as Quake 2's did), the bot *jumps down*: its
+velocity is set toward the node at run speed and `run_physics` flies it to the floor, the AAS's
+jump-down reachability. It also keeps the nearest it has been to its next node; no progress for
+1.5 s means it is stuck on something the steps slide along (a corpse, a mover, a corner), so it
+sidesteps and re-routes. Stepping onto a jump pad's node puts the bot in the pad's trigger;
 `touch_triggers` launches it at the next think and, in the air, it only aims. The bot's think uses
 routes to hunt an enemy out of sight or on another floor, to reach a health item, and to roam between
 items; it falls back to the straight chase when there is no route.
@@ -347,13 +354,17 @@ items; it falls back to the straight chase when there is no route.
 **When it is built.** The entity nodes take 0.2 s at load. The grid scan (3 to 7 s) and the edges
 (2 to 6 s) would double the load time, so the page runs `wp_build_chunk(3, 2)` once a frame (three
 columns, then two nodes' edges) and shows "bots mapping the arena (N to go)" in the stats line; the
-graph is complete 10 to 20 s into play. The Node scripts' `loadMap` finishes it synchronously unless
-told `link: false` (screenshots do not need it). Sizes: q3dm1 172 nodes and 1166 edges; q3dm7 532
-and 3600; q3dm17 287 nodes, 2830 edges, 12 pad edges and 3 teleporter edges.
+graph is complete 10 to 30 s into play (the chunk shrinks to one column or node when the last one
+took over 40 ms). The Node scripts' `loadMap` finishes it synchronously unless
+told `link: false` (screenshots do not need it). Sizes: q3dm1 172 nodes and 1170 edges; q3dm7 532
+and 3700; q3dm17 287 nodes, 2880 edges, 12 pad edges and 3 teleporter edges; every spawn point can
+route to every other on all three.
 
 **Known limits.** No jumping across gaps, no rocket jumps, no air control, so on q3dm17 the platforms
 reached only by steering off the vertical boost pad stay out of the bots' reach; nodes on roofs and
-other sealed pockets are harmless islands. The page's console has a `waypoints` button and a `bot
+other sealed pockets are harmless islands. The bots test runs the hunt from the farthest spawn on
+q3dm1 and q3dm17 (four runs in a row pass on each; the criterion is "within 350 units", where a bot
+in sight starts to circle-strafe instead of closing in). The page's console has a `waypoints` button and a `bot
 routes` button; `SELECT wp_route(a, b) FROM rdb$database` asks for a route by hand.
 
 ---

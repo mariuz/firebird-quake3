@@ -80,7 +80,7 @@ fuzzy logic from the botfiles. What that leaves out:
 
 | Gap | Notes |
 | --- | --- |
-| **Jumping gaps, rocket jumps, air control** | the graph has no jump edges; `wp_walkable` could add an edge for a gap under 200 units that a 270 jump at run speed clears, and `bot_follow_route` would press jump at the edge |
+| **Jumping gaps, rocket jumps, air control** | the graph has drop edges (jumping *down* up to 400 units) but no jump edges across gaps; `wp_walkable` could add an edge for a gap under 200 units that a 270 jump at run speed clears, and `bot_follow_route` would press jump at the edge |
 | **Vertical boost pads** | a pad that lands on itself (q3dm17's centre) is only useful with air control; the bots do not take it, so the railgun platform is theirs only by chance |
 | **Item weights and timing** | botlib weighs items by the bot's needs and times the big ones (the "long-term goal"); here a roaming goal is the nearest item with a bonus for weapons, armour and powerups |
 | **Dodging** | no reaction to incoming rockets, no retreat when losing except the health run |
@@ -88,7 +88,7 @@ fuzzy logic from the botfiles. What that leaves out:
 | **Fuzzy characteristics** | `bot_char` is five fixed skill levels; the botfiles have per-character values and the `w_*` weights |
 | **Team play, CTF roles** | no teams |
 | **Chat** | see §1 |
-| **AAS reachability kinds** | walk, step, drop, pad, teleporter are here; swim, ladder (n/a), jump, rocket jump, grapple, elevator (standing on a plat and waiting), func_bobbing are not: a bot on a plat does not wait for it |
+| **AAS reachability kinds** | walk, step, jump down, pad, teleporter are here; swim, ladder (n/a), jump across, rocket jump, grapple, elevator (standing on a plat and waiting), func_bobbing are not: a bot on a plat does not wait for it |
 | **Graph quality** | the grid finds nodes where a column drops onto a floor; thin walkways between columns and the insides of doorways can lack nodes (q3dm7 has a few unreachable corners). A finer grid or nodes at face centres of walkable floor polygons would fill them |
 
 ## 6. Engine core (`qcommon/`, `server/`, `client/`)

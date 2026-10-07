@@ -96,15 +96,17 @@ DECLARE tx DOUBLE PRECISION; DECLARE ty DOUBLE PRECISION; DECLARE tz DOUBLE PREC
 DECLARE nx DOUBLE PRECISION; DECLARE ny DOUBLE PRECISION; DECLARE nz DOUBLE PRECISION; DECLARE nk SMALLINT;
 DECLARE path VARCHAR(400); DECLARE s VARCHAR(400); DECLARE cut VARCHAR(400); DECLARE built DOUBLE PRECISION; DECLARE rtarget INTEGER;
 DECLARE dst INTEGER; DECLARE src INTEGER; DECLARE odst INTEGER; DECLARE nid INTEGER; DECLARE t DOUBLE PRECISION; DECLARE p INTEGER; DECLARE i INTEGER;
-DECLARE fails SMALLINT; DECLARE yaw DOUBLE PRECISION; DECLARE reach DOUBLE PRECISION;
+DECLARE fails SMALLINT; DECLARE yaw DOUBLE PRECISION; DECLARE reach DOUBLE PRECISION; DECLARE prog_d DOUBLE PRECISION; DECLARE prog_t DOUBLE PRECISION; DECLARE stuck SMALLINT = 0;
 BEGIN
   moved = 0;
   t = now_();
   SELECT e.x, e.y, e.z FROM ents e WHERE e.id = :eid INTO x, y, z;
   SELECT g.x, g.y, g.z FROM ents g WHERE g.id = :target INTO tx, ty, tz;
   IF (tx IS NULL OR x IS NULL) THEN EXIT;
-  SELECT r.target, r.dst_node, r.path, r.built, r.fails FROM bot_routes r WHERE r.ent_id = :eid INTO rtarget, odst, path, built, fails;
+  SELECT r.target, r.dst_node, r.path, r.built, r.fails, r.prog_d, r.prog_t FROM bot_routes r WHERE r.ent_id = :eid INTO rtarget, odst, path, built, fails, prog_d, prog_t;
   fails = COALESCE(fails, 0);
+  -- no progress toward the next node for a while (a corpse, a mover, a corner the steps slide along): stuck
+  IF (prog_t IS NOT NULL AND t - prog_t > 1.5e0) THEN BEGIN stuck = 1; fails = 3; END
   dst = wp_nearest(tx, ty, tz, 0);
   IF (dst IS NULL) THEN BEGIN moved = -1; EXIT; END
   -- a new route when the target is another one or stands at another node, when the old one ran out or
@@ -114,10 +116,10 @@ BEGIN
   BEGIN
     src = wp_nearest(x, y, z, 1);
     path = wp_route(src, dst);
-    built = t; fails = 0;
+    built = t; fails = 0; prog_d = NULL; prog_t = t;
     IF (path IS NULL) THEN
     BEGIN
-      UPDATE OR INSERT INTO bot_routes (ent_id, target, dst_node, path, built, fails) VALUES (:eid, :target, :dst, NULL, :t, 0) MATCHING (ent_id);
+      UPDATE OR INSERT INTO bot_routes (ent_id, target, dst_node, path, built, fails, prog_d, prog_t) VALUES (:eid, :target, :dst, NULL, :t, 0, NULL, NULL) MATCHING (ent_id);
       moved = -1;
       EXIT;
     END
@@ -136,7 +138,7 @@ BEGIN
     s = SUBSTRING(s FROM p);
     i = i + 1;
   END
-  IF (cut IS NOT NULL) THEN path = cut;
+  IF (cut IS NOT NULL) THEN BEGIN path = cut; prog_d = NULL; prog_t = t; END
   p = POSITION(',', path, 2);
   IF (p = 0) THEN
   BEGIN
@@ -147,15 +149,32 @@ BEGIN
   ELSE
   BEGIN
     nid = CAST(SUBSTRING(path FROM 2 FOR p - 2) AS INTEGER);
-    SELECT w.x, w.y FROM waypoints w WHERE w.id = :nid INTO nx, ny;
+    SELECT w.x, w.y, w.z FROM waypoints w WHERE w.id = :nid INTO nx, ny, nz;
     yaw = vectoyaw(nx - x, ny - y);
     UPDATE ents e SET e.ideal_yaw = :yaw WHERE e.id = :eid;
-    moved = step_direction(eid, yaw, dist);
+    -- progress: nearer to the node than ever, or not
+    IF (prog_d IS NULL OR vlen(nx - x, ny - y, 0) < prog_d - 8) THEN BEGIN prog_d = vlen(nx - x, ny - y, 0); prog_t = t; END
+    IF (stuck = 1) THEN
+    BEGIN
+      -- sidestep out of whatever holds it, then the route is rebuilt next think
+      moved = step_direction(eid, anglemod(yaw + IIF(RAND() < 0.5e0, 90, -90)), dist);
+      IF (moved = 0) THEN moved = step_direction(eid, anglemod(yaw + 180), dist);
+      prog_d = NULL; prog_t = t;
+    END
+    ELSE moved = step_direction(eid, yaw, dist);
+    IF (moved = 0 AND nz < z - 40 AND vlen(nx - x, ny - y, 0) < 320) THEN
+    BEGIN
+      -- the next node is down a ledge and the step "walked off an edge": jump down, as the AAS's
+      -- jump-down reachability does; gravity and fly_move take it from here (run_physics)
+      UPDATE ents e SET e.vx = COS(:yaw * 0.0174532925e0) * 320, e.vy = SIN(:yaw * 0.0174532925e0) * 320, e.vz = 40,
+             e.flags = BIN_AND(e.flags, BIN_NOT(512)) WHERE e.id = :eid;
+      moved = 1;
+    END
     IF (moved = 0) THEN moved = step_direction(eid, anglemod(yaw + 35), dist);
     IF (moved = 0) THEN moved = step_direction(eid, anglemod(yaw - 35), dist);
     IF (moved = 0) THEN fails = fails + 1; ELSE fails = 0;
   END
-  UPDATE OR INSERT INTO bot_routes (ent_id, target, dst_node, path, built, fails) VALUES (:eid, :target, :dst, :path, :built, :fails) MATCHING (ent_id);
+  UPDATE OR INSERT INTO bot_routes (ent_id, target, dst_node, path, built, fails, prog_d, prog_t) VALUES (:eid, :target, :dst, :path, :built, :fails, :prog_d, :prog_t) MATCHING (ent_id);
 END^
 
 -- ── the bot's senses ─────────────────────────────────────────────────────

@@ -229,7 +229,7 @@ async function frame() {
     // the bots learn the arena while we play: a few grid columns, then a few nodes' edges, a frame (sql/waypoints.sql)
     if (map.unlinked > 0) {
       t = performance.now();
-      map.unlinked = await buildWaypoints(db, 3, 2);
+      map.unlinked = await buildWaypoints(db, perf.graph > 40 ? 1 : 3, perf.graph > 40 ? 1 : 2);   // smaller bites when a chunk ran long (q3dm7's 500 nodes)
       perf.graph = performance.now() - t;
       if (map.unlinked === 0) console.log(`[firebird-quake3] waypoint graph built: ${(await db.query('SELECT (SELECT COUNT(*) FROM waypoints) n, COUNT(*) e FROM wp_edges')).rows.map((r) => `${r.N} nodes, ${r.E} edges`)[0]}`);
     }
