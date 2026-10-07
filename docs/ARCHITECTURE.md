@@ -219,6 +219,18 @@ sound, the lead state. Each tic:
    trigger touching through `touch_triggers`, weapon switching with Quake III's raise/drop timing
    (`weaponstate`, `pending_weapon`), firing through `player_fire`, the impulses (1–9 weapons, 12/14
    cycle, 13 holdable, 99 give all), powerup timers, health decay above the maximum;
+   A spectator (`player.spectator`, the page's *Spectate* button calling `set_spectator`, Quake III's
+   `SetTeam`) leaves the match by dying first if alive (a suicide, a frag less) and comes back at a spawn
+   point; `make_spectator` puts it at the intermission point (`intermission_point`, shared with the
+   intermission's camera) with no body, no weapon and `FL_NOTARGET`, which the bots' target search and
+   enemy check honour, clipped by the world only (`clipmask` 65537). Free, `player_think` flies it
+   (`PM_FlyMove`: friction 5, acceleration 8 toward the wish velocity in three dimensions, jump and
+   crouch for up and down, no gravity) and lets it touch only teleporters (which neither telefrag nor
+   flash for it) and doors. Fire on the press cycles through the bots to follow (`follow_cycle`), jump
+   lets go and leaves it where the one followed was (`stop_following`); following, `q3_tic` and
+   `view_setup` take the eye, the angles, the health, the armour and the gun from the followed bot, and
+   `frame_all` does not draw it. A spectator is not ranked at the time limit and stays one into the
+   next arena.
 3. `run_pushers`: every mover (`movetype` 7) moves along its `calc_move` track and pushes what stands
    on it or in its way (`push_move`, the pushed set kept in the `pushed` temporary table so a blocked
    mover can put everything back, as `G_MoverPush` does); doors reverse when blocked and crush at

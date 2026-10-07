@@ -57,9 +57,23 @@ export class Hud {
       if (time > hud.OVER_TIME + 5) this.drawCenter(hud.NEXT_MAP ? `fire for ${hud.NEXT_MAP}` : 'fire to play again', Math.floor(h * 0.82), Math.round(12 * k));
       return;
     }
+    if (hud.SPECTATOR && !hud.FOLLOW_NAME) {
+      // free (CG_DrawSpectator): no status bar, the word and the ways out
+      this.drawConsole(messages, time, k);
+      this.drawCenter('SPECTATOR', h - Math.round(70 * k), Math.round(20 * k));
+      this.drawCenter('fire to follow a bot · Join to play', h - Math.round(40 * k), Math.round(10 * k));
+      if (hud.CPRINT) this.drawCenter(hud.CPRINT, Math.floor(h * 0.32), Math.round(16 * k));
+      if (opts.scoreboard) this.drawScoreboard(hud, opts.scores ?? this.lastScores, k);
+      return;
+    }
+    if (hud.FOLLOW_NAME) {
+      // following (CG_DrawFollow): whose eyes these are; above the status bar, as the console has the top
+      this.drawCenter('following', h - Math.round(118 * k), Math.round(10 * k));
+      this.drawCenter(hud.FOLLOW_NAME, h - Math.round(104 * k), Math.round(20 * k));
+    }
     // ammo
     const wp = WEAPONS[hud.WEAPON];
-    if (wp && wp.ammo) {
+    if (wp && wp.ammo && !hud.FOLLOW_NAME) {   // (the one followed: its gun, not our ammunition)
       const cnt = hud[['', '', 'BULLETS', 'SHELLS', 'GRENADES', 'ROCKETS', 'LIGHTNING', 'SLUGS', 'CELLS', 'BFG'][wp.ammo]] ?? 0;
       this.drawNum(Math.round(4 * k), yb, cnt, 3, dh, cnt <= 0 ? [1, 0.3, 0.3] : null);
       r.drawPic(this.pic(wp.icon), Math.round(108 * k), yb, ih, ih);
@@ -120,7 +134,7 @@ export class Hud {
     this.drawConsole(messages, time, k);
     // crosshair
     if (!hud.DEAD && this.crosshair) { const cz = Math.round(24 * k); r.drawPic(this.crosshair, (w - cz) >> 1, (h - cz) >> 1, cz, cz); }
-    if (hud.DEAD && time - hud.DEAD_TIME_ > 0) this.drawCenter('press fire to respawn', Math.floor(h * 0.6), Math.round(12 * k));
+    if (hud.DEAD && !hud.FOLLOW_NAME && time - hud.DEAD_TIME_ > 0) this.drawCenter('press fire to respawn', Math.floor(h * 0.6), Math.round(12 * k));
     if (opts.scoreboard) this.drawScoreboard(hud, opts.scores ?? this.lastScores, k);
   }
 

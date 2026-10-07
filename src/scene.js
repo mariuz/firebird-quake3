@@ -238,7 +238,7 @@ export function drawScene(renderer, hud, res, bsp, last, frame, opts = {}) {
   r.drawAlphaPolys();
 
   // the weapon in hand: the hand model at the eye, the gun on its tag (CG_AddViewWeapon)
-  if (!last.DEAD && !last.MATCH_OVER && last.WEAPON && !opts.noWeapon) drawViewWeapon(r, res, bsp, last, time, view);
+  if (!last.DEAD && !last.MATCH_OVER && !(last.SPECTATOR && !last.FOLLOW_NAME) && last.WEAPON && !opts.noWeapon) drawViewWeapon(r, res, bsp, last, time, view);
 
   // 2D
   if (hud) hud.draw(r, last, time, state.messages, opts);

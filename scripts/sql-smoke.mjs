@@ -290,6 +290,48 @@ if (pad) {
   await db.exec('UPDATE game SET warmup_end = 0, warmup_said = 0 WHERE id = 1');
 }
 
+// spectating (SetTeam, SpectatorThink, Cmd_FollowCycle_f, StopFollowing)
+{
+  const pe = (await db.query('SELECT ent_id e FROM player')).rows[0].E;
+  const frags0 = s.FRAGS;
+  await db.exec('EXECUTE PROCEDURE set_spectator(1)');
+  s = await tic([1, 0, 0, 0, 0, 0, 0, 1, 0]);
+  const me = (await db.query(`SELECT solid, takedamage, flags, x, y, z FROM ents WHERE id = ${pe}`)).rows[0];
+  assert(s.SPECTATOR === 1 && me.SOLID === 0 && me.TAKEDAMAGE === 0 && (me.FLAGS & 64) && s.FRAGS === frags0 - 1, `out of the match: no body, nothing to shoot at, a frag less for leaving alive (${frags0} → ${s.FRAGS})`);
+  const ip = (await db.query("SELECT FIRST 1 ox, oy, oz FROM map_ents WHERE classname = 'info_player_intermission' ORDER BY id")).rows[0];
+  assert(!ip || Math.hypot(s.PX - ip.OX, s.PY - ip.OY, s.VIEW_Z - ip.OZ) < 1, 'a new spectator watches from the intermission point');
+  // flying: up with jump, no gravity when still
+  const z0 = s.PZ;
+  for (let i = 0; i < 10; i++) s = await tic([1, 0, 0, 0, 0, 0, 1, 1, 0]);
+  const up = s.PZ - z0;
+  for (let i = 0; i < 20; i++) s = await tic([1, 0, 0, 0, 0, 0, 0, 1, 0]);
+  const z1 = s.PZ;
+  for (let i = 0; i < 10; i++) s = await tic([1, 0, 0, 0, 0, 0, 0, 1, 0]);
+  assert(up > 20 && Math.abs(s.PZ - z1) < 1, `flying: up ${up.toFixed(0)} units on jump, hanging still after (${(s.PZ - z1).toFixed(2)})`);
+  // the bots let a spectator be
+  for (let i = 0; i < 30; i++) s = await tic([1, 0, 0, 0, 0, 0, 0, 1, 0]);
+  const hunted = (await db.query(`SELECT COUNT(*) n FROM ents WHERE classname = 'bot' AND enemy_id = ${pe}`)).rows[0].N;
+  assert(hunted === 0, 'no bot has a spectator for its enemy');
+  // following: fire cycles through the bots, the view is theirs; jump lets go where they were
+  s = await tic([1, 0, 0, 0, 0, 1, 0, 1, 0]);
+  const f1 = s.FOLLOW_NAME;
+  const b1 = (await db.query(`SELECT x, y, z, viewheight FROM ents WHERE classname = 'bot' AND bot = '${f1}'`)).rows[0];
+  assert(f1 && Math.hypot(s.PX - b1.X, s.PY - b1.Y) < 1 && Math.abs(s.VIEW_Z - (b1.Z + b1.VIEWHEIGHT)) < 1, `fire: following ${f1}, through its eyes`);
+  s = await tic([1, 0, 0, 0, 0, 0, 0, 1, 0]);
+  s = await tic([1, 0, 0, 0, 0, 1, 0, 1, 0]);
+  assert(s.FOLLOW_NAME && s.FOLLOW_NAME !== f1, `fire again: the next one (${s.FOLLOW_NAME})`);
+  const b2 = (await db.query(`SELECT x, y FROM ents WHERE classname = 'bot' AND bot = '${s.FOLLOW_NAME}'`)).rows[0];
+  s = await tic([1, 0, 0, 0, 0, 0, 1, 1, 0]);
+  const at = (await db.query(`SELECT x, y FROM ents WHERE id = ${pe}`)).rows[0];
+  assert(!s.FOLLOW_NAME && Math.hypot(at.X - b2.X, at.Y - b2.Y) < 40, 'jump: free again, from where it was');
+  // and back into the match
+  await db.exec('EXECUTE PROCEDURE set_spectator(0)');
+  s = await tic([1, 0, 0, 0, 0, 0, 0, 1, 0]);
+  const back = (await db.query(`SELECT solid, takedamage, flags FROM ents WHERE id = ${pe}`)).rows[0];
+  assert(s.SPECTATOR === 0 && back.SOLID === 3 && back.TAKEDAMAGE > 0 && (back.FLAGS & 64) === 0 && s.HEALTH === 125, 'joined again: a body, a target, 125 health');
+  await db.exec(`UPDATE ents SET flags = BIN_OR(flags, 16) WHERE id = ${pe}`);
+}
+
 // the page's predicted eye: passed through when it is the real one, clamped by a trace when it runs into a wall
 {
   const e = (await db.query('SELECT ex, ey, ez, fx, fy FROM view_setup')).rows[0];

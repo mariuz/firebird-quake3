@@ -397,6 +397,106 @@ BEGIN
   EXECUTE PROCEDURE link_ent(c);
 END^
 
+-- ── the spectator (TEAM_SPECTATOR) ─────────────────────────────────────────
+-- FindIntermissionPoint: the map's first info_player_intermission looking at its target (or along its
+-- angle), else a spawn point: where the intermission's camera and a new spectator are (the eye)
+CREATE OR ALTER PROCEDURE intermission_point
+RETURNS (x DOUBLE PRECISION, y DOUBLE PRECISION, z DOUBLE PRECISION, yaw DOUBLE PRECISION, pitch DOUBLE PRECISION)
+AS
+DECLARE tx DOUBLE PRECISION; DECLARE ty DOUBLE PRECISION; DECLARE tz DOUBLE PRECISION; DECLARE tgt VARCHAR(40);
+DECLARE ang DOUBLE PRECISION; DECLARE ap DOUBLE PRECISION; DECLARE ay DOUBLE PRECISION;
+BEGIN
+  SELECT FIRST 1 m.ox, m.oy, m.oz, m.target, m.angle, m.apitch, m.ayaw FROM map_ents m WHERE m.classname = 'info_player_intermission' ORDER BY m.id
+    INTO x, y, z, tgt, ang, ap, ay;
+  IF (x IS NULL) THEN
+  BEGIN
+    EXECUTE PROCEDURE select_spawn(player_ent()) RETURNING_VALUES x, y, z, yaw;
+    z = z + 9 + 26; pitch = 0;
+  END
+  ELSE
+  BEGIN
+    yaw = IIF(COALESCE(ay, 0) <> 0, ay, COALESCE(ang, 0)); pitch = COALESCE(ap, 0);
+    IF (tgt IS NOT NULL) THEN
+    BEGIN
+      SELECT FIRST 1 t.ox, t.oy, t.oz FROM map_ents t WHERE t.targetname = :tgt INTO tx, ty, tz;
+      IF (tx IS NOT NULL) THEN
+      BEGIN
+        yaw = vectoyaw(tx - x, ty - y);
+        pitch = -ATAN2(tz - z, vlen(tx - x, ty - y, 0)) * 57.29578e0;
+      END
+    END
+  END
+  SUSPEND;
+END^
+
+-- ClientSpawn for a spectator (SelectSpectatorSpawnPoint): at the intermission point, no body, no weapon,
+-- nothing to shoot at (FL_NOTARGET: the bots look past it), clipped by the world only
+CREATE OR ALTER PROCEDURE make_spectator
+AS
+DECLARE pe INTEGER; DECLARE x DOUBLE PRECISION; DECLARE y DOUBLE PRECISION; DECLARE z DOUBLE PRECISION; DECLARE yaw DOUBLE PRECISION; DECLARE pitch DOUBLE PRECISION;
+BEGIN
+  pe = player_ent();
+  EXECUTE PROCEDURE intermission_point RETURNING_VALUES x, y, z, yaw, pitch;
+  UPDATE ents e SET e.x = :x, e.y = :y, e.z = :z - 26, e.vx = 0, e.vy = 0, e.vz = 0, e.yaw = :yaw, e.pitch = :pitch,
+         e.deadflag = 0, e.health = 100, e.solid = 0, e.takedamage = 0, e.movetype = 0, e.alpha = 1, e.weapon = 0,
+         e.minx = -15, e.miny = -15, e.minz = -24, e.maxx = 15, e.maxy = 15, e.maxz = 32, e.viewheight = 26,
+         e.clipmask = 65537, e.flags = BIN_OR(BIN_AND(e.flags, 16), 64) WHERE e.id = :pe;
+  UPDATE player p SET p.spectator = 1, p.follow_id = NULL, p.spec_fire = 1, p.pitch = :pitch, p.punchangle = 0, p.stepz = 0, p.view_ofs = 26,
+         p.ducked = 0, p.onground = 0, p.weapon_sound = 0, p.weapon = 0, p.pending_weapon = 0, p.weaponstate = 0, p.weapons = 0,
+         p.quad_finished = 0, p.haste_finished = 0, p.invis_finished = 0, p.regen_finished = 0, p.enviro_finished = 0, p.flight_finished = 0 WHERE p.id = 1;
+  EXECUTE PROCEDURE link_ent(pe);
+END^
+
+-- SetTeam: to the spectators (one who leaves the match alive dies first, a suicide: a frag less), or
+-- back into the match at a spawn point
+CREATE OR ALTER PROCEDURE set_spectator (on_ SMALLINT)
+AS
+DECLARE pe INTEGER; DECLARE spec SMALLINT; DECLARE nm VARCHAR(32);
+BEGIN
+  pe = player_ent();
+  SELECT p.spectator, p.name FROM player p WHERE p.id = 1 INTO spec, nm;
+  IF (EXISTS (SELECT 1 FROM game g WHERE g.id = 1 AND g.match_over = 1)) THEN EXIT;
+  IF (on_ = 1 AND spec = 0) THEN
+  BEGIN
+    IF (EXISTS (SELECT 1 FROM ents e WHERE e.id = :pe AND e.deadflag = 0 AND e.health > 0)) THEN EXECUTE PROCEDURE player_die(pe, 20);
+    EXECUTE PROCEDURE make_spectator;
+    EXECUTE PROCEDURE say(nm || ' joined the spectators.');
+  END
+  ELSE IF (on_ = 0 AND spec = 1) THEN
+  BEGIN
+    UPDATE player p SET p.spectator = 0, p.follow_id = NULL WHERE p.id = 1;
+    EXECUTE PROCEDURE player_respawn;
+    EXECUTE PROCEDURE say(nm || ' entered the game');
+  END
+END^
+
+-- Cmd_FollowCycle_f: the next bot to follow (dead ones too: the view goes down with them)
+CREATE OR ALTER PROCEDURE follow_cycle
+AS
+DECLARE cur INTEGER; DECLARE nxt INTEGER; DECLARE nm VARCHAR(16);
+BEGIN
+  SELECT p.follow_id FROM player p WHERE p.id = 1 INTO cur;
+  SELECT FIRST 1 e.id, e.bot FROM ents e WHERE e.classname = 'bot' AND e.id > COALESCE(:cur, 0) ORDER BY e.id INTO nxt, nm;
+  IF (nxt IS NULL) THEN SELECT FIRST 1 e.id, e.bot FROM ents e WHERE e.classname = 'bot' ORDER BY e.id INTO nxt, nm;
+  IF (nxt IS NULL) THEN EXIT;
+  UPDATE player p SET p.follow_id = :nxt WHERE p.id = 1;
+END^
+
+-- StopFollowing: free again, from where the one followed was, looking where it looked
+CREATE OR ALTER PROCEDURE stop_following
+AS
+DECLARE pe INTEGER; DECLARE f INTEGER;
+BEGIN
+  pe = player_ent();
+  SELECT p.follow_id FROM player p WHERE p.id = 1 INTO f;
+  IF (f IS NULL) THEN EXIT;
+  UPDATE player p SET p.follow_id = NULL, p.pitch = COALESCE((SELECT o.pitch FROM ents o WHERE o.id = :f), p.pitch) WHERE p.id = 1;
+  UPDATE ents e SET e.x = COALESCE((SELECT o.x FROM ents o WHERE o.id = :f), e.x), e.y = COALESCE((SELECT o.y FROM ents o WHERE o.id = :f), e.y),
+         e.z = COALESCE((SELECT o.z + o.viewheight - 26 FROM ents o WHERE o.id = :f), e.z), e.yaw = COALESCE((SELECT o.yaw FROM ents o WHERE o.id = :f), e.yaw),
+         e.vx = 0, e.vy = 0, e.vz = 0 WHERE e.id = :pe;
+  EXECUTE PROCEDURE link_ent(pe);
+END^
+
 -- ClientThink + Pmove + ClientEndServerFrame for one tic
 -- `jump` is Quake III's upmove: 1 jumps (or swims up), -1 crouches (or swims down), 0 neither
 CREATE OR ALTER PROCEDURE player_think (dt DOUBLE PRECISION, fwd DOUBLE PRECISION, side DOUBLE PRECISION,
@@ -420,9 +520,11 @@ DECLARE afin DOUBLE PRECISION; DECLARE hp INTEGER; DECLARE deadt DOUBLE PRECISIO
 DECLARE enviro DOUBLE PRECISION; DECLARE haste DOUBLE PRECISION; DECLARE regen DOUBLE PRECISION; DECLARE ndt DOUBLE PRECISION; DECLARE ddmg INTEGER; DECLARE mhp INTEGER;
 DECLARE grav DOUBLE PRECISION; DECLARE tt DOUBLE PRECISION; DECLARE legs INTEGER; DECLARE hdecay DOUBLE PRECISION; DECLARE rt DOUBLE PRECISION; DECLARE stept DOUBLE PRECISION;
 DECLARE mover SMALLINT; DECLARE pm VARCHAR(16); DECLARE match_done SMALLINT; DECLARE ducked SMALLINT; DECLARE maxz DOUBLE PRECISION; DECLARE wend DOUBLE PRECISION;
+DECLARE spec SMALLINT; DECLARE sfire SMALLINT; DECLARE fid INTEGER;
 BEGIN
-  SELECT p.ent_id, p.jump_released, p.air_finished, p.dead_time, p.enviro_finished, p.haste_finished, p.regen_finished, p.next_drown_time, p.drown_dmg, p.health_decay, p.regen_time, p.step_time, p.ducked
-    FROM player p WHERE p.id = 1 INTO pe, jr, afin, deadt, enviro, haste, regen, ndt, ddmg, hdecay, rt, stept, ducked;
+  SELECT p.ent_id, p.jump_released, p.air_finished, p.dead_time, p.enviro_finished, p.haste_finished, p.regen_finished, p.next_drown_time, p.drown_dmg, p.health_decay, p.regen_time, p.step_time, p.ducked,
+         p.spectator, p.spec_fire, p.follow_id
+    FROM player p WHERE p.id = 1 INTO pe, jr, afin, deadt, enviro, haste, regen, ndt, ddmg, hdecay, rt, stept, ducked, spec, sfire, fid;
   IF (pe IS NULL) THEN EXIT;
   SELECT e.deadflag, e.flags, e.waterlevel, e.watertype, e.yaw, e.health, e.z, e.max_health, e.teleport_time, e.legs_anim, e.pmodel
     FROM ents e WHERE e.id = :pe INTO dead, flags, owl, wt, yaw, hp, oldz, mhp, tt, legs, pm;
@@ -451,6 +553,49 @@ BEGIN
   yaw = anglemod(yaw + yaw_d);
   UPDATE player p SET p.pitch = MAXVALUE(-89, MINVALUE(89, p.pitch + :pitch_d)), p.punchangle = MINVALUE(0, p.punchangle + 10 * :dt) WHERE p.id = 1 RETURNING p.pitch INTO pitch;
   UPDATE ents e SET e.yaw = :yaw, e.pitch = :pitch WHERE e.id = :pe;
+
+  -- a spectator (SpectatorThink): the attack button cycles through the bots to follow, jump lets go of
+  -- the one followed; free, it flies (PM_FlyMove: friction 5, acceleration 8, no gravity, up and down
+  -- with jump and crouch) through everything but the world, and touches only teleporters and doors
+  IF (spec = 1) THEN
+  BEGIN
+    IF (fire = 1 AND sfire = 0) THEN EXECUTE PROCEDURE follow_cycle;
+    UPDATE player p SET p.spec_fire = :fire WHERE p.id = 1 AND p.spec_fire <> :fire;
+    IF (fid IS NOT NULL) THEN
+    BEGIN
+      IF (jump = 1) THEN EXECUTE PROCEDURE stop_following;
+      EXIT;
+    END
+    SELECT e.vx, e.vy, e.vz FROM ents e WHERE e.id = :pe INTO vx, vy, vz;
+    spd = vlen(vx, vy, vz);
+    IF (spd < 1) THEN BEGIN vx = 0; vy = 0; vz = 0; END
+    ELSE
+    BEGIN
+      ns = MAXVALUE(0, spd - spd * 5 * dt) / spd;
+      vx = vx * ns; vy = vy * ns; vz = vz * ns;
+    END
+    maxspd = IIF(run = 1, 320, 160);
+    wx = COS(yaw * 0.0174532925e0) * COS(pitch * 0.0174532925e0) * fwd + SIN(yaw * 0.0174532925e0) * side;
+    wy = SIN(yaw * 0.0174532925e0) * COS(pitch * 0.0174532925e0) * fwd - COS(yaw * 0.0174532925e0) * side;
+    wz = -SIN(pitch * 0.0174532925e0) * fwd + jump;
+    wspd = vlen(wx, wy, wz);
+    IF (wspd > 0) THEN
+    BEGIN
+      wx = wx / wspd; wy = wy / wspd; wz = wz / wspd;
+      add_ = maxspd - (vx * wx + vy * wy + vz * wz);
+      IF (add_ > 0) THEN
+      BEGIN
+        acc = MINVALUE(add_, 8 * dt * maxspd);
+        vx = vx + acc * wx; vy = vy + acc * wy; vz = vz + acc * wz;
+      END
+    END
+    UPDATE ents e SET e.vx = :vx, e.vy = :vy, e.vz = :vz, e.flags = BIN_AND(e.flags, BIN_NOT(512)) WHERE e.id = :pe;
+    EXECUTE PROCEDURE fly_move(pe, dt) RETURNING_VALUES tst, tid;
+    EXECUTE PROCEDURE link_ent(pe);
+    EXECUTE PROCEDURE touch_triggers(pe);
+    UPDATE player p SET p.move_speed = vlen(:vx, :vy, 0), p.onground = 0 WHERE p.id = 1;
+    EXIT;
+  END
   IF (imp > 0) THEN EXECUTE PROCEDURE player_impulse(imp);
 
   -- P_WorldEffects: water, slime, lava, drowning

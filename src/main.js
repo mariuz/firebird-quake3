@@ -255,7 +255,7 @@ function viewRow(alpha, now) {
   const frac = Math.min(1, (now - lastTic) / TIC_MS);
   const yawLive = mouseYaw + ((k('ArrowLeft') ? 1 : 0) - (k('ArrowRight') ? 1 : 0)) * 7 * frac;
   const pitchLive = mousePitch + ((k('PageDown') ? 1 : 0) - (k('PageUp') ? 1 : 0)) * 5 * frac;
-  if (last.MATCH_OVER) return { ...last };   // the intermission camera does not turn
+  if (last.MATCH_OVER || last.FOLLOW_NAME) return { ...last };   // the intermission camera and the eyes of the one followed do not turn with the mouse
   const v = { ...last, YAW: (last.YAW + yawLive) % 360, PITCH: Math.max(-89, Math.min(89, last.PITCH + pitchLive)) };
   if (!prev || alpha >= 1 || Math.hypot(last.PX - prev.PX, last.PY - prev.PY, last.PZ - prev.PZ) >= SNAP) return v;
   v.TIME_ = lerp(prev.TIME_, last.TIME_, alpha);
@@ -356,6 +356,7 @@ async function frame() {
     renderer.present(tint);
     perf.draw = performance.now() - t;
     updateStats(ticked);
+    if (ticked) { const sp = $('spectate'), label = last.SPECTATOR ? 'Join' : 'Spectate'; if (sp.textContent !== label) sp.textContent = label; }
   } catch (err) {
     console.error(err);
     setStatus(`Error: ${err.message}`, true);
@@ -486,6 +487,11 @@ $('renderer').addEventListener('change', (e) => {
 });
 $('brightness').value = String(settings.brightness);
 $('brightness').addEventListener('change', (e) => { settings.brightness = Number(e.target.value); saveSettings(); if (renderer) renderer.setBrightness(settings.brightness); });
+// spectating: out of the match and back (SetTeam)
+$('spectate').addEventListener('click', () => {
+  if (!db || !running || !last) return;
+  db.exec(`EXECUTE PROCEDURE set_spectator(${last.SPECTATOR ? 0 : 1})`).catch((err) => console.error(err));
+});
 // the name the bots call you by
 const cleanName = (s) => String(s ?? '').replace(/[^\x20-\x7e]/g, '').replace(/'/g, '').trim().slice(0, 15) || 'Player';
 async function setPlayerName() { if (db) await db.exec(`UPDATE player SET name = '${cleanName(settings.name)}' WHERE id = 1`); }

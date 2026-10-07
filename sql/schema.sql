@@ -367,6 +367,9 @@ CREATE TABLE player (
   holdable        SMALLINT DEFAULT 0 NOT NULL,            -- 1 teleporter 2 medkit
   jump_released   SMALLINT DEFAULT 1 NOT NULL,
   name            VARCHAR(32) DEFAULT 'Player' NOT NULL,  -- what the bots call you
+  spectator       SMALLINT DEFAULT 0 NOT NULL,            -- TEAM_SPECTATOR: out of the match, flying or following
+  follow_id       INTEGER,                                -- SPECTATOR_FOLLOW: the bot whose eyes we see through
+  spec_fire       SMALLINT DEFAULT 0 NOT NULL,            -- the attack button at the last tic (it cycles on the press)
   ducked          SMALLINT DEFAULT 0 NOT NULL,            -- PMF_DUCKED: the box 16 high instead of 32, the eye at 12 instead of 26
   fly_sound_time  DOUBLE PRECISION DEFAULT 0 NOT NULL,
   step_time       DOUBLE PRECISION DEFAULT 0 NOT NULL,

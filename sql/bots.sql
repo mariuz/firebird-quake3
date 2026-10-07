@@ -23,10 +23,10 @@ CREATE OR ALTER FUNCTION chat_opponent (eid INTEGER) RETURNS VARCHAR(32)
 AS
 DECLARE n INTEGER; DECLARE k INTEGER; DECLARE o INTEGER;
 BEGIN
-  SELECT COUNT(*) FROM ents e WHERE e.classname IN ('player', 'bot') AND e.id <> :eid INTO n;
+  SELECT COUNT(*) FROM ents e WHERE e.classname IN ('player', 'bot') AND e.id <> :eid AND BIN_AND(e.flags, 64) = 0 INTO n;
   IF (n = 0) THEN RETURN '[invalid var]';
   k = CAST(FLOOR(RAND() * n) AS INTEGER);
-  SELECT FIRST 1 SKIP (:k) e.id FROM ents e WHERE e.classname IN ('player', 'bot') AND e.id <> :eid ORDER BY e.id INTO o;
+  SELECT FIRST 1 SKIP (:k) e.id FROM ents e WHERE e.classname IN ('player', 'bot') AND e.id <> :eid AND BIN_AND(e.flags, 64) = 0 ORDER BY e.id INTO o;
   RETURN chat_name(o);
 END^
 
@@ -577,7 +577,7 @@ BEGIN
   -- the enemy: lost when dead, or unseen for a while; a new one is noticed by the senses of the skill
   IF (enemy IS NOT NULL) THEN
   BEGIN
-    SELECT e.health FROM ents e WHERE e.id = :enemy INTO ehp;
+    SELECT IIF(BIN_AND(e.flags, 64) <> 0, 0, e.health) FROM ents e WHERE e.id = :enemy INTO ehp;   -- (a spectator is no enemy)
     IF (ehp IS NULL OR ehp <= 0) THEN enemy = NULL;
   END
   IF (enemy IS NOT NULL AND srch < t) THEN enemy = NULL;
@@ -740,26 +740,8 @@ DECLARE tx DOUBLE PRECISION; DECLARE ty DOUBLE PRECISION; DECLARE tz DOUBLE PREC
 DECLARE ang DOUBLE PRECISION; DECLARE ap DOUBLE PRECISION; DECLARE ay DOUBLE PRECISION; DECLARE yaw DOUBLE PRECISION; DECLARE pitch DOUBLE PRECISION;
 BEGIN
   pe = player_ent();
-  SELECT FIRST 1 m.ox, m.oy, m.oz, m.target, m.angle, m.apitch, m.ayaw FROM map_ents m WHERE m.classname = 'info_player_intermission' ORDER BY m.id
-    INTO ox, oy, oz, tgt, ang, ap, ay;
-  IF (ox IS NULL) THEN
-  BEGIN
-    EXECUTE PROCEDURE select_spawn(pe) RETURNING_VALUES ox, oy, oz, yaw;
-    oz = oz + 9 + 26; pitch = 0;
-  END
-  ELSE
-  BEGIN
-    yaw = IIF(COALESCE(ay, 0) <> 0, ay, COALESCE(ang, 0)); pitch = COALESCE(ap, 0);
-    IF (tgt IS NOT NULL) THEN
-    BEGIN
-      SELECT FIRST 1 t.ox, t.oy, t.oz FROM map_ents t WHERE t.targetname = :tgt INTO tx, ty, tz;
-      IF (tx IS NOT NULL) THEN
-      BEGIN
-        yaw = vectoyaw(tx - ox, ty - oy);
-        pitch = -ATAN2(tz - oz, vlen(tx - ox, ty - oy, 0)) * 57.29578e0;
-      END
-    END
-  END
+  EXECUTE PROCEDURE intermission_point RETURNING_VALUES ox, oy, oz, yaw, pitch;
+  UPDATE player p SET p.follow_id = NULL WHERE p.id = 1;
   -- the eye is the intermission point itself (CG_CalcViewValues under PM_INTERMISSION)
   UPDATE ents e SET e.x = :ox, e.y = :oy, e.z = :oz - 26, e.vx = 0, e.vy = 0, e.vz = 0, e.yaw = :yaw, e.pitch = :pitch,
          e.deadflag = 0, e.health = MAXVALUE(e.health, 1), e.solid = 0, e.takedamage = 0, e.movetype = 0,
@@ -827,7 +809,7 @@ BEGIN
   IF (tl > 1 AND BIN_AND(warn, 2) = 0 AND t >= (tl - 1) * 60) THEN BEGIN warn = BIN_OR(warn, 2); EXECUTE PROCEDURE snd_local('sound/feedback/1_minute.wav'); END
   IF (t >= tl * 60) THEN
   BEGIN
-    SELECT p.frags FROM player p WHERE p.id = 1 INTO pf;
+    SELECT IIF(p.spectator = 1, -1000000, p.frags) FROM player p WHERE p.id = 1 INTO pf;   -- a spectator is not ranked
     SELECT MAX(e.frags) FROM ents e WHERE e.classname = 'bot' INTO bf;
     top = MAXVALUE(pf, COALESCE(bf, pf));
     n = IIF(pf = top, 1, 0) + (SELECT COUNT(*) FROM ents e WHERE e.classname = 'bot' AND e.frags = :top);
@@ -1177,7 +1159,8 @@ RETURNS (
   leaf INTEGER, cluster INTEGER, match_over SMALLINT, winner VARCHAR(32), land_time DOUBLE PRECISION, onground SMALLINT, move_speed DOUBLE PRECISION, weapon_sound SMALLINT, lead INTEGER, ducked SMALLINT,
   fraglimit INTEGER, timelimit INTEGER, over_time DOUBLE PRECISION, next_map VARCHAR(64),
   dmg_z DOUBLE PRECISION, dmg_world SMALLINT, land_change DOUBLE PRECISION, vx DOUBLE PRECISION, vy DOUBLE PRECISION,
-  warmup_end DOUBLE PRECISION, award SMALLINT, award_time DOUBLE PRECISION, n_excellent SMALLINT, n_impressive SMALLINT, n_gauntlet SMALLINT)
+  warmup_end DOUBLE PRECISION, award SMALLINT, award_time DOUBLE PRECISION, n_excellent SMALLINT, n_impressive SMALLINT, n_gauntlet SMALLINT,
+  spectator SMALLINT, follow_name VARCHAR(32))
 AS
 DECLARE i INTEGER = 0;
 BEGIN
@@ -1193,22 +1176,22 @@ BEGIN
     EXECUTE PROCEDURE check_exit_rules;
     i = i + 1;
   END
-  SELECT g.tic, g.time_, e.health, e.max_health, p.armor, p.bullets, p.shells, p.grenades, p.rockets, p.lightning, p.slugs, p.cells, p.bfg,
-         p.weapons, p.weapon, p.pending_weapon, p.weaponstate, p.weapon_time, p.attack_start, p.attack_finished,
-         e.x, e.y, e.z, e.yaw, p.pitch + p.punchangle, e.z + p.view_ofs - p.stepz, p.punchangle,
+  SELECT g.tic, g.time_, e.health, e.max_health, IIF(p.follow_id IS NULL, p.armor, e.armor), p.bullets, p.shells, p.grenades, p.rockets, p.lightning, p.slugs, p.cells, p.bfg,
+         p.weapons, IIF(p.follow_id IS NULL, p.weapon, e.weapon), p.pending_weapon, p.weaponstate, p.weapon_time, p.attack_start, p.attack_finished,
+         e.x, e.y, e.z, e.yaw, IIF(p.follow_id IS NULL, p.pitch + p.punchangle, e.pitch), e.z + IIF(p.follow_id IS NULL, p.view_ofs - p.stepz, e.viewheight), p.punchangle,
          IIF(p.msg_time > g.time_, p.msg, NULL), IIF(p.cprint_time > g.time_, p.cprint, NULL),
          p.dmg_take, p.dmg_save, p.dmg_time, p.dmg_x, p.dmg_y, p.bonus_time, e.deadflag, g.exit_kind, p.frags, p.deaths, e.waterlevel, e.watertype, g.map_name, g.level_msg,
          MAXVALUE(0, p.quad_finished - g.time_), MAXVALUE(0, p.haste_finished - g.time_), MAXVALUE(0, p.invis_finished - g.time_), MAXVALUE(0, p.regen_finished - g.time_),
          MAXVALUE(0, p.enviro_finished - g.time_), MAXVALUE(0, p.flight_finished - g.time_), p.holdable,
-         e.leaf, e.cluster, g.match_over, g.winner, p.land_time, p.onground, p.move_speed, p.weapon_sound,
+         e.leaf, e.cluster, g.match_over, g.winner, p.land_time, IIF(p.follow_id IS NULL, p.onground, IIF(BIN_AND(e.flags, 512) <> 0, 1, 0)), p.move_speed, p.weapon_sound,
          (SELECT COALESCE(MAX(b.frags), 0) FROM ents b WHERE b.classname = 'bot'), p.ducked, g.fraglimit, g.timelimit, g.over_time, g.next_map,
-         p.dmg_z, p.dmg_world, p.land_change, e.vx, e.vy, g.warmup_end, e.award, e.award_time, e.n_excellent, e.n_impressive, e.n_gauntlet
-    FROM game g CROSS JOIN player p JOIN ents e ON e.id = p.ent_id
+         p.dmg_z, p.dmg_world, p.land_change, e.vx, e.vy, g.warmup_end, e.award, e.award_time, e.n_excellent, e.n_impressive, e.n_gauntlet, p.spectator, IIF(p.follow_id IS NULL, NULL, e.bot)
+    FROM game g CROSS JOIN player p JOIN ents e ON e.id = COALESCE(p.follow_id, p.ent_id)   -- following: the one followed
    WHERE g.id = 1 AND p.id = 1
     INTO tic, time_, health, max_health, armor, bullets, shells, grenades, rockets, lightning, slugs, cells, bfg,
          weapons, weapon, pending_weapon, weaponstate, weapon_time, attack_start, attack_finished,
          px, py, pz, yaw, pitch, view_z, punch, msg, cprint, dmg_take, dmg_save, dmg_time, dmg_x, dmg_y, bonus_time, dead, exit_kind, frags, deaths, waterlevel, watertype, map_name, level_msg,
-         quad, haste, invis, regen, enviro, flight, holdable, leaf, cluster, match_over, winner, land_time, onground, move_speed, weapon_sound, lead, ducked, fraglimit, timelimit, over_time, next_map, dmg_z, dmg_world, land_change, vx, vy, warmup_end, award, award_time, n_excellent, n_impressive, n_gauntlet;
+         quad, haste, invis, regen, enviro, flight, holdable, leaf, cluster, match_over, winner, land_time, onground, move_speed, weapon_sound, lead, ducked, fraglimit, timelimit, over_time, next_map, dmg_z, dmg_world, land_change, vx, vy, warmup_end, award, award_time, n_excellent, n_impressive, n_gauntlet, spectator, follow_name;
   UPDATE player p SET p.dmg_take = 0, p.dmg_save = 0 WHERE p.id = 1 AND p.dmg_time < :time_ - 0.05e0;
   SUSPEND;
 END^
@@ -1248,6 +1231,7 @@ BEGIN
   UPDATE player p SET p.ent_id = :pe, p.frags = 0, p.deaths = 0, p.lead_state = 1, p.last_kill = -10, p.msg = NULL, p.msg_time = 0, p.cprint = NULL, p.cprint_time = 0, p.step_time = 0, p.land_time = -10 WHERE p.id = 1;
   EXECUTE PROCEDURE player_respawn;
   UPDATE ents e SET e.teleport_time = 0 WHERE e.id = :pe;
+  IF ((SELECT p.spectator FROM player p WHERE p.id = 1) = 1) THEN EXECUTE PROCEDURE make_spectator;   -- a spectator stays one
   -- the bots, in the order of bot_defs
   SELECT COUNT(*) FROM bot_defs INTO n;
   WHILE (i < num_bots AND i < n) DO

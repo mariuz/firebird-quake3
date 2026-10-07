@@ -13,7 +13,6 @@ is a bug report; it is the gap between a 20 Hz SQL deathmatch and the 1999 game.
 
 | Gap | Quake III | Here | Where it would go |
 | --- | --- | --- | --- |
-| **Spectating** | free-floating spectator, joining and leaving the match (`team spectator`) | you are always in the match | a `spectator` flag on the player: no box, no weapon, `PM_SPECTATOR`'s fly move |
 
 ## 2. Movement and physics
 
@@ -114,7 +113,8 @@ the torso's frames (`CG_MapTorsoToWeaponFrame`), the bots' new gun coming up; th
 and characteristics: level start and end, joining, deaths, kills, suicides, hits, idle talk; no synonyms,
 no typing delay, no replies); the rewards (excellent for two frags in 3 s, impressive for two rail hits in a
 row, gauntlet with "humiliation" for both), their medals on the HUD and over the earner's head and the
-match's medals at the end; the countdown before the match ("prepare to fight", three, two, one, "fight!"); doors with auto triggers, plats, buttons, trains,
+match's medals at the end; the countdown before the match ("prepare to fight", three, two, one, "fight!"); spectating (leaving the
+match and joining again, free flight, following a bot through its eyes); doors with auto triggers, plats, buttons, trains,
 bobbing, pendulum, rotating, static, timers, speakers; jump pads (`AimAtTarget`), teleporters, hurt
 and multiple triggers, `G_UseTargets` with delays and relays, `target_give/kill/print/teleporter/
 remove_powerups/score`; every item of `bg_itemlist` with its respawn, armour at 66 percent, the five

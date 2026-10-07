@@ -35,8 +35,9 @@ DECLARE f DOUBLE PRECISION; DECLARE tx DOUBLE PRECISION; DECLARE ty DOUBLE PRECI
 DECLARE nx DOUBLE PRECISION; DECLARE ny DOUBLE PRECISION; DECLARE nz DOUBLE PRECISION;
 DECLARE sf INTEGER; DECLARE ct INTEGER; DECLARE als SMALLINT; DECLARE sts SMALLINT; DECLARE hit INTEGER;
 BEGIN
-  SELECT e.x, e.y, e.z + p.view_ofs, e.yaw, p.pitch + p.punchangle, p.stepz, e.deadflag
-    FROM player p JOIN ents e ON e.id = p.ent_id WHERE p.id = 1 INTO ex, ey, ez, yaw, pitch, stepz, dead;
+  SELECT e.x, e.y, e.z + IIF(p.follow_id IS NULL, p.view_ofs, e.viewheight), e.yaw, IIF(p.follow_id IS NULL, p.pitch + p.punchangle, e.pitch),
+         IIF(p.follow_id IS NULL, p.stepz, 0), e.deadflag
+    FROM player p JOIN ents e ON e.id = COALESCE(p.follow_id, p.ent_id) WHERE p.id = 1 INTO ex, ey, ez, yaw, pitch, stepz, dead;   -- following: its eye
   ez = ez - COALESCE(stepz, 0);
   IF (vx IS NOT NULL) THEN
   BEGIN
@@ -267,7 +268,7 @@ DECLARE qx DOUBLE PRECISION; DECLARE qy DOUBLE PRECISION; DECLARE world INTEGER;
 DECLARE eid INTEGER; DECLARE emid INTEGER; DECLARE cls VARCHAR(200) CHARACTER SET ASCII; DECLARE cl INTEGER; DECLARE rot SMALLINT;
 DECLARE vis SMALLINT; DECLARE vis_cl INTEGER;
 DECLARE pm VARCHAR(16); DECLARE ps VARCHAR(16); DECLARE la INTEGER; DECLARE ta INTEGER; DECLARE hp INTEGER; DECLARE cn VARCHAR(40); DECLARE alpha SMALLINT;
-DECLARE tn DOUBLE PRECISION;
+DECLARE tn DOUBLE PRECISION; DECLARE fid INTEGER;
 BEGIN
   SELECT g.world_model FROM game g WHERE g.id = 1 INTO world;
   pe = player_ent();
@@ -334,13 +335,14 @@ BEGIN
   -- reach the PVS test; the sphere is the model's radius plus a margin that covers a player's box.
   kind = 2;
   tn = now_();
+  SELECT COALESCE(p.follow_id, -1) FROM player p WHERE p.id = 1 INTO fid;   -- the one followed is not drawn: we are behind its eyes
   FOR SELECT e.id, e.model_id, e.frame, e.weapon,
              -- the medal over the head for two seconds: 8192 excellent, 16384 gauntlet, 32768 impressive
              e.effects + IIF(e.award > 0 AND e.award_time > :tn - 2, CASE e.award WHEN 1 THEN 8192 WHEN 2 THEN 32768 WHEN 3 THEN 16384 ELSE 0 END, 0),
              e.x, e.y, e.z, e.pitch, e.yaw, e.roll, e.legs_time, e.torso_time,
              e.pmodel, e.pskin, e.legs_anim, e.torso_anim, e.health, e.classname, e.cluster, e.clusters
         FROM ents e LEFT JOIN models m ON m.id = e.model_id
-       WHERE (m.kind IN ('M', 'S') OR e.pmodel IS NOT NULL) AND e.id <> :pe AND e.alpha = 0
+       WHERE (m.kind IN ('M', 'S') OR e.pmodel IS NOT NULL) AND e.id <> :pe AND e.id <> :fid AND e.alpha = 0
          AND (e.x - :ex) * :fx + (e.y - :ey) * :fy + (e.z - :ez) * :fz + COALESCE(m.radius, 0) + 64 >= :nearz
          AND ABS((e.x - :ex) * :rx + (e.y - :ey) * :ry + (e.z - :ez) * :rz)
              <= ((e.x - :ex) * :fx + (e.y - :ey) * :fy + (e.z - :ez) * :fz + COALESCE(m.radius, 0) + 64) * :kx + COALESCE(m.radius, 0) + 64

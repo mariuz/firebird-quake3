@@ -511,12 +511,18 @@ END^
 -- TeleportPlayer: move to the destination, face its angle, and spit the entity out at 400
 CREATE OR ALTER PROCEDURE teleport_ent (eid INTEGER, dx DOUBLE PRECISION, dy DOUBLE PRECISION, dz DOUBLE PRECISION, dyaw DOUBLE PRECISION)
 AS
-DECLARE v INTEGER; DECLARE ox DOUBLE PRECISION; DECLARE oy DOUBLE PRECISION; DECLARE oz DOUBLE PRECISION;
+DECLARE v INTEGER; DECLARE ox DOUBLE PRECISION; DECLARE oy DOUBLE PRECISION; DECLARE oz DOUBLE PRECISION; DECLARE spec SMALLINT = 0;
 BEGIN
   SELECT e.x, e.y, e.z FROM ents e WHERE e.id = :eid INTO ox, oy, oz;
-  EXECUTE PROCEDURE snd_at(ox, oy, oz, 'sound/world/teleout.wav', 1, 1);
-  EXECUTE PROCEDURE fx(5, ox, oy, oz, 0, 0, 0, 0);
+  -- a spectator goes through unseen and kills nobody (TeleportPlayer)
+  IF (eid = player_ent()) THEN SELECT p.spectator FROM player p WHERE p.id = 1 INTO spec;
+  IF (spec = 0) THEN
+  BEGIN
+    EXECUTE PROCEDURE snd_at(ox, oy, oz, 'sound/world/teleout.wav', 1, 1);
+    EXECUTE PROCEDURE fx(5, ox, oy, oz, 0, 0, 0, 0);
+  END
   -- telefrag anything at the destination
+  IF (spec = 0) THEN
   FOR SELECT e.id FROM ents e JOIN ents o ON o.id = :eid
        WHERE e.id <> :eid AND e.takedamage > 0 AND e.health > 0 AND e.solid = 3
          AND e.x + e.maxx >= :dx + o.minx AND e.x + e.minx <= :dx + o.maxx
@@ -528,6 +534,7 @@ BEGIN
          e.flags = BIN_AND(e.flags, BIN_NOT(512)), e.teleport_time = now_() + 0.7e0, e.ideal_yaw = :dyaw WHERE e.id = :eid;
   IF (eid = player_ent()) THEN UPDATE player p SET p.pitch = 0 WHERE p.id = 1;
   EXECUTE PROCEDURE link_ent(eid);
+  IF (spec = 1) THEN EXIT;
   EXECUTE PROCEDURE snd_at(dx, dy, dz, 'sound/world/telein.wav', 1, 1);
   EXECUTE PROCEDURE fx(5, dx, dy, dz + 1, 0, 0, 0, 1);
 END^
@@ -578,9 +585,11 @@ AS
 DECLARE px DOUBLE PRECISION; DECLARE py DOUBLE PRECISION; DECLARE pz DOUBLE PRECISION;
 DECLARE mnx DOUBLE PRECISION; DECLARE mny DOUBLE PRECISION; DECLARE mnz DOUBLE PRECISION;
 DECLARE mxx DOUBLE PRECISION; DECLARE mxy DOUBLE PRECISION; DECLARE mxz DOUBLE PRECISION;
-DECLARE tid INTEGER; DECLARE tcls VARCHAR(40); DECLARE tst SMALLINT; DECLARE tn VARCHAR(40); DECLARE pe INTEGER;
+DECLARE tid INTEGER; DECLARE tcls VARCHAR(40); DECLARE tst SMALLINT; DECLARE tn VARCHAR(40); DECLARE pe INTEGER; DECLARE spec SMALLINT = 0;
 BEGIN
   pe = player_ent();
+  -- a spectator only goes through teleporters and opens doors (G_TouchTriggers)
+  IF (eid = pe) THEN SELECT p.spectator FROM player p WHERE p.id = 1 INTO spec;
   SELECT e.x, e.y, e.z, e.minx, e.miny, e.minz, e.maxx, e.maxy, e.maxz FROM ents e WHERE e.id = :eid AND e.health > 0 INTO px, py, pz, mnx, mny, mnz, mxx, mxy, mxz;
   IF (px IS NULL) THEN EXIT;
   FOR SELECT e.id, e.classname FROM ents e
@@ -593,6 +602,7 @@ BEGIN
   BEGIN
     IF (NOT EXISTS (SELECT 1 FROM ents e WHERE e.id = :tid)) THEN CONTINUE;
     IF (NOT EXISTS (SELECT 1 FROM ents e WHERE e.id = :eid)) THEN EXIT;
+    IF (spec = 1 AND tcls NOT IN ('trigger_teleport', 'door_trigger')) THEN CONTINUE;
     IF (tcls IN ('trigger_multiple', 'trigger_once')) THEN EXECUTE PROCEDURE trigger_fire(tid, eid);
     ELSE IF (tcls = 'trigger_teleport') THEN EXECUTE PROCEDURE teleport_touch(tid, eid);
     ELSE IF (tcls = 'trigger_push') THEN EXECUTE PROCEDURE push_touch(tid, eid);
@@ -612,6 +622,7 @@ BEGIN
     END
   END
   -- buttons are fired by touching the brush itself
+  IF (spec = 1) THEN EXIT;
   FOR SELECT e.id FROM ents e
        WHERE e.classname = 'func_button' AND e.mv_state = 1
          AND e.x + e.maxx + 2 >= :px + :mnx AND e.x + e.minx - 2 <= :px + :mxx
