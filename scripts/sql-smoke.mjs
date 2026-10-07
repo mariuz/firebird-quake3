@@ -268,6 +268,8 @@ if (pad) {
   let seen = (await db.query('SELECT MAX(id) m FROM sound_events')).rows[0].M ?? 0;
   const heard = new Map();
   await db.exec('UPDATE game SET warmup_end = time_ + 3.5, warmup_said = 4 WHERE id = 1');
+  // (the bots hold still: once it is over, a rocket of theirs could knock us into q3dm17's void)
+  await db.exec("UPDATE ents SET nextthink = 1e9 WHERE classname = 'bot'");
   const ammo = (await db.query('SELECT slugs FROM player')).rows[0].SLUGS;
   for (let i = 0; i < 80; i++) {
     s = await tic([1, 0, 0, 0, 0, 1, 0, 1, 0]);
@@ -288,6 +290,65 @@ if (pad) {
   assert(a1 === a0 && s.WARMUP_END > s.TIME_, `no firing before "fight!" (${a0} slugs, still ${a1})`);
   for (let i = 0; i < 30; i++) s = await tic([1, 0, 0, 0, 0, 0, 0, 1, 0]);
   await db.exec('UPDATE game SET warmup_end = 0, warmup_said = 0 WHERE id = 1');
+  await db.exec("UPDATE ents SET nextthink = 0 WHERE classname = 'bot'");
+}
+
+// water (the demo arenas have none: their lava, turned into water for this): a shot from the air into it
+// leaves bubbles from the surface down (CG_Bullet); a rocket in it is marked for bubbles, not smoke
+{
+  // (a spot where a shot straight down ends in the lava, with room above it for us: q3dm1's is under a grate)
+  let spot = null;
+  for (const l of (await db.query('SELECT minx, maxx, miny, maxy, maxz FROM leaves WHERE BIN_AND(contents, 8) <> 0 AND cluster >= 0 ORDER BY (maxx - minx) * (maxy - miny) DESC')).rows) {
+    const cx = (l.MINX + l.MAXX) / 2, cy = (l.MINY + l.MAXY) / 2;
+    const surf = (await db.query(`SELECT ez, fraction f FROM trace_move(NULL, 0,0,0,0,0,0, ${cx}, ${cy}, ${l.MAXZ + 300}, ${cx}, ${cy}, ${l.MAXZ - 300}, 8)`)).rows[0];
+    if (surf.F >= 1) continue;
+    const eye = surf.EZ + 100;
+    const shot = (await db.query(`SELECT ez, fraction f, startsolid s FROM trace_move(NULL, 0,0,0,0,0,0, ${cx}, ${cy}, ${eye}, ${cx}, ${cy}, ${surf.EZ - 300}, 100663297)`)).rows[0];
+    const room = (await db.query(`SELECT startsolid s FROM trace_move(NULL, -15,-15,-24,15,15,32, ${cx}, ${cy}, ${eye - 26}, ${cx}, ${cy}, ${eye - 26}, 1)`)).rows[0];
+    // (and the shot must stop inside the liquid, not on a floor below a thin sheet of it)
+    const inside = shot.S ? 0 : (await db.query(`SELECT point_contents(${cx}, ${cy}, ${shot.EZ}) c FROM rdb$database`)).rows[0].C & 8;
+    if (shot.S || room.S || shot.EZ >= surf.EZ || !inside) continue;
+    spot = { cx, cy, surf };
+    break;
+  }
+  if (!spot) console.log('(no open lava here to turn into water)');
+  else {
+    const pe = (await db.query('SELECT ent_id e FROM player')).rows[0].E;
+    const { cx, cy, surf } = spot;
+    await db.exec('UPDATE brushes SET contents = BIN_OR(BIN_AND(contents, BIN_NOT(8)), 32) WHERE BIN_AND(contents, 8) <> 0');
+    await db.exec('UPDATE leaves SET contents = BIN_OR(BIN_AND(contents, BIN_NOT(8)), 32) WHERE BIN_AND(contents, 8) <> 0');
+    // (and the copies on the tree's nodes, which let a trace skip a leaf with nothing in its mask)
+    await db.exec('UPDATE nodes SET cc0 = BIN_OR(BIN_AND(cc0, BIN_NOT(8)), 32) WHERE BIN_AND(cc0, 8) <> 0');
+    await db.exec('UPDATE nodes SET cc1 = BIN_OR(BIN_AND(cc1, BIN_NOT(8)), 32) WHERE BIN_AND(cc1, 8) <> 0');
+    await db.exec('UPDATE game SET has_water = 1 WHERE id = 1');
+    await db.exec("UPDATE ents SET nextthink = 1e9 WHERE classname = 'bot'");
+    // over the pool
+    await db.exec(`UPDATE ents SET x = ${cx}, y = ${cy}, z = ${surf.EZ + 74}, vx = 0, vy = 0, vz = 0 WHERE id = ${pe}`);
+    await db.exec(`EXECUTE PROCEDURE link_ent(${pe})`);
+    // (one bullet straight down, no spread: q3dm1's lava is under a grate with gaps)
+    const fx0 = (await db.query('SELECT COALESCE(MAX(id), 0) m FROM fx_events')).rows[0].M;
+    await db.exec(`EXECUTE PROCEDURE fire_bullets(${pe}, 1, ${cx}, ${cy}, ${surf.EZ + 100}, 0, 0, -1, 0, 7, 2)`);
+    const trail = (await db.query(`SELECT FIRST 1 x, y, z, x2, y2, z2 FROM fx_events WHERE kind = 15 AND id > ${fx0} ORDER BY id`)).rows[0];
+    assert(trail && Math.abs(trail.Z - surf.EZ) < 2 && trail.Z2 < trail.Z, `a shot into the water: bubbles from the surface (${trail ? trail.Z.toFixed(1) : '-'}, the surface at ${surf.EZ.toFixed(1)}) down to the hit (${trail ? trail.Z2.toFixed(1) : '-'})`);
+    // a slow rocket just under the surface: in the frame, marked as in water
+    await db.exec(`EXECUTE PROCEDURE launch_missile(${pe}, 'rocket', 'models/ammo/rocket/rocket.md3', ${cx}, ${cy}, ${surf.EZ - 3}, 1, 0, 0, 20, 0, 0, 0, 16, 10)`);
+    const rocket = (await db.query("SELECT MAX(id) id FROM ents WHERE classname = 'rocket'")).rows[0].ID;
+    s = await tic([1, 0, 0, 0, 0, 0, 0, 1, 0]);
+    const rows = (await db.query(`SELECT * FROM frame_all(0, 2147483647, 2147483647, 0, ${cx - 60}, ${cy}, ${surf.EZ + 10}, 0, 10, 90)`, [], { rowMode: 'array' })).rows;
+    const row = rows.find((r) => r[0] === 2 && r[1] === rocket);
+    assert(row && (row[5] & 65536) && (row[5] & 16), `a rocket in the water is drawn with bubbles for smoke (effects ${row ? row[5] : 'not in view'})`);
+    await db.exec(`DELETE FROM ents WHERE id = ${rocket}`);
+    // and back to lava
+    await db.exec('UPDATE brushes SET contents = BIN_OR(BIN_AND(contents, BIN_NOT(32)), 8) WHERE BIN_AND(contents, 32) <> 0');
+    await db.exec('UPDATE leaves SET contents = BIN_OR(BIN_AND(contents, BIN_NOT(32)), 8) WHERE BIN_AND(contents, 32) <> 0');
+    await db.exec('UPDATE nodes SET cc0 = BIN_OR(BIN_AND(cc0, BIN_NOT(32)), 8) WHERE BIN_AND(cc0, 32) <> 0');
+    await db.exec('UPDATE nodes SET cc1 = BIN_OR(BIN_AND(cc1, BIN_NOT(32)), 8) WHERE BIN_AND(cc1, 32) <> 0');
+    await db.exec('UPDATE game SET has_water = 0 WHERE id = 1');
+    await db.exec("UPDATE ents SET nextthink = 0 WHERE classname = 'bot'");
+    await db.exec('EXECUTE PROCEDURE player_respawn');
+    await db.exec(`UPDATE ents SET flags = BIN_OR(flags, 16) WHERE id = ${pe}`);
+    s = await tic([1, 0, 0, 0, 0, 0, 0, 1, 0]);
+  }
 }
 
 // spectating (SetTeam, SpectatorThink, Cmd_FollowCycle_f, StopFollowing)

@@ -47,7 +47,11 @@ DECLARE nx DOUBLE PRECISION; DECLARE ny DOUBLE PRECISION; DECLARE nz DOUBLE PREC
 DECLARE sf INTEGER; DECLARE ct INTEGER; DECLARE als SMALLINT; DECLARE sts SMALLINT; DECLARE hit INTEGER;
 DECLARE i INTEGER = 0; DECLARE r DOUBLE PRECISION; DECLARE u DOUBLE PRECISION; DECLARE a DOUBLE PRECISION;
 DECLARE td SMALLINT; DECLARE hp INTEGER; DECLARE hits INTEGER = 0;
+DECLARE water SMALLINT; DECLARE sw INTEGER; DECLARE dw INTEGER;
+DECLARE wx DOUBLE PRECISION; DECLARE wy DOUBLE PRECISION; DECLARE wz DOUBLE PRECISION; DECLARE wf DOUBLE PRECISION;
 BEGIN
+  SELECT g.has_water FROM game g WHERE g.id = 1 INTO water;
+  IF (water = 1) THEN sw = BIN_AND(point_contents(ox, oy, oz), 32);
   al = vlen(dx, dy, dz);
   IF (al = 0) THEN EXIT;
   dx = dx / al; dy = dy / al; dz = dz / al;
@@ -75,6 +79,20 @@ BEGIN
       END
       ELSE IF (BIN_AND(sf, 4) = 0 AND (cnt = 1 OR MOD(i, 3) = 0)) THEN
         EXECUTE PROCEDURE fx(IIF(cnt > 1, 11, 1), hx, hy, hz, nx, ny, nz, 0);
+    END
+    -- bubbles where the shot went through water: all the way, from the muzzle up to the surface, or from
+    -- the surface down to where it hit (the surface a trace against water alone)
+    IF (water = 1) THEN
+    BEGIN
+      dw = BIN_AND(point_contents(hx, hy, hz), 32);
+      IF (sw <> 0 AND dw <> 0) THEN EXECUTE PROCEDURE fx(15, ox, oy, oz, hx, hy, hz, 0);
+      ELSE IF (sw <> 0 OR dw <> 0) THEN
+      BEGIN
+        IF (sw <> 0) THEN EXECUTE PROCEDURE trace_move(shooter, 0, 0, 0, 0, 0, 0, hx, hy, hz, ox, oy, oz, 32) RETURNING_VALUES wf, wx, wy, wz, nx, ny, nz, sf, ct, als, sts, hit;
+        ELSE EXECUTE PROCEDURE trace_move(shooter, 0, 0, 0, 0, 0, 0, ox, oy, oz, hx, hy, hz, 32) RETURNING_VALUES wf, wx, wy, wz, nx, ny, nz, sf, ct, als, sts, hit;
+        IF (sw <> 0) THEN EXECUTE PROCEDURE fx(15, ox, oy, oz, wx, wy, wz, 0);
+        ELSE EXECUTE PROCEDURE fx(15, wx, wy, wz, hx, hy, hz, 0);
+      END
     END
     i = i + 1;
   END

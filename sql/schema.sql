@@ -36,6 +36,7 @@ CREATE TABLE game (
   time_warnings  SMALLINT DEFAULT 0 NOT NULL,           -- said already: 1 five minutes, 2 one minute, 4 sudden death
   warmup_end     DOUBLE PRECISION DEFAULT 0 NOT NULL,   -- the countdown before the match ends then (the clock counts from it)
   warmup_said    SMALLINT DEFAULT 0 NOT NULL,           -- the last of three, two, one said (0: done)
+  has_water      SMALLINT DEFAULT 0 NOT NULL,           -- the map has water: the shots look for bubbles
   match_over     SMALLINT DEFAULT 0 NOT NULL,           -- 1 from the frag or time limit on: the intermission
   winner         VARCHAR(32),
   over_time      DOUBLE PRECISION DEFAULT 0 NOT NULL,

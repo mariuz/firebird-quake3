@@ -338,7 +338,8 @@ BEGIN
   SELECT COALESCE(p.follow_id, -1) FROM player p WHERE p.id = 1 INTO fid;   -- the one followed is not drawn: we are behind its eyes
   FOR SELECT e.id, e.model_id, e.frame, e.weapon,
              -- the medal over the head for two seconds: 8192 excellent, 16384 gauntlet, 32768 impressive
-             e.effects + IIF(e.award > 0 AND e.award_time > :tn - 2, CASE e.award WHEN 1 THEN 8192 WHEN 2 THEN 32768 WHEN 3 THEN 16384 ELSE 0 END, 0),
+             e.effects + IIF(e.award > 0 AND e.award_time > :tn - 2, CASE e.award WHEN 1 THEN 8192 WHEN 2 THEN 32768 WHEN 3 THEN 16384 ELSE 0 END, 0)
+                       + IIF(e.waterlevel > 0 AND e.movetype IN (9, 10) AND BIN_AND(e.watertype, 32) <> 0, 65536, 0),   -- a missile in water
              e.x, e.y, e.z, e.pitch, e.yaw, e.roll, e.legs_time, e.torso_time,
              e.pmodel, e.pskin, e.legs_anim, e.torso_anim, e.health, e.classname, e.cluster, e.clusters
         FROM ents e LEFT JOIN models m ON m.id = e.model_id

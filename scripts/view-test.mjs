@@ -5,7 +5,7 @@
 //   node scripts/view-test.mjs
 
 import fs from 'node:fs';
-import { FrameState, firstPersonView, zoomedFov, fovY, mapTorsoToWeaponFrame, viewTorsoFrame } from '../src/scene.js';
+import { FrameState, firstPersonView, zoomedFov, fovY, mapTorsoToWeaponFrame, viewTorsoFrame, underwaterFov } from '../src/scene.js';
 import { tagTransform } from '../src/renderer.js';
 import { Md3, parseAnimationCfg } from '../src/md3.js';
 import { Pk3 } from '../src/pk3.js';
@@ -98,6 +98,20 @@ assert(weak.pitch <= -9.9 && strong.pitch >= -10.01, `low on health the kick is 
   const y = fovY(22.5, 640, 480);
   assert(Math.abs(y - 16.97) < 0.05 && Math.abs(y / 75 - 0.226) < 0.002, `zoomed on 4:3, fov_y ${y.toFixed(2)}, the mouse at ${(y / 75).toFixed(3)} of its speed`);
   assert(Math.abs(fovY(90, 640, 480) - 73.74) < 0.05, 'fov_y of 90 on 4:3 is 73.74');
+}
+
+// under water (CG_CalcFov): the view waves a degree either way at 0.4 Hz, only with the head under
+{
+  const near = (a, b) => Math.abs(a - b) < 1e-9;
+  assert(near(underwaterFov(90, 2, 0.625), 90) && near(underwaterFov(90, 3, 0.625), 91) && near(underwaterFov(90, 3, 1.875), 89) && near(underwaterFov(90, 3, 2.5), 90),
+    'the head under a liquid: the field of view waves ±1 degree, 2.5 s a wave; waist-deep, nothing');
+}
+// the bubbles (CG_BubbleTrail): every 32 units, rising, gone after their second
+{
+  const st = new FrameState();
+  st.bubbleTrail([0, 0, 0], [0, 0, -320], 32, 10);
+  const up = st.bubbles.every((b) => b.v[2] >= 1 && b.v[2] <= 11 && Math.abs(b.v[0]) <= 5 && b.dur >= 1 && b.dur <= 1.25);
+  assert(st.bubbles.length === 11 && up, `a 320-unit shot under water leaves 11 bubbles drifting up (${st.bubbles.length})`);
 }
 
 // the switch (CG_MapTorsoToWeaponFrame): sarge's torso frames onto the hand's

@@ -25,6 +25,13 @@ export class Q3Audio {
 
   setPak(pak) { this.pak = pak; this.buffers.clear(); }
   setVolume(v) { this.volume = v; if (this.master) this.master.gain.value = v; }
+
+  /** Under water (or slime, or lava) the effects go dull: a low-pass eased in over a few tens of milliseconds. */
+  setUnderwater(on) {
+    if (!this.lowpass || this.underwater === on) return;
+    this.underwater = on;
+    this.lowpass.frequency.setTargetAtTime(on ? 700 : 20000, this.ctx.currentTime, 0.04);
+  }
   setMusicVolume(v) { this.musicVolume = v; if (this.musicGain) this.musicGain.gain.value = v; }
 
   unlock() {
@@ -32,7 +39,12 @@ export class Q3Audio {
       this.ctx = new (window.AudioContext || window.webkitAudioContext)();
       this.master = this.ctx.createGain();
       this.master.gain.value = this.volume;
-      this.master.connect(this.ctx.destination);
+      // the head under a liquid muffles the world (a low-pass; Quake III's mixer is told "inwater" and
+      // does nothing with it): the effects go through it, the music does not
+      this.lowpass = this.ctx.createBiquadFilter();
+      this.lowpass.type = 'lowpass';
+      this.lowpass.frequency.value = 20000;
+      this.master.connect(this.lowpass).connect(this.ctx.destination);
       this.musicGain = this.ctx.createGain();
       this.musicGain.gain.value = this.musicVolume;
       this.musicGain.connect(this.ctx.destination);

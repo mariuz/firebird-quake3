@@ -960,11 +960,11 @@ BEGIN
         UPDATE ents e SET e.vx = :ox, e.vy = :oy, e.vz = :oz WHERE e.id = :eid;
     END
   END
-  -- check for water transition
-  IF (mt IN (6, 10)) THEN
+  -- check for water transition (a rocket too, where there is water: the painter trails it with bubbles there)
+  IF (mt IN (6, 10) OR (mt = 9 AND (SELECT g.has_water FROM game g WHERE g.id = 1) = 1)) THEN
   BEGIN
     EXECUTE PROCEDURE check_water(eid) RETURNING_VALUES wl, wt;
-    IF (owl = 0 AND wl > 0) THEN
+    IF (owl = 0 AND wl > 0 AND mt <> 9) THEN
       INSERT INTO sound_events (id, tic, ent_id, chan, snd, vol, attn, x, y, z)
         SELECT NEXT VALUE FOR sound_seq, g.tic, :eid, 0, 'sound/player/watr_in.wav', 1, 1, e.x, e.y, e.z FROM ents e CROSS JOIN game g WHERE e.id = :eid AND g.id = 1;
   END

@@ -94,6 +94,9 @@ explosion sprites, beams) and nothing else. The renderers never query the databa
   randomised by the spawn points: run a failing one four times in parallel
   (`for i in 1 2 3 4; do (node scripts/bots-test.mjs q3dm17 > .prof/h$i.txt 2>&1) & done; wait`)
   before deciding it is fixed, and replay a stall with `.prof/hunt.mjs <map> bx by bz px py pz`.
+- A leaf's contents live in three places: `brushes.contents` (what the traces clip), `leaves.contents`
+  and the copies on the tree's nodes (`nodes.cc0`, `cc1`, which let `rhc` skip a leaf with nothing in
+  the trace's mask). A test that changes contents (the smoke test turns lava into water) changes all three.
 - `trace_move(NULL, …)` clips against the world, brush models and bounding-box entities (`solid` 2,
   3, 4) only; triggers and items (`solid` 1) are not obstacles.
 - The jump pad's `target_position` is the apex of the throw, not the landing; the landing is found by

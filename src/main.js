@@ -19,7 +19,7 @@ import { createSchema, loadResources, loadMap, buildWaypoints, setView } from '.
 import { Renderer } from './renderer.js';
 import { GLRenderer } from './renderer-gl.js';
 import { Hud } from './hud.js';
-import { FrameState, drawScene, firstPersonView, zoomedFov, fovY, ZOOM_FOV } from './scene.js';
+import { FrameState, drawScene, firstPersonView, zoomedFov, fovY, ZOOM_FOV, underwaterFov } from './scene.js';
 import { Q3Audio } from './audio.js';
 
 const $ = (id) => document.getElementById(id);
@@ -319,7 +319,8 @@ async function frame() {
     t = performance.now();
     // one round trip: every row is tagged with what it is (see FRAME_ALL in sql/render.sql); the view is this frame's
     const wantSpeakers = ++frameNo % 10 === 0;
-    curFov = last.MATCH_OVER || last.DEAD ? settings.fov : zoomedFov(settings.fov, zoomed, now - zoomAt);
+    curFov = last.MATCH_OVER || last.DEAD ? settings.fov : underwaterFov(zoomedFov(settings.fov, zoomed, now - zoomAt), view.WATERLEVEL, view.TIME_);
+    audio.setUnderwater(view.WATERLEVEL >= 3 && !last.MATCH_OVER);   // the head under: muffled
     const fpv = firstPersonView(view, state, dt, curFov);   // the kicks, the dips, the bob, the zoom: the view that is painted
     const rows = (await db.query(`SELECT * FROM frame_all(${settings.renderer === 'sql' ? 1 : 0}, ${lastSoundId}, ${lastFxId}, ${wantSpeakers ? 1 : 0}, ${fpv.x}, ${fpv.y}, ${fpv.z}, ${fpv.yaw}, ${fpv.pitch}, ${curFov})`, [], arr)).rows;
     const fr = state.parse(rows);

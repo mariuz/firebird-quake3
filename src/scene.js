@@ -18,6 +18,8 @@ export class FrameState {
     this.beams = [];          // { a, b, until, img, width, scroll }
     this.messages = [];       // [{ id, time, text }]
     this.kick = { dmgSeen: null, at: -1e9, pitch: 0, roll: 0, bob: 0 };   // the first-person view's state
+    this.bubbles = [];        // { p: [x, y, z], v: [vx, vy, vz], t0, dur } (CG_BubbleTrail's local entities)
+    this.lastPos = new Map(); // a missile's position at the last frame: its trail starts there
     this.extraModels = new Map();   // item model name → the other models of the item
     for (const it of ITEMS) {
       const ms = it.models.split(',');
@@ -49,6 +51,19 @@ export class FrameState {
     return { faces, ents, sounds, fx, speakers, messages, eye };
   }
 
+  /** CG_BubbleTrail: a bubble every `spacing` units from a to b, drifting up with a little jitter, a second
+   *  or so each (at most 600 alive) */
+  bubbleTrail(a, b, spacing, time) {
+    const d = [b[0] - a[0], b[1] - a[1], b[2] - a[2]], len = Math.hypot(d[0], d[1], d[2]);
+    if (!(len > 0)) return;
+    const n = Math.min(64, Math.floor(len / spacing) + 1), crand = () => Math.random() * 2 - 1;
+    for (let i = 0; i < n; i++) {
+      const k = (i * spacing) / len;
+      this.bubbles.push({ p: [a[0] + d[0] * k, a[1] + d[1] * k, a[2] + d[2] * k], v: [crand() * 5, crand() * 5, crand() * 5 + 6], t0: time, dur: 1 + Math.random() * 0.25 });
+    }
+    if (this.bubbles.length > 600) this.bubbles.splice(0, this.bubbles.length - 600);
+  }
+
   /** The temp entities of a tic become sprites, beams and particles. */
   handleFx(renderer, rows, time) {
     for (const [, kind, x, y, z, x2, y2, z2, n] of rows) {
@@ -64,6 +79,7 @@ export class FrameState {
         case 6: this.explosions.push({ x, y, z, t0: time, frames: ['models/weaphits/plasmaboom'], size: 24, dur: 0.25, blend: 'add' }); break;
         case 12: this.beams.push({ a: [x, y, z], b: [x2, y2, z2], until: time + 0.07, img: 'gfx/misc/lightning3', width: 10, scroll: -time * 5, owner: n }); break;
         case 13: renderer.spawnParticles('blood', x, y, z, 40, [0, 0, 1], 0xff1010c0); break;
+        case 15: this.bubbleTrail([x, y, z], [x2, y2, z2], 32, time); break;
         case 14: renderer.spawnParticles('gunshot', x, y, z, 12, [0, 0, 3], 0xff80ffd0); break;
         default: break;
       }
@@ -144,6 +160,10 @@ export function firstPersonView(last, state, dt = 0.05, fov = 90) {
   return view;
 }
 
+// CG_CalcFov under water (or slime, or lava: the eye in it, waterlevel 3): the view waves a degree either
+// way, 0.4 times a second (WAVE_AMPLITUDE, WAVE_FREQUENCY)
+export const underwaterFov = (fov, waterlevel, seconds) => (waterlevel >= 3 ? fov + Math.sin(seconds * 0.4 * 2 * Math.PI) : fov);
+
 // CG_CalcFov's zoom: to cg_zoomFov (22.5) in 150 ms from when +zoom went down, and back as fast from
 // when it came up (from wherever the other half-way zoom had got to: Quake III's jump included)
 export const ZOOM_FOV = 22.5, ZOOM_TIME = 150;
@@ -222,9 +242,23 @@ export function drawScene(renderer, hud, res, bsp, last, frame, opts = {}) {
     }
     const axis = anglesAxis(-e.pitch, e.yaw, e.roll);
     r.drawMd3(m.mdl, e.frame, [e.x, e.y, e.z], axis, null, e.effects & (16 | 64) ? null : light);
-    if (e.effects & 16) r.spawnParticles('gunshot', e.x, e.y, e.z, 2, [0, 0, 0], 0xff808080);   // rocket smoke
+    if (e.effects & 65536 && e.effects & (16 | 32)) {
+      // in water a rocket or a grenade leaves bubbles, not smoke (CG_RocketTrail, CG_GrenadeTrail)
+      const from = state.lastPos.get(e.id) ?? [e.x, e.y, e.z];
+      state.bubbleTrail(from, [e.x, e.y, e.z], 8, time);
+    } else if (e.effects & 16) r.spawnParticles('gunshot', e.x, e.y, e.z, 2, [0, 0, 0], 0xff808080);   // rocket smoke
+    if (e.effects & (16 | 32)) state.lastPos.set(e.id, [e.x, e.y, e.z]);
   }
 
+  // the bubbles: radius 3, rising, gone after their second (LE_MOVE_SCALE_FADE, LEF_PUFF_DONT_SCALE)
+  if (state.bubbles.length) {
+    state.bubbles = state.bubbles.filter((b) => time - b.t0 < b.dur && time >= b.t0 - 0.1);
+    for (const b of state.bubbles) {
+      const age = Math.max(0, time - b.t0);
+      r.drawSprite('sprites/bubble', [b.p[0] + b.v[0] * age, b.p[1] + b.v[1] * age, b.p[2] + b.v[2] * age], 6, 'blend');
+    }
+  }
+  if (state.lastPos.size > 64) state.lastPos.clear();
   // effects in flight
   state.explosions = state.explosions.filter((x) => time - x.t0 < x.dur);
   for (const x of state.explosions) {

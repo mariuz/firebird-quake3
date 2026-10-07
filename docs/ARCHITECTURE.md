@@ -532,6 +532,17 @@ is, cosmetic state kept in `FrameState.kick`:
   while 3 (the new one coming up), so the hand carries the gun out of view and back as Quake III's
   does. The bots play `TORSO_RAISE` when they change weapon.
 
+*Under water* (the eye in a liquid, `WATERLEVEL` 3): the field of view waves a degree either way 0.4
+times a second (`underwaterFov`, `CG_CalcFov`'s `WAVE_AMPLITUDE` and `WAVE_FREQUENCY`), and the effects
+go through a low-pass (`audio.setUnderwater`; Quake III's mixer is told `inwater` and does nothing
+with it). Bubbles are `CG_BubbleTrail`'s: `fire_bullets` emits an effect of kind 15 for a bullet or a
+pellet that ends in, starts in or crosses water (the surface found by a trace against water alone),
+only on maps with water (`game.has_water`, set by `init_map`), and the frame marks a rocket or a grenade
+in water with the effect bit 65536 (`toss_move` checks the water for rockets there too), which the
+painter trails with bubbles every 8 units instead of smoke. `FrameState.bubbles` holds them: radius 3
+`sprites/bubble`, drifting up about 6 units a second with a jitter, 1 to 1.25 s each. The demo's
+arenas have lava but no water; the smoke test turns q3dm7's lava into water to check it.
+
 *The zoom* is the client's too (`CG_CalcFov`): Z or the right mouse button holds it, `zoomedFov`
 eases the field of view to 22.5 degrees in 150 ms and back as fast on release, the mouse slows to
 `fov_y / 75` of its speed while zoomed (`cg.zoomSensitivity`), and the gun is put away past half-way
