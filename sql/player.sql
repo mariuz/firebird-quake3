@@ -421,14 +421,15 @@ BEGIN
     EXECUTE PROCEDURE toss_move(pe, dt);
     IF (t > deadt + 1.7e0 AND (fire = 1 OR jump = 1)) THEN
     BEGIN
-      IF (match_done = 1) THEN UPDATE game g SET g.exit_kind = 3 WHERE g.id = 1;
+      IF (match_done = 1) THEN UPDATE game g SET g.exit_kind = 1 WHERE g.id = 1;
       ELSE EXECUTE PROCEDURE player_respawn;
     END
     EXIT;
   END
   IF (match_done = 1) THEN
   BEGIN
-    IF (fire = 1 AND t > (SELECT g.over_time FROM game g WHERE g.id = 1) + 3) THEN UPDATE game g SET g.exit_kind = 3 WHERE g.id = 1;
+    -- CheckIntermissionExit: never in less than five seconds, then as soon as the player is ready
+    IF (fire = 1 AND t > (SELECT g.over_time FROM game g WHERE g.id = 1) + 5) THEN UPDATE game g SET g.exit_kind = 1 WHERE g.id = 1;
     EXIT;
   END
 

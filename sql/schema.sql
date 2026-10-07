@@ -12,21 +12,29 @@
 -- entities, player.sql the client, bots.sql the opponents, render.sql draws.
 
 -- ── session / configuration ─────────────────────────────────────────────
+-- the arenas of the pak, in the order the rotation plays them
+CREATE TABLE map_list (
+  ord  INTEGER NOT NULL PRIMARY KEY,
+  name VARCHAR(32) NOT NULL
+);
+
 CREATE TABLE game (
   id             SMALLINT NOT NULL PRIMARY KEY,
   tic            INTEGER DEFAULT 0 NOT NULL,
   time_          DOUBLE PRECISION DEFAULT 0 NOT NULL,   -- seconds, tic / 20
   map_name       VARCHAR(32),
   next_map       VARCHAR(64),
-  exit_kind      SMALLINT DEFAULT 0 NOT NULL,           -- 0 playing, 1 next map, 3 restart
+  exit_kind      SMALLINT DEFAULT 0 NOT NULL,           -- 0 playing, 1 on to next_map, 3 restart this one
   skill          SMALLINT DEFAULT 2 NOT NULL,           -- bot skill 1..5
   world_model    INTEGER DEFAULT 0 NOT NULL,            -- models.id of the world
   gravity        DOUBLE PRECISION DEFAULT 800 NOT NULL,
   level_msg      VARCHAR(200),
   sky            VARCHAR(64),                           -- the sky shader of the map
   music          VARCHAR(64),
-  fraglimit      INTEGER DEFAULT 20 NOT NULL,
-  match_over     SMALLINT DEFAULT 0 NOT NULL,           -- 1 once someone reached the fraglimit
+  fraglimit      INTEGER DEFAULT 20 NOT NULL,           -- 0: none
+  timelimit      INTEGER DEFAULT 0 NOT NULL,            -- minutes, 0: none
+  time_warnings  SMALLINT DEFAULT 0 NOT NULL,           -- said already: 1 five minutes, 2 one minute, 4 sudden death
+  match_over     SMALLINT DEFAULT 0 NOT NULL,           -- 1 from the frag or time limit on: the intermission
   winner         VARCHAR(32),
   over_time      DOUBLE PRECISION DEFAULT 0 NOT NULL,
   num_bots       SMALLINT DEFAULT 3 NOT NULL,

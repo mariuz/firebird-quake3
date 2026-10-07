@@ -132,7 +132,7 @@ bounds and frame count), `map_ents` (the entity lump: classname, targetname, tar
 origin, angles, spawnflags, message, wait, delay, random, speed, lip, height, health, light, dmg,
 count, noise, phase, gravity, music, notfree, nobots).
 
-**The simulation**: `game` (one row: tic, time, map, skill, gravity, sky, music, frag limit, match
+**The simulation**: `map_list` (the pak's arenas in rotation order), `game` (one row: tic, time, map, skill, gravity, sky, music, frag and time limits, the time warnings said, match
 state, number of bots), `ents` (one wide row per entity: position, velocity, angles, bounds, solid,
 movetype, clipmask, flags, health, owner/enemy/goal, think and nextthink, the mover fields, item,
 the two "p" vectors used as launch velocity or mover endpoints, player-model and animation fields,
@@ -228,9 +228,22 @@ sound, the lead state. Each tic:
    `speaker_think`, `remove`;
 5. `run_physics`: the projectiles (`launch_missile` sets a straight velocity; grenades `toss_move`),
    the gibs and corpses, `impact` when something hits, `missile_explode` with `t_radius_damage`;
-6. the respawn and match clocks: `score_frag` keeps the scoreboard, announces the lead changes and
-   "fight!", and ends the match at the frag limit (20) with `match_over`, `winner` and `over_time`;
-   `exit_kind` 3 asks the page to restart the map.
+6. the match: `score_frag` keeps the scoreboard, announces the lead changes and the frags left, and
+   ends the match at the frag limit; `check_exit_rules` (Quake III's `CheckExitRules`) runs after
+   every tic for the time limit: "five minutes" and "one minute" once each (`game.time_warnings`),
+   and at the limit either the leader wins or, with the lead tied (`ScoreIsTied`, the player and the
+   bots compared), play goes on as sudden death, announced two seconds in, until a frag breaks the
+   tie. Both limits end in `end_match`: `match_over`, `winner`, `over_time`, the win or loss music,
+   `next_map` (the arena after this one in `map_list`, the pak's maps in natural order, wrapping
+   round) and `begin_intermission`, which is `BeginIntermission` with `FindIntermissionPoint` and
+   `MoveClientToIntermission`: the player, revived if dead, is put where the eye is the map's first
+   `info_player_intermission`, looking at its target (or along its angle, or from a spawn point when
+   the map has none), not solid and not moving; the bots vanish (`alpha` 1, as Quake III removes the
+   clients' models) and stop thinking. `CheckIntermissionExit`: fire after five seconds, or thirty
+   seconds of nobody pressing, sets `exit_kind` 1, and the page loads `next_map` (or the same arena
+   with the page's *Rotate* box unticked; `exit_kind` 3 is a plain restart). The limits come from
+   `init_map`'s last two arguments (frag limit 20 and no time limit by default; the page passes its
+   settings, and changes them live with an `UPDATE game`, as the cvars take effect at once).
 
 The weapons (`player.sql`) are `g_weapon.c` with its numbers: `fire_bullets` with Quake III's spread
 (machinegun 200, shotgun 700 over 11 pellets), `fire_rail` (a trace that goes through players and
@@ -491,8 +504,11 @@ and the others are one tic (50 ms) behind, as in the original. The rows then go 
 waypoint graph is incomplete, runs `buildWaypoints`. `document.hidden` pauses it. The stats line
 shows frames and tics per second separately.
 
-Settings (map, bots, skill, detail 640×480 / 320×240 / 160×120, brightness, renderer fast / sql /
-gl, sound and music volumes) persist in `localStorage`. The SQL console runs any statement against
+Settings (map, bots, skill, frag limit, time limit, rotation, detail 640×480 / 320×240 / 160×120,
+brightness, renderer fast / sql / gl, prediction, sound and music volumes) persist in `localStorage`.
+During the intermission the HUD draws only the scoreboard, the console lines and "fire for" the next
+arena (`CG_DrawIntermission`); otherwise a time limit adds the minutes left under the scores, red in
+the last one. The SQL console runs any statement against
 the live database (`Ctrl+Enter`) and has preset buttons: player, scoreboard, bots, items, movers,
 entities, waypoints, bot routes, the frame queries, give all, add Visor, one-hit bots, god, console.
 

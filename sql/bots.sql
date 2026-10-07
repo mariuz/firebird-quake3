@@ -380,6 +380,7 @@ BEGIN
     FROM ents e LEFT JOIN bot_defs b ON b.name = e.bot WHERE e.id = :eid INTO st, enemy, flags, goal, rt, srch, af, lefty, legs, x, y, z, yaw, tt, hp, skill;
   IF (st IS NULL) THEN EXIT;
   SELECT g.match_over FROM game g WHERE g.id = 1 INTO match_done;
+  IF (match_done = 1) THEN BEGIN UPDATE ents e SET e.nextthink = :t + 0.5e0, e.vx = 0, e.vy = 0 WHERE e.id = :eid; EXIT; END
   IF (st = 'dead') THEN
   BEGIN
     IF (rt <= t AND match_done = 0) THEN EXECUTE PROCEDURE bot_respawn(eid);
@@ -539,6 +540,105 @@ BEGIN
 END^
 
 -- ── scoring and the announcer ────────────────────────────────────────────
+-- ── the end of a match ───────────────────────────────────────────────────
+-- BeginIntermission, FindIntermissionPoint and MoveClientToIntermission: the view goes to the map's
+-- info_player_intermission looking at its target (or a spawn point when there is none), the dead are
+-- revived, and the players leave the arena: the bots vanish as Quake III's clients do, and nobody moves
+CREATE OR ALTER PROCEDURE begin_intermission
+AS
+DECLARE pe INTEGER; DECLARE ox DOUBLE PRECISION; DECLARE oy DOUBLE PRECISION; DECLARE oz DOUBLE PRECISION;
+DECLARE tx DOUBLE PRECISION; DECLARE ty DOUBLE PRECISION; DECLARE tz DOUBLE PRECISION; DECLARE tgt VARCHAR(40);
+DECLARE ang DOUBLE PRECISION; DECLARE ap DOUBLE PRECISION; DECLARE ay DOUBLE PRECISION; DECLARE yaw DOUBLE PRECISION; DECLARE pitch DOUBLE PRECISION;
+BEGIN
+  pe = player_ent();
+  SELECT FIRST 1 m.ox, m.oy, m.oz, m.target, m.angle, m.apitch, m.ayaw FROM map_ents m WHERE m.classname = 'info_player_intermission' ORDER BY m.id
+    INTO ox, oy, oz, tgt, ang, ap, ay;
+  IF (ox IS NULL) THEN
+  BEGIN
+    EXECUTE PROCEDURE select_spawn(pe) RETURNING_VALUES ox, oy, oz, yaw;
+    oz = oz + 9 + 26; pitch = 0;
+  END
+  ELSE
+  BEGIN
+    yaw = IIF(COALESCE(ay, 0) <> 0, ay, COALESCE(ang, 0)); pitch = COALESCE(ap, 0);
+    IF (tgt IS NOT NULL) THEN
+    BEGIN
+      SELECT FIRST 1 t.ox, t.oy, t.oz FROM map_ents t WHERE t.targetname = :tgt INTO tx, ty, tz;
+      IF (tx IS NOT NULL) THEN
+      BEGIN
+        yaw = vectoyaw(tx - ox, ty - oy);
+        pitch = -ATAN2(tz - oz, vlen(tx - ox, ty - oy, 0)) * 57.29578e0;
+      END
+    END
+  END
+  -- the eye is the intermission point itself (CG_CalcViewValues under PM_INTERMISSION)
+  UPDATE ents e SET e.x = :ox, e.y = :oy, e.z = :oz - 26, e.vx = 0, e.vy = 0, e.vz = 0, e.yaw = :yaw, e.pitch = :pitch,
+         e.deadflag = 0, e.health = MAXVALUE(e.health, 1), e.solid = 0, e.takedamage = 0, e.movetype = 0,
+         e.minz = -24, e.maxz = 32, e.viewheight = 26 WHERE e.id = :pe;
+  UPDATE player p SET p.pitch = :pitch, p.punchangle = 0, p.stepz = 0, p.view_ofs = 26, p.ducked = 0, p.weapon_sound = 0 WHERE p.id = 1;
+  EXECUTE PROCEDURE link_ent(pe);
+  UPDATE ents e SET e.alpha = 1, e.solid = 0, e.vx = 0, e.vy = 0, e.vz = 0 WHERE e.classname = 'bot';
+END^
+
+-- the match is over: who won, the next arena of the rotation, and the intermission
+CREATE OR ALTER PROCEDURE end_match (wname VARCHAR(32))
+AS
+DECLARE t DOUBLE PRECISION; DECLARE cur VARCHAR(32); DECLARE nm VARCHAR(32);
+BEGIN
+  IF (EXISTS (SELECT 1 FROM game g WHERE g.id = 1 AND g.match_over = 1)) THEN EXIT;
+  t = now_();
+  SELECT g.map_name FROM game g WHERE g.id = 1 INTO cur;
+  SELECT FIRST 1 m.name FROM map_list m WHERE m.ord > COALESCE((SELECT c.ord FROM map_list c WHERE c.name = :cur), -1) ORDER BY m.ord INTO nm;
+  IF (nm IS NULL) THEN SELECT FIRST 1 m.name FROM map_list m ORDER BY m.ord INTO nm;
+  UPDATE game g SET g.match_over = 1, g.winner = :wname, g.over_time = :t, g.next_map = COALESCE(:nm, :cur) WHERE g.id = 1;
+  EXECUTE PROCEDURE cprint(IIF(wname = 'You', 'You win!', wname || ' wins'));
+  EXECUTE PROCEDURE snd_local(IIF(wname = 'You', 'music/win.wav', 'music/loss.wav'));
+  EXECUTE PROCEDURE begin_intermission;
+END^
+
+-- CheckExitRules, every tic: the time limit with its warnings (CG_CheckLocalSounds) and sudden death
+-- when the lead is tied as the clock runs out; during the intermission, CheckIntermissionExit's
+-- timeout (the player's fire after five seconds is in PLAYER_THINK)
+CREATE OR ALTER PROCEDURE check_exit_rules
+AS
+DECLARE t DOUBLE PRECISION; DECLARE tl INTEGER; DECLARE mo SMALLINT; DECLARE warn SMALLINT; DECLARE ot DOUBLE PRECISION; DECLARE ek SMALLINT;
+DECLARE pf INTEGER; DECLARE bf INTEGER; DECLARE top INTEGER; DECLARE n INTEGER; DECLARE wname VARCHAR(32);
+BEGIN
+  SELECT g.time_, g.timelimit, g.match_over, g.time_warnings, g.over_time, g.exit_kind FROM game g WHERE g.id = 1 INTO t, tl, mo, warn, ot, ek;
+  IF (mo = 1) THEN
+  BEGIN
+    IF (ek = 0 AND t > ot + 30) THEN UPDATE game g SET g.exit_kind = 1 WHERE g.id = 1;
+    EXIT;
+  END
+  IF (tl IS NULL OR tl <= 0) THEN EXIT;
+  IF (tl > 5 AND BIN_AND(warn, 1) = 0 AND t >= (tl - 5) * 60) THEN BEGIN warn = BIN_OR(warn, 1); EXECUTE PROCEDURE snd_local('sound/feedback/5_minute.wav'); END
+  IF (tl > 1 AND BIN_AND(warn, 2) = 0 AND t >= (tl - 1) * 60) THEN BEGIN warn = BIN_OR(warn, 2); EXECUTE PROCEDURE snd_local('sound/feedback/1_minute.wav'); END
+  IF (t >= tl * 60) THEN
+  BEGIN
+    SELECT p.frags FROM player p WHERE p.id = 1 INTO pf;
+    SELECT MAX(e.frags) FROM ents e WHERE e.classname = 'bot' INTO bf;
+    top = MAXVALUE(pf, COALESCE(bf, pf));
+    n = IIF(pf = top, 1, 0) + (SELECT COUNT(*) FROM ents e WHERE e.classname = 'bot' AND e.frags = :top);
+    IF (n > 1) THEN
+    BEGIN
+      -- ScoreIsTied: play on, the next frag at the top wins
+      IF (BIN_AND(warn, 4) = 0 AND t >= tl * 60 + 2) THEN
+      BEGIN
+        warn = BIN_OR(warn, 4);
+        EXECUTE PROCEDURE snd_local('sound/feedback/sudden_death.wav');
+        EXECUTE PROCEDURE cprint('Sudden Death!');
+      END
+    END
+    ELSE
+    BEGIN
+      IF (pf = top) THEN wname = 'You'; ELSE SELECT FIRST 1 e.bot FROM ents e WHERE e.classname = 'bot' ORDER BY e.frags DESC INTO wname;
+      EXECUTE PROCEDURE sprint('Timelimit hit.');
+      EXECUTE PROCEDURE end_match(wname);
+    END
+  END
+  UPDATE game g SET g.time_warnings = :warn WHERE g.id = 1 AND g.time_warnings <> :warn;
+END^
+
 CREATE OR ALTER PROCEDURE score_frag (attacker INTEGER, victim INTEGER, mod_ SMALLINT)
 AS
 DECLARE pe INTEGER; DECLARE t DOUBLE PRECISION; DECLARE pf INTEGER; DECLARE bf INTEGER; DECLARE lead SMALLINT; DECLARE oldlead SMALLINT; DECLARE lim INTEGER;
@@ -579,14 +679,13 @@ BEGIN
   SELECT g.fraglimit FROM game g WHERE g.id = 1 INTO lim;
   top = MAXVALUE(pf, bf);
   left_ = lim - top;
-  IF (left_ IN (1, 2, 3) AND ((attacker = pe AND pf = top) OR (attacker <> pe AND bf = top))) THEN
+  IF (lim > 0 AND left_ IN (1, 2, 3) AND ((attacker = pe AND pf = top) OR (attacker <> pe AND bf = top))) THEN
     EXECUTE PROCEDURE snd_local(CASE left_ WHEN 1 THEN 'sound/feedback/1_frag.wav' WHEN 2 THEN 'sound/feedback/2_frags.wav' ELSE 'sound/feedback/3_frags.wav' END);
-  IF (top >= lim) THEN
+  IF (lim > 0 AND top >= lim) THEN
   BEGIN
     IF (pf >= lim) THEN wname = 'You'; ELSE SELECT FIRST 1 e.bot FROM ents e WHERE e.classname = 'bot' ORDER BY e.frags DESC INTO wname;
-    UPDATE game g SET g.match_over = 1, g.winner = :wname, g.over_time = :t WHERE g.id = 1;
-    EXECUTE PROCEDURE cprint(IIF(wname = 'You', 'You win!', wname || ' wins'));
-    EXECUTE PROCEDURE snd_local(IIF(wname = 'You', 'music/win.wav', 'music/loss.wav'));
+    EXECUTE PROCEDURE sprint('Fraglimit hit.');
+    EXECUTE PROCEDURE end_match(wname);
   END
 END^
 
@@ -849,7 +948,8 @@ RETURNS (
   msg VARCHAR(200), cprint VARCHAR(400), dmg_take INTEGER, dmg_save INTEGER, dmg_time DOUBLE PRECISION, dmg_x DOUBLE PRECISION, dmg_y DOUBLE PRECISION, bonus_time DOUBLE PRECISION,
   dead SMALLINT, exit_kind SMALLINT, frags INTEGER, deaths INTEGER, waterlevel SMALLINT, watertype INTEGER, map_name VARCHAR(32),
   level_msg VARCHAR(200), quad DOUBLE PRECISION, haste DOUBLE PRECISION, invis DOUBLE PRECISION, regen DOUBLE PRECISION, enviro DOUBLE PRECISION, flight DOUBLE PRECISION, holdable SMALLINT,
-  leaf INTEGER, cluster INTEGER, match_over SMALLINT, winner VARCHAR(32), land_time DOUBLE PRECISION, onground SMALLINT, move_speed DOUBLE PRECISION, weapon_sound SMALLINT, lead INTEGER, ducked SMALLINT)
+  leaf INTEGER, cluster INTEGER, match_over SMALLINT, winner VARCHAR(32), land_time DOUBLE PRECISION, onground SMALLINT, move_speed DOUBLE PRECISION, weapon_sound SMALLINT, lead INTEGER, ducked SMALLINT,
+  fraglimit INTEGER, timelimit INTEGER, over_time DOUBLE PRECISION, next_map VARCHAR(64))
 AS
 DECLARE i INTEGER = 0;
 BEGIN
@@ -862,6 +962,7 @@ BEGIN
     EXECUTE PROCEDURE player_think(0.05e0, fwd, side, yaw_d / tics, pitch_d / tics, fire, jump, run, IIF(i = 0, imp, 0));
     EXECUTE PROCEDURE run_pushers(0.05e0);
     EXECUTE PROCEDURE run_physics(0.05e0);
+    EXECUTE PROCEDURE check_exit_rules;
     i = i + 1;
   END
   SELECT g.tic, g.time_, e.health, e.max_health, p.armor, p.bullets, p.shells, p.grenades, p.rockets, p.lightning, p.slugs, p.cells, p.bfg,
@@ -872,13 +973,13 @@ BEGIN
          MAXVALUE(0, p.quad_finished - g.time_), MAXVALUE(0, p.haste_finished - g.time_), MAXVALUE(0, p.invis_finished - g.time_), MAXVALUE(0, p.regen_finished - g.time_),
          MAXVALUE(0, p.enviro_finished - g.time_), MAXVALUE(0, p.flight_finished - g.time_), p.holdable,
          e.leaf, e.cluster, g.match_over, g.winner, p.land_time, p.onground, p.move_speed, p.weapon_sound,
-         (SELECT COALESCE(MAX(b.frags), 0) FROM ents b WHERE b.classname = 'bot'), p.ducked
+         (SELECT COALESCE(MAX(b.frags), 0) FROM ents b WHERE b.classname = 'bot'), p.ducked, g.fraglimit, g.timelimit, g.over_time, g.next_map
     FROM game g CROSS JOIN player p JOIN ents e ON e.id = p.ent_id
    WHERE g.id = 1 AND p.id = 1
     INTO tic, time_, health, max_health, armor, bullets, shells, grenades, rockets, lightning, slugs, cells, bfg,
          weapons, weapon, pending_weapon, weaponstate, weapon_time, attack_start, attack_finished,
          px, py, pz, yaw, pitch, view_z, punch, msg, cprint, dmg_take, dmg_save, dmg_time, dmg_x, dmg_y, bonus_time, dead, exit_kind, frags, deaths, waterlevel, watertype, map_name, level_msg,
-         quad, haste, invis, regen, enviro, flight, holdable, leaf, cluster, match_over, winner, land_time, onground, move_speed, weapon_sound, lead, ducked;
+         quad, haste, invis, regen, enviro, flight, holdable, leaf, cluster, match_over, winner, land_time, onground, move_speed, weapon_sound, lead, ducked, fraglimit, timelimit, over_time, next_map;
   UPDATE player p SET p.dmg_take = 0, p.dmg_save = 0 WHERE p.id = 1 AND p.dmg_time < :time_ - 0.05e0;
   SUSPEND;
 END^
@@ -896,12 +997,14 @@ BEGIN
 END^
 
 -- G_InitGame + ClientBegin: the map's entities, the player and the bots
-CREATE OR ALTER PROCEDURE init_map (map_name VARCHAR(32), world_model INTEGER, skill SMALLINT, new_game SMALLINT, num_bots INTEGER)
+CREATE OR ALTER PROCEDURE init_map (map_name VARCHAR(32), world_model INTEGER, skill SMALLINT, new_game SMALLINT, num_bots INTEGER,
+                                    fraglimit INTEGER DEFAULT 20, timelimit INTEGER DEFAULT 0)
 AS
 DECLARE pe INTEGER; DECLARE b VARCHAR(16); DECLARE i INTEGER = 0; DECLARE n INTEGER; DECLARE skyname VARCHAR(64);
 BEGIN
   UPDATE game g SET g.tic = 0, g.time_ = 0, g.map_name = :map_name, g.next_map = NULL, g.exit_kind = 0, g.skill = :skill, g.world_model = :world_model,
-         g.level_msg = NULL, g.gravity = 800, g.match_over = 0, g.winner = NULL, g.over_time = 0, g.num_bots = :num_bots WHERE g.id = 1;
+         g.level_msg = NULL, g.gravity = 800, g.match_over = 0, g.winner = NULL, g.over_time = 0, g.num_bots = :num_bots,
+         g.fraglimit = COALESCE(:fraglimit, 20), g.timelimit = COALESCE(:timelimit, 0), g.time_warnings = 0 WHERE g.id = 1;
   -- the sky: the first sky shader the map's faces use
   SELECT FIRST 1 t.name FROM textures t WHERE BIN_AND(t.flags, 4) <> 0 INTO skyname;
   UPDATE game g SET g.sky = :skyname WHERE g.id = 1;

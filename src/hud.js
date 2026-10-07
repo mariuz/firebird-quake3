@@ -4,7 +4,7 @@
 // the obituaries, the crosshair, and the scoreboard.
 
 import { loadImage } from './image.js';
-import { WEAPONS, AMMO_ICONS, FRAGLIMIT } from './gamedata.js';
+import { WEAPONS, AMMO_ICONS } from './gamedata.js';
 
 const DIGITS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine'];
 
@@ -50,6 +50,18 @@ export class Hud {
     const k = w / 640;            // Q3 lays the HUD out on a 640×480 screen
     const dh = Math.round(48 * k), ih = Math.round(48 * k);
     const yb = h - Math.round(60 * k);
+    if (hud.MATCH_OVER) {
+      // the intermission (CG_DrawIntermission): the scoreboard, the console lines, and the way on
+      this.drawScoreboard(hud, opts.scores ?? this.lastScores, k);
+      let iy = Math.round(4 * k);
+      for (const m of messages) {
+        if (time - m.time > 5) continue;
+        r.drawString(this.font, m.text, Math.round(4 * k), iy, Math.max(7, Math.round(10 * k)), [1, 1, 1]);
+        iy += Math.max(7, Math.round(10 * k)) + 1;
+      }
+      if (time > hud.OVER_TIME + 5) this.drawCenter(hud.NEXT_MAP ? `fire for ${hud.NEXT_MAP}` : 'fire to play again', Math.floor(h * 0.82), Math.round(12 * k));
+      return;
+    }
     // ammo
     const wp = WEAPONS[hud.WEAPON];
     if (wp && wp.ammo) {
@@ -72,6 +84,13 @@ export class Hud {
     const frag = `${hud.FRAGS}`;
     r.drawString(this.font, frag, w - Math.round(8 * k) - frag.length * fs, Math.round(8 * k), fs, [1, 1, 1]);
     r.drawString(this.font, `${hud.LEAD ?? 0}`, w - Math.round(8 * k) - String(hud.LEAD ?? 0).length * fs, Math.round(8 * k) + fs + 2, fs, [1, 0.4, 0.4]);
+    // the time left (cg_drawTimer counts up; with a time limit the minutes left are what matter)
+    if (hud.TIMELIMIT > 0 && !hud.MATCH_OVER) {
+      const left = Math.max(0, Math.ceil(hud.TIMELIMIT * 60 - time));
+      const clock = `${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}`;
+      const ts = Math.round(12 * k);
+      r.drawString(this.font, clock, w - Math.round(8 * k) - clock.length * ts, Math.round(8 * k) + 2 * (fs + 2), ts, left <= 60 ? [1, 0.4, 0.4] : [1, 1, 1]);
+    }
     // powerups with the seconds left, up the right edge
     let py = h - Math.round(130 * k);
     for (const [key, icon] of [['QUAD', 'icons/quad'], ['HASTE', 'icons/haste'], ['INVIS', 'icons/invis'], ['REGEN', 'icons/regen'], ['ENVIRO', 'icons/envirosuit'], ['FLIGHT', 'icons/flight']]) {
@@ -95,8 +114,8 @@ export class Hud {
     }
     // crosshair
     if (!hud.DEAD && this.crosshair) { const cz = Math.round(24 * k); r.drawPic(this.crosshair, (w - cz) >> 1, (h - cz) >> 1, cz, cz); }
-    if (hud.DEAD && !hud.MATCH_OVER && time - hud.DEAD_TIME_ > 0) this.drawCenter('press fire to respawn', Math.floor(h * 0.6), Math.round(12 * k));
-    if (hud.MATCH_OVER || opts.scoreboard) this.drawScoreboard(hud, opts.scores ?? this.lastScores, k);
+    if (hud.DEAD && time - hud.DEAD_TIME_ > 0) this.drawCenter('press fire to respawn', Math.floor(h * 0.6), Math.round(12 * k));
+    if (opts.scoreboard) this.drawScoreboard(hud, opts.scores ?? this.lastScores, k);
   }
 
   drawCenter(msg, y, size) {
@@ -115,7 +134,8 @@ export class Hud {
     const bw = Math.round(300 * k), bh = (rows.length + 2) * (cs + 4) + cs;
     const bx = (r.w - bw) >> 1, by = Math.round(r.h * 0.2);
     r.fillRect(bx, by, bw, bh, 0xff000000, 0.6);
-    const title = hud.MATCH_OVER ? (hud.WINNER === 'You' ? 'You win' : `${hud.WINNER} wins`) : `Frag limit ${FRAGLIMIT}`;
+    const limits = [hud.FRAGLIMIT > 0 ? `Frag limit ${hud.FRAGLIMIT}` : '', hud.TIMELIMIT > 0 ? `${hud.TIMELIMIT} min` : ''].filter(Boolean).join(' · ') || 'No limit';
+    const title = hud.MATCH_OVER ? (hud.WINNER === 'You' ? 'You win' : `${hud.WINNER} wins`) : limits;
     r.drawString(this.font, title, bx + ((bw - title.length * cs) >> 1), by + 4, cs, [1, 0.9, 0.4]);
     let y = by + cs + 10;
     for (const [name, frags, deaths, isPlayer] of rows) {

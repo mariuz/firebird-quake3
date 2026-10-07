@@ -68,4 +68,3 @@ export const BOTS = [
 ];
 
 export const PLAYER_MODEL = 'sarge';
-export const FRAGLIMIT = 20;

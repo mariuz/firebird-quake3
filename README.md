@@ -12,7 +12,8 @@ running entirely in your browser on Firebird 6 compiled to WebAssembly. The thir
 Every game tic is a PSQL procedure call. Every frame is a `SELECT`. JavaScript handles the keyboard,
 the mouse and the canvas; everything else — collision against the BSP's brushes and the Bézier patches'
 facets, the player's physics, doors, plats, bobbing platforms, jump pads and teleporters, the items and
-their respawns, the nine weapons, damage, the bots' deathmatch AI, the frag count and the announcer, and
+their respawns, the nine weapons, damage, the bots' deathmatch AI, the frag and time limits with sudden
+death, the intermission and the map rotation, the announcer, and
 the visibility of every polygon on screen — happens in SQL.
 
 ```

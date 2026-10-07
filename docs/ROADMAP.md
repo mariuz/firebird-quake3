@@ -13,7 +13,6 @@ is a bug report; it is the gap between a 20 Hz SQL deathmatch and the 1999 game.
 
 | Gap | Quake III | Here | Where it would go |
 | --- | --- | --- | --- |
-| **Timelimit, intermission, map rotation** | `timelimit`, the intermission camera (`info_player_intermission`), the final scoreboard, awards, the next map | frag limit only; `exit_kind` 3 restarts the same arena | `score_frag`/`q3_tic` for the clock, `init_map` for the rotation, `hud.js` for the intermission screen |
 | **View kicks** | damage kicks the view toward the attacker (`CG_DamageFeedback`), landing dips, weapon recoil bob | screen tint on damage, a land dip; no directional kick | `player.dmg_*` already records where it came from; apply in `scene.js` |
 | **Zoom** | `+zoom` to 22.5 degrees with the railgun | none | `readInput` and `fov` per frame |
 | **Weapon raise/drop animations** | the hand model plays `TORSO_RAISE`/`DROP` while switching | the weapon switches when the timer runs out, the hand stays still | `scene.js` view weapon: use `weaponstate` to pick the hand animation |
@@ -121,7 +120,9 @@ and multiple triggers, `G_UseTargets` with delays and relays, `target_give/kill/
 remove_powerups/score`; every item of `bg_itemlist` with its respawn, armour at 66 percent, the five
 powerups and two holdables; the nine weapons with Quake III's spreads, speeds, damages and fire
 times; damage, knockback, gibs, corpses, obituaries; the player model animation system with
-`animation.cfg`, tags and skins; the HUD, scoreboard, announcer, lead state, frag limit; bots with
+`animation.cfg`, tags and skins; the HUD, scoreboard, announcer, lead state; the frag and time
+limits with the time warnings and sudden death, the intermission at the map's intermission point,
+the map rotation; bots with
 five skill levels, weapon choice, strafing, health runs, item pickup, and the waypoint graph with pad
 and teleporter edges; the PVS, frustum and back-face culling in SQL for the view actually painted, frames interpolated
 between tics with live mouse look and the local player predicted (extrapolated, clamped by a trace);

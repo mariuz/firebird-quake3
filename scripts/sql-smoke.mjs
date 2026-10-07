@@ -188,6 +188,44 @@ if (pad) {
   assert(d < 3990 && cl >= 0, `an eye predicted through a wall stops inside the world (${d.toFixed(0)} of 4000 units, cluster ${cl})`);
 }
 
+// the end of a match (CheckExitRules, BeginIntermission, CheckIntermissionExit)
+{
+  const said = async (name) => (await db.query(`SELECT COUNT(*) n FROM sound_events WHERE snd = '${name}'`)).rows[0].N;
+  // the bots hold still (a frag of theirs would decide the match before the test does)
+  await db.exec("UPDATE ents SET nextthink = 1e9 WHERE classname = 'bot'");
+  // a six-minute limit, a moment before 60 s: the five-minute warning
+  await db.exec(`UPDATE game SET timelimit = 6, time_warnings = 0, time_ = 59.93 WHERE id = 1`);
+  await db.exec("UPDATE ents SET flags = BIN_OR(flags, 16) WHERE classname = 'player'");
+  s = await tic([2, 0, 0, 0, 0, 0, 0, 1, 0]);
+  assert(await said('sound/feedback/5_minute.wav') === 1 && s.TIMELIMIT === 6, 'five minutes left: the announcer says so, once');
+  // the clock runs out with the lead tied: sudden death, no end
+  await db.exec("UPDATE player SET frags = 3 WHERE id = 1");
+  await db.exec("UPDATE ents SET frags = IIF(id = (SELECT MIN(id) FROM ents WHERE classname = 'bot'), 3, 0) WHERE classname = 'bot'");
+  await db.exec('UPDATE game SET time_ = 359.9 WHERE id = 1');
+  for (let i = 0; i < 3; i++) s = await tic([2, 0, 0, 0, 0, 0, 0, 1, 0]);
+  assert(s.MATCH_OVER === 0 && await said('sound/feedback/1_minute.wav') === 1, 'time is up with the lead tied: play on');
+  for (let i = 0; i < 25; i++) s = await tic([2, 0, 0, 0, 0, 0, 0, 1, 0]);
+  assert(s.MATCH_OVER === 0 && await said('sound/feedback/sudden_death.wav') === 1, 'two seconds on, still tied: "sudden death"');
+  // the tie broken: we win, the view goes to the intermission point, the bots leave
+  await db.exec('UPDATE player SET frags = 4 WHERE id = 1');
+  s = await tic([1, 0, 0, 0, 0, 0, 0, 1, 0]);
+  const ip = (await db.query("SELECT FIRST 1 ox, oy, oz FROM map_ents WHERE classname = 'info_player_intermission' ORDER BY id")).rows[0];
+  const ent = (await db.query('SELECT ex, ey, ez FROM view_setup')).rows[0];
+  const shown = (await db.query("SELECT COUNT(*) n FROM ents WHERE classname = 'bot' AND alpha = 0")).rows[0].N;
+  assert(s.MATCH_OVER === 1 && s.WINNER === 'You', `the frag that breaks the tie wins (${s.WINNER})`);
+  assert(!ip || Math.hypot(ent.EX - ip.OX, ent.EY - ip.OY, ent.EZ - ip.OZ) < 1, 'the view is at the info_player_intermission');
+  assert(shown === 0, 'the bots have left the arena');
+  const rot = (await db.query('SELECT name FROM map_list ORDER BY ord')).rows.map((r) => r.NAME);
+  const want = rot[(rot.indexOf(mapName) + 1) % rot.length];
+  assert(s.NEXT_MAP === want, `the next arena of the rotation (${rot.join(' → ')}): ${s.NEXT_MAP}`);
+  // fire before five seconds does nothing; after, it is time to go
+  s = await tic([1, 0, 0, 0, 0, 1, 0, 1, 0]);
+  assert(s.EXIT_KIND === 0, 'fire in the first five seconds of the intermission is ignored');
+  await db.exec(`UPDATE game SET time_ = time_ + 6 WHERE id = 1`);
+  s = await tic([1, 0, 0, 0, 0, 1, 0, 1, 0]);
+  assert(s.EXIT_KIND === 1, 'fire after five seconds: on to the next arena');
+}
+
 const snds = (await db.query('SELECT DISTINCT snd FROM sound_events')).rows.map((r) => r.SND);
 const missing = snds.filter((n) => !pak.has(n));
 assert(missing.length === 0, `all queued sounds exist in the pak (${missing.join(', ') || 'none missing'})`);

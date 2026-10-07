@@ -47,7 +47,7 @@ let lastFxId = 0;
 let frameNo = 0;
 let scores = [];
 const state = new FrameState();
-const settings = { map: 'q3dm1', detail: 'medium', sfx: 70, music: 40, musicMode: 'tracks', skill: 2, bots: 3, fov: 90, renderer: 'fast', brightness: 4, predict: true };
+const settings = { map: 'q3dm1', detail: 'medium', sfx: 70, music: 40, musicMode: 'tracks', skill: 2, bots: 3, fov: 90, renderer: 'fast', brightness: 4, predict: true, fraglimit: 20, timelimit: 10, rotate: true };
 try { Object.assign(settings, JSON.parse(localStorage.getItem('firebird-quake3:settings') || '{}')); } catch { /* defaults */ }
 const saveSettings = () => { try { localStorage.setItem('firebird-quake3:settings', JSON.stringify(settings)); } catch { /* ignore */ } };
 const viewWidth = () => (settings.detail === 'high' ? 640 : settings.detail === 'low' ? 160 : 320);
@@ -162,7 +162,7 @@ async function startMap(name) {
   running = false;
   setStatus(`Loading ${name} into Firebird…`);
   const t0 = performance.now();
-  const bsp = await loadMap(db, pak, res, name, { skill: settings.skill, bots: settings.bots, link: false });
+  const bsp = await loadMap(db, pak, res, name, { skill: settings.skill, bots: settings.bots, link: false, fraglimit: settings.fraglimit, timelimit: settings.timelimit });
   map = { name, bsp, unlinked: 1 };
   renderer.setResources(res);
   renderer.particles = [];
@@ -243,6 +243,7 @@ function viewRow(alpha, now) {
   const frac = Math.min(1, (now - lastTic) / TIC_MS);
   const yawLive = mouseYaw + ((k('ArrowLeft') ? 1 : 0) - (k('ArrowRight') ? 1 : 0)) * 7 * frac;
   const pitchLive = mousePitch + ((k('PageDown') ? 1 : 0) - (k('PageUp') ? 1 : 0)) * 5 * frac;
+  if (last.MATCH_OVER) return { ...last };   // the intermission camera does not turn
   const v = { ...last, YAW: (last.YAW + yawLive) % 360, PITCH: Math.max(-89, Math.min(89, last.PITCH + pitchLive)) };
   if (!prev || alpha >= 1 || Math.hypot(last.PX - prev.PX, last.PY - prev.PY, last.PZ - prev.PZ) >= SNAP) return v;
   v.TIME_ = lerp(prev.TIME_, last.TIME_, alpha);
@@ -293,8 +294,9 @@ async function frame() {
         duckChange = (last.DUCKED ? 14 : -14) + left;
         duckTime = now;
       }
-      if (last.EXIT_KIND === 3) {
-        await startMap(map.name);
+      if (last.EXIT_KIND === 1 || last.EXIT_KIND === 3) {
+        // the intermission is over: the next arena of the rotation, or this one again
+        await startMap(last.EXIT_KIND === 1 && settings.rotate && last.NEXT_MAP ? last.NEXT_MAP : map.name);
         nextFrame();
         return;
       }
@@ -467,6 +469,17 @@ $('renderer').addEventListener('change', (e) => {
 });
 $('brightness').value = String(settings.brightness);
 $('brightness').addEventListener('change', (e) => { settings.brightness = Number(e.target.value); saveSettings(); if (renderer) renderer.setBrightness(settings.brightness); });
+// the limits apply at once, as Quake III's fraglimit and timelimit cvars do
+const setLimit = (key, col) => (e) => {
+  settings[key] = Number(e.target.value); saveSettings();
+  if (db && running) db.exec(`UPDATE game SET ${col} = ${settings[key] | 0} WHERE id = 1`).catch((err) => console.error(err));
+};
+$('fraglimit').value = String(settings.fraglimit);
+$('fraglimit').addEventListener('change', setLimit('fraglimit', 'fraglimit'));
+$('timelimit').value = String(settings.timelimit);
+$('timelimit').addEventListener('change', setLimit('timelimit', 'timelimit'));
+$('rotate').checked = settings.rotate;
+$('rotate').addEventListener('change', (e) => { settings.rotate = e.target.checked; saveSettings(); });
 $('predict').checked = settings.predict;
 $('predict').addEventListener('change', (e) => { settings.predict = e.target.checked; saveSettings(); });
 $('skill').value = String(settings.skill);
