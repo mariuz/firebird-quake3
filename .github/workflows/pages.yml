@@ -64,6 +64,9 @@ jobs:
       - name: The bots on the jump pads
         run: npm run test:bots:dm17
 
+      - name: Team deathmatch
+        run: npm run test:team
+
       - name: Headless screenshots
         run: npm run screenshots
 

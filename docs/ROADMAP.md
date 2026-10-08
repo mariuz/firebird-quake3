@@ -25,7 +25,7 @@ has no ladders.
 
 | Gap | Notes |
 | --- | --- |
-| **Gametypes** | free-for-all only. Tournament (1 v 1 with a queue), team deathmatch, capture the flag (`team_CTF_*`, flags, `target_score`, the team overlay) are absent; the demo pak has no CTF maps, the full pak does |
+| **Gametypes** | free-for-all and team deathmatch. Tournament (1 v 1 with a queue) and capture the flag (`team_CTF_*`, flags, `target_score`, the team overlay) are absent; the demo pak has no CTF maps, the full pak does. Teammates have no friend marker over their heads (`cg_drawFriend`: the demo pak lacks `sprites/friend1.tga`) |
 | **Join and leave** | the player and the bots are there for the match; no mid-game `addbot`/`kick` from the UI (the console's `spawn_bot` works) |
 | **`misc_model`, `misc_portal_surface`, `misc_portal_camera`** | skipped at spawn; portal surfaces and cameras need the renderer's portal pass |
 | **`shooter_*`, `target_laser`** | not spawned (none in the demo maps) |
@@ -110,7 +110,11 @@ that push, crush and carry, a turning one (`func_rotating`, `func_pendulum`) car
 its axis and turning their view with it (none in the demo's arenas; the test builds one), half damage
 from your own rocket after its full knock (`G_Damage`: "so rocket jumping works"), the bots' rocket
 jumps to ledges no walk reaches (`TRAVEL_ROCKETJUMP` edges, `BotCanAndWantsToRocketJump`, the jump
-and the shot straight down, the flight steered with the air acceleration), swimming with its
+and the shot straight down, the flight steered with the air acceleration); team deathmatch (`GT_TEAM`:
+`PickTeam`, the red and blue skins, no friendly fire, team scores through `AddScore`, the team's
+fraglimit and tied time limit, "red leads" / "blue leads" / "teams are tied", the bots leaving
+teammates alone and holding fire with one in the way, the HUD's two scores and the team scoreboard:
+`npm run test:team`), swimming with its
 bubbles (shots and rockets in water, `CG_BubbleTrail`), the view's wave and the muffled sound with the
 head under (the demo's arenas have lava only, a registered pak's have water), crouching (`PM_CheckDuck`, the crouch animations, the
 smoothed eye; the bots never crouch); the first-person view's kick away from a hit, landing dips by the

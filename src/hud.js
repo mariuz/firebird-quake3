@@ -90,9 +90,18 @@ export class Hud {
     }
     // frags
     const fs = Math.round(16 * k);
-    const frag = `${hud.FRAGS}`;
-    r.drawString(this.font, frag, w - Math.round(8 * k) - frag.length * fs, Math.round(8 * k), fs, [1, 1, 1]);
-    r.drawString(this.font, `${hud.LEAD ?? 0}`, w - Math.round(8 * k) - String(hud.LEAD ?? 0).length * fs, Math.round(8 * k) + fs + 2, fs, [1, 0.4, 0.4]);
+    if (hud.GAMETYPE >= 3) {
+      // a team game (CG_DrawScores): the two teams' scores, ours marked
+      for (const [i, [tm, score, col]] of [[1, hud.RED_SCORE, [1, 0.3, 0.3]], [2, hud.BLUE_SCORE, [0.4, 0.5, 1]]].entries()) {
+        const str = `${hud.TEAM === tm ? '>' : ''}${score ?? 0}`, y = Math.round(8 * k) + i * (fs + 2);
+        if (hud.TEAM === tm) r.fillRect(w - Math.round(12 * k) - str.length * fs, y - 2, str.length * fs + Math.round(8 * k), fs + 4, 0xff000000, 0.5);
+        r.drawString(this.font, str, w - Math.round(8 * k) - str.length * fs, y, fs, col);
+      }
+    } else {
+      const frag = `${hud.FRAGS}`;
+      r.drawString(this.font, frag, w - Math.round(8 * k) - frag.length * fs, Math.round(8 * k), fs, [1, 1, 1]);
+      r.drawString(this.font, `${hud.LEAD ?? 0}`, w - Math.round(8 * k) - String(hud.LEAD ?? 0).length * fs, Math.round(8 * k) + fs + 2, fs, [1, 0.4, 0.4]);
+    }
     // the time left (cg_drawTimer counts up; with a time limit the minutes left are what matter)
     if (hud.TIMELIMIT > 0 && !hud.MATCH_OVER) {
       const left = Math.max(0, Math.ceil(hud.TIMELIMIT * 60 - (time - Math.max(0, hud.WARMUP_END ?? 0))));
@@ -164,11 +173,16 @@ export class Hud {
     }
   }
 
-  /** The scoreboard: rows of [name, frags, deaths, isPlayer]. */
+  /** The scoreboard: rows of [name, frags, deaths, isPlayer, team]; in a team game, under each team's
+   *  name and score (CG_TeamScoreboard), red first. */
   drawScoreboard(hud, scores, k) {
     const r = this.r;
     const cs = Math.max(8, Math.round(12 * k));
-    const rows = scores.length ? scores : [['You', hud.FRAGS, hud.DEATHS, 1]];
+    let rows = scores.length ? scores : [['You', hud.FRAGS, hud.DEATHS, 1, hud.TEAM ?? 0]];
+    if (hud.GAMETYPE >= 3) {
+      const head = (tm, name, score) => [`${name} ${score ?? 0}`, '', '', 0, tm, true];
+      rows = [head(1, 'Red', hud.RED_SCORE), ...rows.filter((x) => x[4] === 1), head(2, 'Blue', hud.BLUE_SCORE), ...rows.filter((x) => x[4] === 2)];
+    }
     const bw = Math.round(300 * k), bh = (rows.length + 2) * (cs + 4) + cs;
     const bx = (r.w - bw) >> 1, by = Math.round(r.h * 0.2);
     r.fillRect(bx, by, bw, bh, 0xff000000, 0.6);
@@ -176,7 +190,13 @@ export class Hud {
     const title = hud.MATCH_OVER ? (hud.WINNER === 'You' ? 'You win' : `${hud.WINNER} wins`) : limits;
     r.drawString(this.font, title, bx + ((bw - title.length * cs) >> 1), by + 4, cs, [1, 0.9, 0.4]);
     let y = by + cs + 10;
-    for (const [name, frags, deaths, isPlayer] of rows) {
+    for (const [name, frags, deaths, isPlayer, team, isHead] of rows) {
+      if (isHead) {
+        r.fillRect(bx + 4, y - 2, bw - 8, cs + 4, team === 1 ? 0xff2020a0 : 0xffa04020, 0.5);
+        r.drawString(this.font, String(name), bx + 8, y, cs, team === 1 ? [1, 0.4, 0.4] : [0.5, 0.6, 1]);
+        y += cs + 4;
+        continue;
+      }
       r.drawString(this.font, String(name).slice(0, 14), bx + 8, y, cs, isPlayer ? [1, 1, 0.5] : [1, 1, 1]);
       const sf = String(frags), sd = String(deaths);
       r.drawString(this.font, sf, bx + bw - 8 - (sd.length + sf.length + 2) * cs, y, cs, [1, 1, 1]);

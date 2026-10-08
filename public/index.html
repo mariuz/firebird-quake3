@@ -29,6 +29,15 @@
           <input id="pakfile" type="file" accept=".pk3,.PK3,.zip"></label>
         <label title="What the bots call you">Name <input id="pname" type="text" maxlength="15" size="10" spellcheck="false"></label>
         <label>Arena <select id="map"></select></label>
+        <label title="g_gametype: everyone for themselves, or two teams with no friendly fire (from the next arena on)">Game <select id="gametype">
+          <option value="ffa">Free for all</option>
+          <option value="team">Team deathmatch</option>
+        </select></label>
+        <label title="Your team in a team game">Team <select id="team">
+          <option value="auto">auto</option>
+          <option value="red">red</option>
+          <option value="blue">blue</option>
+        </select></label>
         <label>Bots <select id="bots">
           <option value="0">none</option>
           <option value="1">1</option>

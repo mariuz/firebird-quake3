@@ -158,6 +158,17 @@ BEGIN
 END^
 
 -- the name of a player or bot for the obituaries
+-- OnSameTeam: two players or bots of one team, in a team game
+CREATE OR ALTER FUNCTION on_same_team (a INTEGER, b INTEGER) RETURNS SMALLINT
+AS
+DECLARE ta SMALLINT; DECLARE tb SMALLINT;
+BEGIN
+  IF (a IS NULL OR b IS NULL OR a <= 0 OR b <= 0 OR (SELECT g.gametype FROM game g WHERE g.id = 1) < 3) THEN RETURN 0;
+  SELECT e.pteam FROM ents e WHERE e.id = :a AND e.classname IN ('player', 'bot') INTO ta;
+  SELECT e.pteam FROM ents e WHERE e.id = :b AND e.classname IN ('player', 'bot') INTO tb;
+  RETURN IIF(ta > 0 AND ta = tb, 1, 0);
+END^
+
 CREATE OR ALTER FUNCTION ent_name (eid INTEGER) RETURNS VARCHAR(32)
 AS
 DECLARE n VARCHAR(32);
@@ -1019,6 +1030,8 @@ BEGIN
     END
   END
 
+  -- no friendly fire (g_friendlyFire 0): a teammate's shot knocks, it does not hurt
+  IF (targ <> attacker AND BIN_AND(dflags, 8) = 0 AND on_same_team(targ, attacker) = 1) THEN EXIT;
   IF (cls = 'player' AND BIN_AND(flags, 16) <> 0 AND BIN_AND(dflags, 8) = 0) THEN EXIT;   -- god mode
   -- the battle suit halves damage and ignores splash
   IF (cls = 'player' AND BIN_AND(dflags, 8) = 0) THEN

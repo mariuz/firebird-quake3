@@ -19,7 +19,7 @@ explosion sprites, beams) and nothing else. The renderers never query the databa
   in a query without its colon.
 - `npm test` (q3dm1 smoke), `npm run test:dm17` (jump pads), `npm run test:bots` (bots and the
   waypoint hunt), `npm run test:bots:dm17` (bots on the pads), `npm run test:pmove` (the movement against Quake III's
-  `bg_pmove.c`), `npm run test:view` (the first-person
+  `bg_pmove.c`), `npm run test:team` (team deathmatch), `npm run test:view` (the first-person
   view, seconds, no engine). All run against the real WASM engine in
   Node; CI runs all of them before deploying. Each takes one to two minutes.
 - The pak is `public/pak/pak0.pk3`, fetched by `npm run fetch-pak` (gitignored). Four arenas:

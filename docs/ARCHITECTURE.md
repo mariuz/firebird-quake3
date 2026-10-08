@@ -297,8 +297,21 @@ sound, the lead state. Each tic:
    HUD shows the medal for 3 s, as many times as it was earned (`CG_DrawReward`), the frame query sets
    an `EF_AWARD_*` bit for 2 s so the painter floats the medal over the earner's head, and the
    intermission's scoreboard shows the player's medals of the match. Then `score_frag` keeps the
-   scoreboard, announces the lead changes and the frags left, and
-   ends the match at the frag limit; `check_exit_rules` (Quake III's `CheckExitRules`) runs after
+   scoreboard (through `add_score`, Quake III's `AddScore`), announces the lead changes and the frags left, and
+   ends the match at the frag limit. *Team deathmatch* (`game.gametype` 3, `GT_TEAM`, from the page's
+   Game setting through `init_map`) puts everyone on a team (`ents.pteam` 1 red, 2 blue): the player on
+   the one asked for, the bots by `pick_team` (`PickTeam`: the smaller team, on a tie the one behind,
+   else blue), in the model's `red` or `blue` skin. `on_same_team` is `OnSameTeam`: `t_damage` lets a
+   teammate's knock through and returns before the damage (friendly fire off), `bot_find_target`
+   skips teammates, and `bot_fire` holds its fire when a box-less shot trace from the eye meets a
+   teammate first (`BotCheckAttack`). `add_score` adds every frag to the team's score too
+   (`game.red_score`, `blue_score`); a frag of a teammate costs one, like a suicide. In a team game
+   `score_frag` announces the team lead instead ("red leads", "blue leads", "teams are tied",
+   `game.team_lead`), the fraglimit is the team's ("Red hit the fraglimit."), and the time limit's
+   tie is the teams'; the winner is "Red team" or "Blue team" and the win music plays for its side.
+   `q3_tic` returns `gametype`, `red_score`, `blue_score` and the player's `team`; the HUD's corner
+   shows the two scores with ours marked, and `scoreboard` returns each row's team so the page lists
+   the teams under their names and scores; `check_exit_rules` (Quake III's `CheckExitRules`) runs after
    every tic for the time limit: "five minutes" and "one minute" once each (`game.time_warnings`),
    and at the limit either the leader wins or, with the lead tied (`ScoreIsTied`, the player and the
    bots compared), play goes on as sudden death, announced two seconds in, until a frag breaks the

@@ -47,7 +47,7 @@ let lastFxId = 0;
 let frameNo = 0;
 let scores = [];
 const state = new FrameState();
-const settings = { map: 'q3dm1', detail: 'medium', sfx: 70, music: 40, musicMode: 'tracks', skill: 2, bots: 3, fov: 90, renderer: 'fast', brightness: 4, predict: true, fraglimit: 20, timelimit: 10, rotate: true, name: 'Player' };
+const settings = { map: 'q3dm1', detail: 'medium', sfx: 70, music: 40, musicMode: 'tracks', skill: 2, bots: 3, fov: 90, renderer: 'fast', brightness: 4, predict: true, fraglimit: 20, timelimit: 10, rotate: true, name: 'Player', gametype: 'ffa', team: 'auto' };
 try { Object.assign(settings, JSON.parse(localStorage.getItem('firebird-quake3:settings') || '{}')); } catch { /* defaults */ }
 const saveSettings = () => { try { localStorage.setItem('firebird-quake3:settings', JSON.stringify(settings)); } catch { /* ignore */ } };
 const viewWidth = () => (settings.detail === 'high' ? 640 : settings.detail === 'low' ? 160 : 320);
@@ -173,7 +173,8 @@ async function startMap(name) {
   running = false;
   setStatus(`Loading ${name} into Firebird…`);
   const t0 = performance.now();
-  const bsp = await loadMap(db, pak, res, name, { skill: settings.skill, bots: settings.bots, link: false, fraglimit: settings.fraglimit, timelimit: settings.timelimit, warmup: 4 });   // "prepare to fight", three, two, one, "fight!"
+  const bsp = await loadMap(db, pak, res, name, { skill: settings.skill, bots: settings.bots, link: false, fraglimit: settings.fraglimit, timelimit: settings.timelimit, warmup: 4,
+    gametype: settings.gametype === 'team' ? 3 : 0, team: { red: 1, blue: 2 }[settings.team] ?? 0 });   // "prepare to fight", three, two, one, "fight!"
   map = { name, bsp, unlinked: 1 };
   await setPlayerName();
   renderer.setResources(res);
@@ -514,6 +515,10 @@ $('predict').checked = settings.predict;
 $('predict').addEventListener('change', (e) => { settings.predict = e.target.checked; saveSettings(); });
 $('skill').value = String(settings.skill);
 $('skill').addEventListener('change', (e) => { settings.skill = Number(e.target.value); saveSettings(); });
+$('gametype').value = settings.gametype;
+$('gametype').addEventListener('change', (e) => { settings.gametype = e.target.value; saveSettings(); });
+$('team').value = settings.team;
+$('team').addEventListener('change', (e) => { settings.team = e.target.value; saveSettings(); });
 $('bots').value = String(settings.bots);
 $('bots').addEventListener('change', (e) => { settings.bots = Number(e.target.value); saveSettings(); });
 $('sfxvol').value = settings.sfx;

@@ -37,6 +37,10 @@ CREATE TABLE game (
   warmup_end     DOUBLE PRECISION DEFAULT 0 NOT NULL,   -- the countdown before the match ends then (the clock counts from it)
   warmup_said    SMALLINT DEFAULT 0 NOT NULL,           -- the last of three, two, one said (0: done)
   has_water      SMALLINT DEFAULT 0 NOT NULL,           -- the map has water: the shots look for bubbles
+  gametype       SMALLINT DEFAULT 0 NOT NULL,           -- g_gametype: 0 free for all, 3 team deathmatch (GT_TEAM)
+  red_score      INTEGER DEFAULT 0 NOT NULL,            -- level.teamScores[TEAM_RED], [TEAM_BLUE]
+  blue_score     INTEGER DEFAULT 0 NOT NULL,
+  team_lead      SMALLINT DEFAULT 0 NOT NULL,           -- who leads, as last announced: 0 tied 1 red 2 blue
   match_over     SMALLINT DEFAULT 0 NOT NULL,           -- 1 from the frag or time limit on: the intermission
   winner         VARCHAR(32),
   over_time      DOUBLE PRECISION DEFAULT 0 NOT NULL,
@@ -285,6 +289,7 @@ CREATE TABLE ents (
   n_excellent  SMALLINT DEFAULT 0 NOT NULL,
   n_impressive SMALLINT DEFAULT 0 NOT NULL,
   n_gauntlet   SMALLINT DEFAULT 0 NOT NULL,
+  pteam        SMALLINT DEFAULT 0 NOT NULL,             -- sessionTeam: 0 free, 1 red, 2 blue
   pmodel     VARCHAR(16),                   -- the player model (sarge, grunt …)
   pskin      VARCHAR(16),
   legs_anim  INTEGER DEFAULT 22 NOT NULL,   -- LEGS_IDLE

@@ -475,6 +475,7 @@ BEGIN
              (COS(e.yaw * 0.0174532925e0) * (o.x - e.x) + SIN(e.yaw * 0.0174532925e0) * (o.y - e.y)) / MAXVALUE(1e-3, vlen(o.x - e.x, o.y - e.y, 0))
         FROM ents o CROSS JOIN ents e
        WHERE e.id = :eid AND o.id <> :eid AND o.classname IN ('player', 'bot') AND o.health > 0 AND o.deadflag = 0 AND BIN_AND(o.flags, 64) = 0
+         AND NOT (e.pteam > 0 AND o.pteam = e.pteam)
          AND NOT (o.classname = 'player' AND :inv > now_())
          AND ABS(o.x - e.x) < :alert AND ABS(o.y - e.y) < :alert AND ABS(o.z - e.z) < :alert
        ORDER BY 2 INTO c, d, cosang
@@ -513,6 +514,9 @@ DECLARE enemy INTEGER; DECLARE w INTEGER; DECLARE skill SMALLINT;
 DECLARE ex DOUBLE PRECISION; DECLARE ey DOUBLE PRECISION; DECLARE ez DOUBLE PRECISION; DECLARE fx DOUBLE PRECISION; DECLARE fy DOUBLE PRECISION; DECLARE fz DOUBLE PRECISION;
 DECLARE tx DOUBLE PRECISION; DECLARE ty DOUBLE PRECISION; DECLARE tz DOUBLE PRECISION; DECLARE dl DOUBLE PRECISION; DECLARE err DOUBLE PRECISION;
 DECLARE dx DOUBLE PRECISION; DECLARE dy DOUBLE PRECISION; DECLARE dz DOUBLE PRECISION; DECLARE lead DOUBLE PRECISION;
+DECLARE tf DOUBLE PRECISION; DECLARE ttx DOUBLE PRECISION; DECLARE tty DOUBLE PRECISION; DECLARE ttz DOUBLE PRECISION;
+DECLARE tnx DOUBLE PRECISION; DECLARE tny DOUBLE PRECISION; DECLARE tnz DOUBLE PRECISION;
+DECLARE tsf INTEGER; DECLARE tct INTEGER; DECLARE tas SMALLINT; DECLARE tss SMALLINT; DECLARE thit INTEGER;
 BEGIN
   SELECT e.enemy_id, e.weapon, COALESCE(b.skill, 2) FROM ents e LEFT JOIN bot_defs b ON b.name = e.bot WHERE e.id = :eid INTO enemy, w, skill;
   IF (enemy IS NULL) THEN EXIT;
@@ -530,6 +534,13 @@ BEGIN
   err = dl * bot_char(skill, 'aim');
   dx = dx + crand() * err; dy = dy + crand() * err; dz = dz + crand() * err * 0.7e0;
   UPDATE ents e SET e.pitch = -ATAN2(:dz, vlen(:dx, :dy, 0)) * 57.29578e0 WHERE e.id = :eid;
+  -- BotCheckAttack: a teammate in the line of fire holds it
+  IF ((SELECT g.gametype FROM game g WHERE g.id = 1) >= 3) THEN
+  BEGIN
+    EXECUTE PROCEDURE trace_move(eid, 0, 0, 0, 0, 0, 0, ex, ey, ez, tx, ty, tz, 100663297)
+      RETURNING_VALUES tf, ttx, tty, ttz, tnx, tny, tnz, tsf, tct, tas, tss, thit;
+    IF (thit IS NOT NULL AND thit <> enemy AND on_same_team(eid, thit) = 1) THEN EXIT;
+  END
   EXECUTE PROCEDURE fire_weapon(eid, w, ex + fx * 14, ey + fy * 14, ez + fz * 14, dx, dy, dz, 1);
   EXECUTE PROCEDURE set_anims(eid, NULL, IIF(w = 1, 8, 7));
 END^
@@ -790,11 +801,26 @@ BEGIN
   UPDATE ents e SET e.nextthink = :nt WHERE e.id = :eid;
 END^
 
+-- PickTeam: the team with fewer players, else the one behind, else blue
+CREATE OR ALTER FUNCTION pick_team RETURNS SMALLINT
+AS
+DECLARE r INTEGER; DECLARE b INTEGER; DECLARE rs INTEGER; DECLARE bs INTEGER;
+BEGIN
+  SELECT COUNT(*) FROM ents e WHERE e.classname IN ('player', 'bot') AND e.pteam = 1 AND NOT (e.classname = 'player' AND (SELECT p.spectator FROM player p WHERE p.id = 1) = 1) INTO r;
+  SELECT COUNT(*) FROM ents e WHERE e.classname IN ('player', 'bot') AND e.pteam = 2 AND NOT (e.classname = 'player' AND (SELECT p.spectator FROM player p WHERE p.id = 1) = 1) INTO b;
+  IF (b > r) THEN RETURN 1;
+  IF (r > b) THEN RETURN 2;
+  SELECT g.red_score, g.blue_score FROM game g WHERE g.id = 1 INTO rs, bs;
+  IF (bs > rs) THEN RETURN 1;
+  RETURN 2;
+END^
+
 -- a bot joins the arena
 CREATE OR ALTER PROCEDURE spawn_bot (bname VARCHAR(16))
 RETURNS (id INTEGER)
 AS
 DECLARE mdl VARCHAR(16); DECLARE sk VARCHAR(16); DECLARE x DOUBLE PRECISION; DECLARE y DOUBLE PRECISION; DECLARE z DOUBLE PRECISION; DECLARE yaw DOUBLE PRECISION; DECLARE t DOUBLE PRECISION;
+DECLARE tm SMALLINT;
 BEGIN
   SELECT b.model, b.skin FROM bot_defs b WHERE b.name = :bname INTO mdl, sk;
   IF (mdl IS NULL) THEN EXIT;
@@ -806,8 +832,14 @@ BEGIN
          e.solid = 3, e.movetype = 4, e.clipmask = 33619969, e.health = 125, e.max_health = 100, e.takedamage = 2, e.mass = 200, e.flags = 32,
          e.yaw_speed = bot_char((SELECT b.skill FROM bot_defs b WHERE b.name = :bname), 'turn'), e.st = 'stand', e.weapons = 3, e.weapon = 2, e.legs_time = :t, e.torso_time = :t,
          e.think = 'bot_think', e.nextthink = :t + 0.5e0 + RAND() * 0.5e0, e.attack_finished = :t + 2 WHERE e.id = :id;
+  -- in a team game, a team (PickTeam) and its colours (the model's red or blue skin)
+  IF ((SELECT g.gametype FROM game g WHERE g.id = 1) >= 3) THEN
+  BEGIN
+    tm = pick_team();
+    UPDATE ents e SET e.pteam = :tm, e.pskin = IIF(:tm = 1, 'red', 'blue') WHERE e.id = :id;
+  END
   EXECUTE PROCEDURE link_ent(id);
-  EXECUTE PROCEDURE say(bname || ' entered the game');
+  EXECUTE PROCEDURE say(bname || ' entered the game' || COALESCE((SELECT TRIM(TRAILING FROM IIF(e.pteam = 1, ' (red)', IIF(e.pteam = 2, ' (blue)', ''))) FROM ents e WHERE e.id = :id), ''));
   IF ((SELECT g.tic FROM game g WHERE g.id = 1) > 0) THEN EXECUTE PROCEDURE bot_chat_event(id, 'game_enter', NULL, 0);   -- BotChat_EnterGame
   SUSPEND;
 END^
@@ -847,7 +879,7 @@ BEGIN
   IF (nm IS NULL) THEN SELECT FIRST 1 m.name FROM map_list m ORDER BY m.ord INTO nm;
   UPDATE game g SET g.match_over = 1, g.winner = :wname, g.over_time = :t, g.next_map = COALESCE(:nm, :cur) WHERE g.id = 1;
   EXECUTE PROCEDURE cprint(IIF(wname = 'You', 'You win!', wname || ' wins'));
-  EXECUTE PROCEDURE snd_local(IIF(wname = 'You', 'music/win.wav', 'music/loss.wav'));
+  EXECUTE PROCEDURE snd_local(IIF(wname = 'You' OR wname = (SELECT IIF(e.pteam = 1, 'Red team', 'Blue team') FROM ents e WHERE e.id = player_ent() AND e.pteam > 0), 'music/win.wav', 'music/loss.wav'));
   EXECUTE PROCEDURE begin_intermission;
   -- the bots have their say about it (BotChat_EndLevel)
   FOR SELECT e.id FROM ents e WHERE e.classname = 'bot' ORDER BY e.id INTO b DO EXECUTE PROCEDURE bot_chat_event(b, 'level_end', NULL, 0);
@@ -891,7 +923,26 @@ BEGIN
   t = t - we;   -- the match's clock starts at "fight!"
   IF (tl > 5 AND BIN_AND(warn, 1) = 0 AND t >= (tl - 5) * 60) THEN BEGIN warn = BIN_OR(warn, 1); EXECUTE PROCEDURE snd_local('sound/feedback/5_minute.wav'); END
   IF (tl > 1 AND BIN_AND(warn, 2) = 0 AND t >= (tl - 1) * 60) THEN BEGIN warn = BIN_OR(warn, 2); EXECUTE PROCEDURE snd_local('sound/feedback/1_minute.wav'); END
-  IF (t >= tl * 60) THEN
+  IF (t >= tl * 60 AND (SELECT g.gametype FROM game g WHERE g.id = 1) >= 3) THEN
+  BEGIN
+    -- a team game: ScoreIsTied is the teams' scores
+    SELECT g.red_score, g.blue_score FROM game g WHERE g.id = 1 INTO pf, bf;
+    IF (pf = bf) THEN
+    BEGIN
+      IF (BIN_AND(warn, 4) = 0 AND t >= tl * 60 + 2) THEN
+      BEGIN
+        warn = BIN_OR(warn, 4);
+        EXECUTE PROCEDURE snd_local('sound/feedback/sudden_death.wav');
+        EXECUTE PROCEDURE cprint('Sudden Death!');
+      END
+    END
+    ELSE
+    BEGIN
+      EXECUTE PROCEDURE sprint('Timelimit hit.');
+      EXECUTE PROCEDURE end_match(TRIM(IIF(pf > bf, 'Red team', 'Blue team')));
+    END
+  END
+  ELSE IF (t >= tl * 60) THEN
   BEGIN
     SELECT IIF(p.spectator = 1, -1000000, p.frags) FROM player p WHERE p.id = 1 INTO pf;   -- a spectator is not ranked
     SELECT MAX(e.frags) FROM ents e WHERE e.classname = 'bot' INTO bf;
@@ -917,28 +968,41 @@ BEGIN
   UPDATE game g SET g.time_warnings = :warn WHERE g.id = 1 AND g.time_warnings <> :warn;
 END^
 
+-- AddScore: the player's or the bot's frags, and in a team game its team's score with them
+CREATE OR ALTER PROCEDURE add_score (eid INTEGER, delta INTEGER)
+AS
+DECLARE tm SMALLINT;
+BEGIN
+  IF (eid = player_ent()) THEN UPDATE player p SET p.frags = p.frags + :delta WHERE p.id = 1;
+  ELSE UPDATE ents e SET e.frags = e.frags + :delta WHERE e.id = :eid;
+  IF ((SELECT g.gametype FROM game g WHERE g.id = 1) < 3) THEN EXIT;
+  SELECT e.pteam FROM ents e WHERE e.id = :eid INTO tm;
+  IF (tm = 1) THEN UPDATE game g SET g.red_score = g.red_score + :delta WHERE g.id = 1;
+  ELSE IF (tm = 2) THEN UPDATE game g SET g.blue_score = g.blue_score + :delta WHERE g.id = 1;
+END^
+
 CREATE OR ALTER PROCEDURE score_frag (attacker INTEGER, victim INTEGER, mod_ SMALLINT)
 AS
 DECLARE pe INTEGER; DECLARE t DOUBLE PRECISION; DECLARE pf INTEGER; DECLARE bf INTEGER; DECLARE lead SMALLINT; DECLARE oldlead SMALLINT; DECLARE lim INTEGER;
 DECLARE lk DOUBLE PRECISION; DECLARE wname VARCHAR(32); DECLARE top INTEGER; DECLARE left_ INTEGER; DECLARE bot_ INTEGER;
+DECLARE gt SMALLINT; DECLARE mate SMALLINT; DECLARE rs INTEGER; DECLARE bs INTEGER; DECLARE tl SMALLINT; DECLARE otl SMALLINT; DECLARE atm SMALLINT;
 BEGIN
   pe = player_ent();
   t = now_();
+  SELECT g.gametype FROM game g WHERE g.id = 1 INTO gt;
+  mate = on_same_team(attacker, victim);
   IF (attacker IS NULL OR attacker <= 0 OR attacker = victim) THEN
+    EXECUTE PROCEDURE add_score(victim, -1);      -- a suicide costs a frag
+  ELSE IF (mate = 1) THEN
+    EXECUTE PROCEDURE add_score(attacker, -1);    -- so does a teammate
+  ELSE
   BEGIN
-    -- a suicide costs a frag
-    IF (victim = pe) THEN UPDATE player p SET p.frags = p.frags - 1 WHERE p.id = 1;
-    ELSE UPDATE ents e SET e.frags = e.frags - 1 WHERE e.id = :victim;
+    EXECUTE PROCEDURE add_score(attacker, 1);
+    IF (attacker = pe) THEN EXECUTE PROCEDURE sprint('You fragged ' || ent_name(victim));
   END
-  ELSE IF (attacker = pe) THEN
-  BEGIN
-    UPDATE player p SET p.frags = p.frags + 1 WHERE p.id = 1;
-    EXECUTE PROCEDURE sprint('You fragged ' || ent_name(victim));
-  END
-  ELSE UPDATE ents e SET e.frags = e.frags + 1 WHERE e.id = :attacker;
   -- the rewards (player_die in g_combat.c): a gauntlet frag, and a frag within 3 s of the last one
   -- (CARNAGE_REWARD_TIME); the gauntlet's victim hears "humiliation" too
-  IF (attacker > 0 AND attacker <> victim) THEN
+  IF (attacker > 0 AND attacker <> victim AND mate = 0) THEN
   BEGIN
     SELECT e.last_kill FROM ents e WHERE e.id = :attacker INTO lk;
     IF (mod_ = 1) THEN
@@ -958,6 +1022,29 @@ BEGIN
     SELECT FIRST 1 e.id FROM ents e WHERE e.classname = 'bot' AND e.enemy_id = :victim AND e.id <> :victim INTO bot_;
     IF (bot_ IS NOT NULL) THEN EXECUTE PROCEDURE bot_chat_event(bot_, 'enemy_suicide', victim, mod_);
   END
+  SELECT g.fraglimit, g.red_score, g.blue_score, g.team_lead FROM game g WHERE g.id = 1 INTO lim, rs, bs, otl;
+  IF (gt >= 3) THEN
+  BEGIN
+    -- a team game: the announcer calls the team that leads ("red leads", "blue leads", "teams are tied"),
+    -- the fraglimit is the team's (CheckExitRules: "Red hit the fraglimit.")
+    tl = IIF(rs > bs, 1, IIF(bs > rs, 2, 0));
+    IF (tl <> otl) THEN
+    BEGIN
+      UPDATE game g SET g.team_lead = :tl WHERE g.id = 1;
+      EXECUTE PROCEDURE snd_local(CASE tl WHEN 1 THEN 'sound/feedback/redleads.wav' WHEN 2 THEN 'sound/feedback/blueleads.wav' ELSE 'sound/feedback/teamstied.wav' END);
+    END
+    top = MAXVALUE(rs, bs);
+    SELECT e.pteam FROM ents e WHERE e.id = :attacker INTO atm;
+    left_ = lim - top;
+    IF (lim > 0 AND left_ IN (1, 2, 3) AND mate = 0 AND IIF(atm = 1, rs, IIF(atm = 2, bs, -1)) = top) THEN
+      EXECUTE PROCEDURE snd_local(CASE left_ WHEN 1 THEN 'sound/feedback/1_frag.wav' WHEN 2 THEN 'sound/feedback/2_frags.wav' ELSE 'sound/feedback/3_frags.wav' END);
+    IF (lim > 0 AND top >= lim) THEN
+    BEGIN
+      EXECUTE PROCEDURE sprint(TRIM(IIF(rs >= lim, 'Red', 'Blue')) || ' hit the fraglimit.');
+      EXECUTE PROCEDURE end_match(TRIM(IIF(rs >= lim, 'Red team', 'Blue team')));
+    END
+    EXIT;
+  END
   -- the lead
   SELECT p.frags, p.lead_state FROM player p WHERE p.id = 1 INTO pf, oldlead;
   SELECT COALESCE(MAX(e.frags), 0) FROM ents e WHERE e.classname = 'bot' INTO bf;
@@ -968,7 +1055,6 @@ BEGIN
     EXECUTE PROCEDURE snd_local(CASE lead WHEN 2 THEN 'sound/feedback/takenlead.wav' WHEN 1 THEN 'sound/feedback/tiedlead.wav' ELSE 'sound/feedback/lostlead.wav' END);
   END
   -- frags left, and the end of the match
-  SELECT g.fraglimit FROM game g WHERE g.id = 1 INTO lim;
   top = MAXVALUE(pf, bf);
   left_ = lim - top;
   IF (lim > 0 AND left_ IN (1, 2, 3) AND ((attacker = pe AND pf = top) OR (attacker <> pe AND bf = top))) THEN
@@ -1306,7 +1392,8 @@ RETURNS (
   fraglimit INTEGER, timelimit INTEGER, over_time DOUBLE PRECISION, next_map VARCHAR(64),
   dmg_z DOUBLE PRECISION, dmg_world SMALLINT, land_change DOUBLE PRECISION, vx DOUBLE PRECISION, vy DOUBLE PRECISION,
   warmup_end DOUBLE PRECISION, award SMALLINT, award_time DOUBLE PRECISION, n_excellent SMALLINT, n_impressive SMALLINT, n_gauntlet SMALLINT,
-  spectator SMALLINT, follow_name VARCHAR(32), mover_yaw DOUBLE PRECISION)
+  spectator SMALLINT, follow_name VARCHAR(32), mover_yaw DOUBLE PRECISION,
+  gametype SMALLINT, red_score INTEGER, blue_score INTEGER, team SMALLINT)
 AS
 DECLARE i INTEGER = 0;
 BEGIN
@@ -1333,32 +1420,33 @@ BEGIN
          e.leaf, e.cluster, g.match_over, g.winner, p.land_time, IIF(p.follow_id IS NULL, p.onground, IIF(BIN_AND(e.flags, 512) <> 0, 1, 0)), p.move_speed, p.weapon_sound,
          (SELECT COALESCE(MAX(b.frags), 0) FROM ents b WHERE b.classname = 'bot'), p.ducked, g.fraglimit, g.timelimit, g.over_time, g.next_map,
          p.dmg_z, p.dmg_world, p.land_change, e.vx, e.vy, g.warmup_end, e.award, e.award_time, e.n_excellent, e.n_impressive, e.n_gauntlet, p.spectator, IIF(p.follow_id IS NULL, NULL, e.bot),
-         p.mover_yaw / :tics
+         p.mover_yaw / :tics, g.gametype, g.red_score, g.blue_score, (SELECT o.pteam FROM ents o WHERE o.id = p.ent_id)
     FROM game g CROSS JOIN player p JOIN ents e ON e.id = COALESCE(p.follow_id, p.ent_id)   -- following: the one followed
    WHERE g.id = 1 AND p.id = 1
     INTO tic, time_, health, max_health, armor, bullets, shells, grenades, rockets, lightning, slugs, cells, bfg,
          weapons, weapon, pending_weapon, weaponstate, weapon_time, attack_start, attack_finished,
          px, py, pz, yaw, pitch, view_z, punch, msg, cprint, dmg_take, dmg_save, dmg_time, dmg_x, dmg_y, bonus_time, dead, exit_kind, frags, deaths, waterlevel, watertype, map_name, level_msg,
-         quad, haste, invis, regen, enviro, flight, holdable, leaf, cluster, match_over, winner, land_time, onground, move_speed, weapon_sound, lead, ducked, fraglimit, timelimit, over_time, next_map, dmg_z, dmg_world, land_change, vx, vy, warmup_end, award, award_time, n_excellent, n_impressive, n_gauntlet, spectator, follow_name, mover_yaw;
+         quad, haste, invis, regen, enviro, flight, holdable, leaf, cluster, match_over, winner, land_time, onground, move_speed, weapon_sound, lead, ducked, fraglimit, timelimit, over_time, next_map, dmg_z, dmg_world, land_change, vx, vy, warmup_end, award, award_time, n_excellent, n_impressive, n_gauntlet, spectator, follow_name, mover_yaw, gametype, red_score, blue_score, team;
   UPDATE player p SET p.dmg_take = 0, p.dmg_save = 0 WHERE p.id = 1 AND p.dmg_time < :time_ - 0.05e0;
   SUSPEND;
 END^
 
 -- the scoreboard: the player and the bots by frags
 CREATE OR ALTER PROCEDURE scoreboard
-RETURNS (name VARCHAR(32), frags INTEGER, deaths INTEGER, is_player SMALLINT)
+RETURNS (name VARCHAR(32), frags INTEGER, deaths INTEGER, is_player SMALLINT, team SMALLINT)
 AS
 BEGIN
-  FOR SELECT x.name, x.frags, x.deaths, x.is_player FROM (
-        SELECT 'You' AS name, p.frags, p.deaths, 1 AS is_player FROM player p WHERE p.id = 1
+  FOR SELECT x.name, x.frags, x.deaths, x.is_player, x.team FROM (
+        SELECT 'You' AS name, p.frags, p.deaths, 1 AS is_player, COALESCE((SELECT e.pteam FROM ents e WHERE e.id = p.ent_id), 0) AS team FROM player p WHERE p.id = 1
         UNION ALL
-        SELECT e.bot, e.frags, e.deaths, 0 FROM ents e WHERE e.classname = 'bot') x
-      ORDER BY x.frags DESC, x.deaths INTO name, frags, deaths, is_player DO SUSPEND;
+        SELECT e.bot, e.frags, e.deaths, 0, e.pteam FROM ents e WHERE e.classname = 'bot') x
+      ORDER BY x.team, x.frags DESC, x.deaths INTO name, frags, deaths, is_player, team DO SUSPEND;
 END^
 
 -- G_InitGame + ClientBegin: the map's entities, the player and the bots
 CREATE OR ALTER PROCEDURE init_map (map_name VARCHAR(32), world_model INTEGER, skill SMALLINT, new_game SMALLINT, num_bots INTEGER,
-                                    fraglimit INTEGER DEFAULT 20, timelimit INTEGER DEFAULT 0, warmup DOUBLE PRECISION DEFAULT 0)
+                                    fraglimit INTEGER DEFAULT 20, timelimit INTEGER DEFAULT 0, warmup DOUBLE PRECISION DEFAULT 0,
+                                    gametype SMALLINT DEFAULT 0, team SMALLINT DEFAULT 0)
 AS
 DECLARE pe INTEGER; DECLARE b VARCHAR(16); DECLARE i INTEGER = 0; DECLARE n INTEGER; DECLARE skyname VARCHAR(64);
 BEGIN
@@ -1366,7 +1454,8 @@ BEGIN
          g.level_msg = NULL, g.gravity = 800, g.match_over = 0, g.winner = NULL, g.over_time = 0, g.num_bots = :num_bots,
          g.fraglimit = COALESCE(:fraglimit, 20), g.timelimit = COALESCE(:timelimit, 0), g.time_warnings = 0,
          g.warmup_end = COALESCE(:warmup, 0), g.warmup_said = IIF(COALESCE(:warmup, 0) > 0, 4, 0),
-         g.has_water = IIF(EXISTS (SELECT 1 FROM brushes b WHERE BIN_AND(b.contents, 32) <> 0), 1, 0) WHERE g.id = 1;
+         g.has_water = IIF(EXISTS (SELECT 1 FROM brushes b WHERE BIN_AND(b.contents, 32) <> 0), 1, 0),
+         g.gametype = IIF(COALESCE(:gametype, 0) >= 3, 3, 0), g.red_score = 0, g.blue_score = 0, g.team_lead = 0 WHERE g.id = 1;
   -- the sky: the first sky shader the map's faces use
   SELECT FIRST 1 t.name FROM textures t WHERE BIN_AND(t.flags, 4) <> 0 INTO skyname;
   UPDATE game g SET g.sky = :skyname WHERE g.id = 1;
@@ -1377,6 +1466,10 @@ BEGIN
   -- the player
   EXECUTE PROCEDURE spawn_ent('player', 0, 0, 0) RETURNING_VALUES pe;
   UPDATE ents e SET e.pmodel = 'sarge', e.pskin = 'default', e.viewheight = 26 WHERE e.id = :pe;
+  -- a team game: the team asked for, else PickTeam's, and its colours
+  IF (COALESCE(gametype, 0) >= 3) THEN
+    UPDATE ents e SET e.pteam = IIF(:team IN (1, 2), :team, pick_team()) WHERE e.id = :pe;
+  UPDATE ents e SET e.pskin = IIF(e.pteam = 1, 'red', 'blue') WHERE e.id = :pe AND e.pteam > 0;
   UPDATE player p SET p.ent_id = :pe, p.frags = 0, p.deaths = 0, p.lead_state = 1, p.last_kill = -10, p.msg = NULL, p.msg_time = 0, p.cprint = NULL, p.cprint_time = 0, p.step_time = 0, p.land_time = -10 WHERE p.id = 1;
   EXECUTE PROCEDURE player_respawn;
   UPDATE ents e SET e.teleport_time = 0 WHERE e.id = :pe;
