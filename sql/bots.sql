@@ -1496,7 +1496,7 @@ BEGIN
   ELSE IF (think = 'always_fire') THEN EXECUTE PROCEDURE always_fire(eid);
   ELSE IF (think = 'multi_wait') THEN EXECUTE PROCEDURE multi_wait(eid);
   ELSE IF (think = 'delayed_use') THEN EXECUTE PROCEDURE delayed_use(eid);
-  ELSE IF (think = 'missile_explode') THEN EXECUTE PROCEDURE missile_explode(eid);
+  ELSE IF (think = 'missile_explode') THEN EXECUTE PROCEDURE missile_explode(eid, 0, 0, 1);
   ELSE IF (think = 'item_respawn') THEN EXECUTE PROCEDURE item_respawn(eid);
   ELSE IF (think = 'remove') THEN DELETE FROM ents e WHERE e.id = :eid;
   ELSE IF (think = 'bot_think') THEN EXECUTE PROCEDURE bot_think(eid);

@@ -132,6 +132,8 @@ BEGIN
     LEAVE;
   END
   EXECUTE PROCEDURE fx(4, ox, oy, oz, hx, hy, hz, 0);
+  -- the slug's mark where it stopped in the world (CG_MissileHitWall for WP_RAILGUN: the energy mark)
+  IF (f < 1 AND BIN_AND(sf, 4) = 0) THEN EXECUTE PROCEDURE fx(16, hx, hy, hz, nx, ny, nz, 64);
   -- two hits in a row, impressive (a miss starts the count again)
   IF (hits = 0) THEN UPDATE ents e SET e.rail_hits = 0 WHERE e.id = :shooter;
   ELSE

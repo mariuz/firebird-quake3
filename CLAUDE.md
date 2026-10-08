@@ -20,9 +20,10 @@ explosion sprites, beams) and nothing else. The renderers never query the databa
 - `npm test` (q3dm1 smoke), `npm run test:dm17` (jump pads), `npm run test:bots` (bots and the
   waypoint hunt), `npm run test:bots:dm17` (bots on the pads), `npm run test:pmove` (the movement against Quake III's
   `bg_pmove.c`), `npm run test:team` (team deathmatch), `npm run test:tourney` (the tournament), `npm run test:view` (the first-person
-  view, seconds, no engine). All run against the real WASM engine in
+  view and the impact marks' clipping, seconds, no engine). All run against the real WASM engine in
   Node; CI runs all of them before deploying. Each takes one to two minutes.
-- The pak is `public/pak/pak0.pk3`, fetched by `npm run fetch-pak` (gitignored). Four arenas:
+- The pak is `public/pak/pak0.pk3`, fetched by `npm run fetch-pak` (gitignored; behind a proxy run it as
+  `NODE_USE_ENV_PROXY=1 npm run fetch-pak`, Node's `fetch` ignores `HTTPS_PROXY`; only the gwdg mirror still has it). Four arenas:
   q3dm1 (the default, indoor, stairs), q3dm7 (big, many levels), q3dm17 (platforms over the void,
   every jump pad), q3tourney2.
 - Headless pictures: `node scripts/screenshot.mjs <map> <prefix> --at=x,y,z,yaw --bright=4` then
@@ -32,7 +33,11 @@ explosion sprites, beams) and nothing else. The renderers never query the databa
   `PORT=8085 node scripts/build.mjs --serve --coi`; 8080 and 8081 are usually busy. A background tab
   throttles the loop to about one frame a second, so override `document.hidden` and, for anything
   heavy, run SQL through the page's console (`#sql`, `#run-sql`, `#sql-out`). Close the tab and stop
-  the server (it is a `node scripts/build.mjs --serve` process) when done.
+  the server (it is a `node scripts/build.mjs --serve` process) when done. Without Chrome, headless
+  Chromium runs the page, WebGL and Firebird WASM included: `playwright-core` with
+  `executablePath` the `headless_shell` under `/opt/pw-browsers/chromium_headless_shell-*` and
+  `--use-angle=swiftshader --enable-unsafe-swiftshader`; seed `localStorage` (`firebird-quake3:settings`)
+  with `addInitScript` to pick the renderer.
 - Scratch files go in `.prof/` (gitignored): `wp.mjs` (graph stats and timing per map), `wpdiag.mjs`
   (graph components and the failed edges between them), `hunt.mjs` (a bot's route following tick by
   tick), `pad2.mjs` (every pad's flight), `fair.mjs` (how fast each skill kills a standing player).
@@ -62,6 +67,7 @@ explosion sprites, beams) and nothing else. The renderers never query the databa
 | what a frame returns | `sql/render.sql` (`frame_all`), read in `src/scene.js` `FrameState.parse` |
 | interpolation between tics, local prediction | `src/main.js`: `viewRow`, `interpolateFrame`, `poseOf`; the eye clamp in `view_setup` |
 | view kicks, landing dips, bob, gun sway, zoom | `src/scene.js` `firstPersonView`, `zoomedFov`; the zoom key and sensitivity in `src/main.js` (tested by `npm run test:view`); the hit's source in `t_damage`, the fall's size in `impact` |
+| impact marks (bullet holes, burns, blood) | `FrameState.impactMark` and `drawMarks` in `src/scene.js`, `drawMark` in both painters; the hit's normal comes in the fx row (`x2..z2`), kind 16 is a mark alone |
 | what gets drawn and how | `src/scene.js` (what), `src/renderer.js` and `src/renderer-gl.js` (how) |
 | HUD, icons, scoreboard | `src/hud.js` |
 | sounds, music | `src/audio.js`; events are rows in `sound_events` written by `snd`/`snd_at` |

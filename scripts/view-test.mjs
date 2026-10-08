@@ -1,5 +1,6 @@
 // view-test.mjs – the first-person view's offsets (src/scene.js firstPersonView), as Quake III's cgame
-// has them: the kick away from a hit, the dip of a landing, the lean of the run, the bob of the steps.
+// has them: the kick away from a hit, the dip of a landing, the lean of the run, the bob of the steps;
+// and the impact marks clipped to the world's faces (FrameState.impactMark).
 // Pure JavaScript, no engine: rows shaped like Q3_TIC's.
 //
 //   node scripts/view-test.mjs
@@ -125,6 +126,45 @@ assert(weak.pitch <= -9.9 && strong.pitch >= -10.01, `low on health the kick is 
   assert(at(2, 10.2, 10.01) === 142 && at(2, 10.2, 10.12) === 144 && at(2, 10.2, 10.17) === 145, 'dropping: the drop from its start, 20 frames a second');
   assert(at(3, 10.25, 10.01) === 147 && at(3, 10.25, 10.17) === 150 && at(3, 10.25, 10.24) === 150, 'raising: the raise, held on its last frame');
   assert(at(0, 0, 10) === 151 && at(0, 0, 10.05, { ATTACK_START: 10 }) === 130 && at(0, 0, 10.05, { ATTACK_START: 10, WEAPON: 1 }) === 136, 'at rest standing; firing the attack, the gauntlet its own');
+}
+
+// the marks (CG_ImpactMark): a wall at x = 0 facing +x, 256 square, of two faces split at y = 0; a floor
+// facing up; a ceiling facing down. Faces as bsp.js builds them: a convex outline, its normal, a sphere
+const face = (pts, normal) => {
+  const verts = new Float32Array(pts.length * 10);
+  pts.forEach((q, k) => verts.set(q, k * 10));
+  const c = [0, 1, 2].map((i) => pts.reduce((a, q) => a + q[i], 0) / pts.length);
+  return { type: 1, texture: 0, nverts: pts.length, verts, normal, center: c, radius: Math.max(...pts.map((q) => Math.hypot(q[0] - c[0], q[1] - c[1], q[2] - c[2]))) };
+};
+const markBsp = {
+  textures: [{ flags: 0 }],
+  faces: [
+    face([[0, -128, 0], [0, 0, 0], [0, 0, 256], [0, -128, 256]], [1, 0, 0]),
+    face([[0, 0, 0], [0, 128, 0], [0, 128, 256], [0, 0, 256]], [1, 0, 0]),
+    face([[0, -128, 0], [256, -128, 0], [256, 128, 0], [0, 128, 0]], [0, 0, 1]),
+    face([[0, -128, 256], [0, 128, 256], [256, 128, 256], [256, -128, 256]], [0, 0, -1]),
+  ],
+  models: [{ firstFace: 0, numFaces: 4 }],
+};
+{
+  const st = new FrameState();
+  st.impactMark(markBsp, 'gfx/damage/bullet_mrk', [0, 50, 128], [1, 0, 0], 8, 10);
+  assert(st.marks.length === 1 && st.marks[0].pts.every((v, i) => i % 3 !== 0 || Math.abs(v - 0.5) < 1e-6), 'a bullet in the middle of the wall: one mark, lifted half a unit off it');
+  const m = st.marks[0];
+  const span = Math.max(...Array.from(m.pts).filter((_, i) => i % 3 === 1)) - Math.min(...Array.from(m.pts).filter((_, i) => i % 3 === 1));
+  assert(span > 15.9 && span <= 8 * 2 * Math.SQRT2 + 1e-6 && m.st.every((v) => v > -1e-6 && v < 1 + 1e-6), `its square is 16 across, turned, and its texture coordinates span 0 to 1 (${span.toFixed(1)} wide)`);
+  st.marks = [];
+  st.impactMark(markBsp, 'gfx/damage/burn_med_mrk', [0, 10, 20], [1, 0, 0], 64, 10);
+  assert(st.marks.length === 2, `a rocket low on the wall, by the seam: a piece on each face, none on the floor at right angles to it (${st.marks.length})`);
+  st.marks = [];
+  st.impactMark(markBsp, 'gfx/damage/burn_med_mrk', [0, 10, 128], [1, 0, 0], 64, 10);
+  assert(st.marks.length === 2, `a rocket in the middle of the wall: the floor and ceiling are out of reach (${st.marks.length})`);
+  st.marks = [];
+  st.impactMark(markBsp, 'gfx/damage/burn_med_mrk', [100, 0, 0], [0, 0, 1], 64, 10);
+  assert(st.marks.length === 1, `a grenade on the floor: the floor only; the wall does not face it (${st.marks.length})`);
+  st.marks = [];
+  for (let i = 0; i < 300; i++) st.impactMark(markBsp, 'gfx/damage/bullet_mrk', [0, 50, 128], [1, 0, 0], 8, 10 + i * 0.01);
+  assert(st.marks.length === 256 && st.marks[0].t0 > 10.4, `at most 256 pieces, the oldest go first (${st.marks.length})`);
 }
 
 // and the hand model really carries the gun down on those frames (with the pak, when it is there)

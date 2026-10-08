@@ -632,6 +632,24 @@ painter trails with bubbles every 8 units instead of smoke. `FrameState.bubbles`
 `sprites/bubble`, drifting up about 6 units a second with a jitter, 1 to 1.25 s each. The demo's
 arenas have lava but no water; the smoke test turns q3dm7's lava into water to check it.
 
+*Marks* are `CG_ImpactMark`'s. The effects that hit a wall carry the plane's normal in `x2..z2`: the
+bullets and pellets (kinds 1 and 11), the lightning gun's (7), and the explosions (2, 9, 6, 8), whose
+normal `impact` now passes on from the trace that stopped the missile through `missile_explode`
+(a grenade that times out goes off facing up, as `G_ExplodeMissile` has it). Kind 16 is a mark alone:
+the rail's where the slug stopped in the world (`n` 64) and a gib's blood where it bounced (`n` 0).
+`FrameState.impactMark` builds the mark as `R_MarkFragments` does: a square of the weapon's radius (4
+for a pellet, 8 a bullet, 12 the lightning gun, 16 plasma, 24 the rail, 32 the BFG, 64 a rocket or a
+grenade, 16 to 47 blood) turned by a random angle, clipped against the world faces (model 0, not
+sky, `nomarks` or `nodraw`) facing the shot within 32 units in front of the plane and 52 behind:
+planar faces whole (they are convex), patches triangle by triangle. Each piece is lifted half a unit
+off its surface and kept with its texture coordinates for 10 s, the last second fading, at most 256
+pieces (`MARK_TOTAL_TIME`, `MARK_FADE_TIME`, `MAX_MARK_POLYS`). `drawMarks` paints them after the
+world and before the models, with the shaders' blends: `bullet_mrk`, `hole_lg_mrk` and
+`burn_med_mrk` subtract (`GL_ZERO GL_ONE_MINUS_SRC_COLOR`, a `subtract` mode in both painters),
+`plasma_mrk` and `blood_stain` blend; the energy marks glow and go dark in their first three seconds.
+The WebGL painter adds the shaders' `polygonOffset`. The marks are cosmetic, so they live in the
+browser; doors and plats are brush models and take none, as in Quake III.
+
 *The zoom* is the client's too (`CG_CalcFov`): Z or the right mouse button holds it, `zoomedFov`
 eases the field of view to 22.5 degrees in 150 ms and back as fast on release, the mouse slows to
 `fov_y / 75` of its speed while zoomed (`cg.zoomSensitivity`), and the gun is put away past half-way

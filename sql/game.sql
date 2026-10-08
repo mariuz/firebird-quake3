@@ -1183,8 +1183,10 @@ BEGIN
   EXECUTE PROCEDURE link_ent(s);
 END^
 
--- a missile goes off: splash damage, the effect and the sound of its kind
-CREATE OR ALTER PROCEDURE missile_explode (eid INTEGER)
+-- a missile goes off: splash damage, the effect and the sound of its kind. The effect carries the
+-- plane it hit (G_MissileImpact's DirToByte); a timed-out grenade goes off facing up (G_ExplodeMissile),
+-- and the browser leaves the burn on whatever floor is near (CG_MissileHitWall's CG_ImpactMark)
+CREATE OR ALTER PROCEDURE missile_explode (eid INTEGER, nx DOUBLE PRECISION, ny DOUBLE PRECISION, nz DOUBLE PRECISION)
 AS
 DECLARE own INTEGER; DECLARE splash INTEGER; DECLARE rad DOUBLE PRECISION; DECLARE cls VARCHAR(40);
 DECLARE x DOUBLE PRECISION; DECLARE y DOUBLE PRECISION; DECLARE z DOUBLE PRECISION;
@@ -1194,25 +1196,25 @@ BEGIN
   IF (cls = 'rocket') THEN
   BEGIN
     EXECUTE PROCEDURE snd_at(x, y, z, 'sound/weapons/rocket/rocklx1a.wav', 1, 1);
-    EXECUTE PROCEDURE fx(2, x, y, z, 0, 0, 0, 0);
+    EXECUTE PROCEDURE fx(2, x, y, z, nx, ny, nz, 0);
     EXECUTE PROCEDURE t_radius_damage(eid, own, splash, NULL, rad, 7);
   END
   ELSE IF (cls = 'grenade') THEN
   BEGIN
     EXECUTE PROCEDURE snd_at(x, y, z, 'sound/weapons/rocket/rocklx1a.wav', 1, 1);
-    EXECUTE PROCEDURE fx(9, x, y, z, 0, 0, 0, 0);
+    EXECUTE PROCEDURE fx(9, x, y, z, nx, ny, nz, 0);
     EXECUTE PROCEDURE t_radius_damage(eid, own, splash, NULL, rad, 5);
   END
   ELSE IF (cls = 'plasma') THEN
   BEGIN
     EXECUTE PROCEDURE snd_at(x, y, z, 'sound/weapons/plasma/plasmx1a.wav', 1, 1);
-    EXECUTE PROCEDURE fx(6, x, y, z, 0, 0, 0, 0);
+    EXECUTE PROCEDURE fx(6, x, y, z, nx, ny, nz, 0);
     EXECUTE PROCEDURE t_radius_damage(eid, own, splash, NULL, rad, 9);
   END
   ELSE IF (cls = 'bfg') THEN
   BEGIN
     EXECUTE PROCEDURE snd_at(x, y, z, 'sound/weapons/rocket/rocklx1a.wav', 1, 1);
-    EXECUTE PROCEDURE fx(8, x, y, z, 0, 0, 0, 0);
+    EXECUTE PROCEDURE fx(8, x, y, z, nx, ny, nz, 0);
     EXECUTE PROCEDURE t_radius_damage(eid, own, splash, NULL, rad, 19);
   END
   DELETE FROM ents e WHERE e.id = :eid;
@@ -1275,7 +1277,7 @@ END^
 
 -- ── touching ────────────────────────────────────────────────────────────
 -- SV_Impact: e1 moved into e2 (e2 = 0 is the world); sflags are the surface flags hit
-CREATE OR ALTER PROCEDURE impact (e1 INTEGER, e2 INTEGER, sflags INTEGER)
+CREATE OR ALTER PROCEDURE impact (e1 INTEGER, e2 INTEGER, sflags INTEGER, nx DOUBLE PRECISION, ny DOUBLE PRECISION, nz DOUBLE PRECISION)
 AS
 DECLARE c1 VARCHAR(40); DECLARE c2 VARCHAR(40); DECLARE own INTEGER; DECLARE dmg INTEGER; DECLARE td2 SMALLINT;
 DECLARE x DOUBLE PRECISION; DECLARE y DOUBLE PRECISION; DECLARE z DOUBLE PRECISION; DECLARE vz DOUBLE PRECISION; DECLARE hp2 INTEGER;
@@ -1304,7 +1306,7 @@ BEGIN
         EXIT;
       END
     END
-    EXECUTE PROCEDURE missile_explode(e1);
+    EXECUTE PROCEDURE missile_explode(e1, nx, ny, nz);
   END
   ELSE IF (c1 = 'grenade') THEN
   BEGIN
@@ -1312,7 +1314,7 @@ BEGIN
     IF (td2 > 0 AND hp2 > 0 AND c2 IN ('player', 'bot')) THEN
     BEGIN
       EXECUTE PROCEDURE t_damage(e2, e1, own, dmg, dmg, 0, 4);
-      EXECUTE PROCEDURE missile_explode(e1);
+      EXECUTE PROCEDURE missile_explode(e1, nx, ny, nz);
     END
     ELSE
     BEGIN
@@ -1321,7 +1323,11 @@ BEGIN
     END
   END
   ELSE IF (c1 = 'gib' AND e2 = 0 AND vlen(vx, vy, vz) > 100) THEN
+  BEGIN
     EXECUTE PROCEDURE snd_at(x, y, z, 'sound/player/gibimp' || CAST(1 + FLOOR(RAND() * 3) AS INTEGER) || '.wav', 0.6e0, 1);
+    -- a gib leaves blood where it lands (CG_FragmentBounceMark, LEMT_BLOOD)
+    IF (BIN_AND(sflags, 4) = 0) THEN EXECUTE PROCEDURE fx(16, x, y, z, nx, ny, nz, 0);
+  END
 END^
 
 -- ── map setup ───────────────────────────────────────────────────────────

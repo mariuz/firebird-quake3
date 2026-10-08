@@ -31,7 +31,7 @@ has no ladders.
 | **Grappling hook** | not in Quake III's arenas; nothing to do |
 | **Holdables** | medkit and the personal teleporter are picked up and used; the teleporter's destination is a random spawn, as in the game |
 | **Powerups** | quad, haste, invisibility, regeneration, battle suit, flight are here; invisibility is not drawn as the invisible shader, haste leaves no trail |
-| **Corpses** | removed after 8 s (gibs after 5 to 8); Quake III sinks them into the floor first, and nothing here leaves blood marks |
+| **Corpses** | removed after 8 s (gibs after 5 to 8); Quake III sinks them into the floor first. Gibs leave blood on the walls; a bleeding player does not (`CG_Bleed` leaves no mark either) |
 | **Persistent stats** | accuracy, per-weapon kills, the end-of-match stats screen |
 
 ## 4. The renderer
@@ -42,7 +42,6 @@ the order a player notices them on the demo maps:
 
 | Gap | Quake III | Where |
 | --- | --- | --- |
-| **Marks and decals** | bullet holes, burn marks, blood on walls (`CG_ImpactMark`) | a decal list in `scene.js`, drawn as small polygons on the hit plane |
 | **Smoke and brass** | rocket and grenade smoke trails, machinegun and shotgun shells | `scene.js` local entities |
 | **Dynamic lights** | rockets, plasma, the quad and the muzzle flash light the world (`R_AddLightToScene`) | the WebGL program: a few point lights; the software painter: a per-polygon tint |
 | **Shader features** | `deformVertexes` (autosprite, wave, bulge), `tcGen environment`, `alphaFunc`, `rgbGen` wave variants, `alphaGen portal`, `fogparms`, `sort` keys, `polygonOffset`, `entityMergable`, multiple lightmap styles | `shader.js` and the painters; the demo maps use autosprite for flames and `tcGen environment` on a few metals |
@@ -139,7 +138,9 @@ the map rotation; bots with
 five skill levels, weapon choice, strafing, health runs, item pickup, and the waypoint graph with pad
 and teleporter edges; the PVS, frustum and back-face culling in SQL for the view actually painted, frames interpolated
 between tics with live mouse look and the local player predicted (extrapolated, clamped by a trace);
-lightmaps with the overbright
+the impact marks (`CG_ImpactMark`, `R_MarkFragments`: bullet holes, the
+lightning gun's holes, burns, the plasma's and the rail's energy marks, gibs' blood, clipped to the world's faces and
+fading after 10 s); lightmaps with the overbright
 shift, the light grid for models, sky cloud layers, blend/add/filter surfaces, scroll/scale/turb
 tcMods, animMap, two-sided surfaces; the software and WebGL painters; positional sound, loops,
 speakers, music; touch controls; the SQL console.

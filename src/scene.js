@@ -11,6 +11,37 @@ const WEAPON_DIR = { 1: 'gauntlet', 2: 'machinegun', 4: 'shotgun', 8: 'grenadel'
 const RLBOOM = [1, 2, 3, 4, 5, 6, 7, 8].map((i) => `models/weaphits/rlboom/rlboom_${i}.jpg`);
 const BLOOD = [201, 202, 203, 204, 205].map((i) => `models/weaphits/blood${i}.tga`);
 
+// cg_marks.c: at most 256 pieces, each 10 s, the last second fading out
+const MAX_MARK_POLYS = 256, MARK_TOTAL_TIME = 10, MARK_FADE_TIME = 1;
+const SURF_SKY = 0x4, SURF_NOMARKS = 0x20, SURF_NODRAW = 0x80;
+
+/** A polygon's part on the positive side of a plane given as a distance function (Sutherland–Hodgman). */
+function clipPoly(poly, dist) {
+  const out = [], n = poly.length;
+  for (let i = 0; i < n; i++) {
+    const a = poly[i], b = poly[(i + 1) % n], da = dist(a), db = dist(b);
+    if (da >= 0) out.push(a);
+    if ((da >= 0) !== (db >= 0)) {
+      const t = da / (da - db);
+      out.push([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t]);
+    }
+  }
+  return out;
+}
+
+/** CG_AddMarks: the marks still on, faded by age; energy marks glow and go dark in their first 3 s */
+function drawMarks(r, state, time) {
+  state.marks = state.marks.filter((m) => time - m.t0 < MARK_TOTAL_TIME && time >= m.t0 - 0.1);
+  for (const m of state.marks) {
+    const age = Math.max(0, time - m.t0);
+    let k = 1, alpha = 1;
+    if (m.energy) k = Math.max(0, Math.min(1, (450 - 450 * (age / 3)) / 255));
+    const left = MARK_TOTAL_TIME - age;
+    if (left < MARK_FADE_TIME) { if (m.blend === 'blend') alpha = left / MARK_FADE_TIME; else k *= left / MARK_FADE_TIME; }
+    r.drawMark(m.pts, m.st, m.n, m.img, m.blend, [m.color[0] * k, m.color[1] * k, m.color[2] * k, alpha]);
+  }
+}
+
 export class FrameState {
   constructor() {
     this.brushAngles = new Map();
@@ -20,6 +51,9 @@ export class FrameState {
     this.kick = { dmgSeen: null, at: -1e9, pitch: 0, roll: 0, bob: 0 };   // the first-person view's state
     this.bubbles = [];        // { p: [x, y, z], v: [vx, vy, vz], t0, dur } (CG_BubbleTrail's local entities)
     this.lastPos = new Map(); // a missile's position at the last frame: its trail starts there
+    this.marks = [];          // { pts, st, n, img, blend, color, t0, energy } (cg_marks.c's mark polys)
+    this.markFaces = null;    // the world faces a mark can land on, for this.markBsp
+    this.markBsp = null;
     this.extraModels = new Map();   // item model name → the other models of the item
     for (const it of ITEMS) {
       const ms = it.models.split(',');
@@ -64,19 +98,108 @@ export class FrameState {
     if (this.bubbles.length > 600) this.bubbles.splice(0, this.bubbles.length - 600);
   }
 
-  /** The temp entities of a tic become sprites, beams and particles. */
-  handleFx(renderer, rows, time) {
+  /** The world faces a mark may land on (R_MarkFragments walks the world's surfaces, not the brush models'):
+   *  polygons and patches, not sky, nomarks or nodraw ones */
+  markSurfaces(bsp) {
+    if (this.markBsp === bsp) return this.markFaces;
+    this.markBsp = bsp; this.marks = [];
+    const world = bsp.models[0], out = [];
+    for (let i = world.firstFace; i < world.firstFace + world.numFaces; i++) {
+      const f = bsp.faces[i];
+      if ((f.type !== 1 && f.type !== 2) || !f.nverts) continue;
+      if ((bsp.textures[f.texture]?.flags ?? 0) & (SURF_SKY | SURF_NOMARKS | SURF_NODRAW)) continue;
+      out.push(f);
+    }
+    return (this.markFaces = out);
+  }
+
+  /** CG_ImpactMark: a square of `radius` round `o`, turned by a random angle, projected along the hit
+   *  normal `dir` onto the world faces in reach and clipped to them (R_MarkFragments); each piece is
+   *  a mark polygon for MARK_TOTAL_TIME. blend 'subtract' darkens (GL_ZERO GL_ONE_MINUS_SRC_COLOR), 'blend'
+   *  is alpha-blended; energy marks glow and darken in their first three seconds */
+  impactMark(bsp, img, o, dir, radius, time, blend = 'subtract', color = [1, 1, 1], energy = false) {
+    const dl = Math.hypot(dir[0], dir[1], dir[2]);
+    if (!bsp || !(dl > 0) || !(radius > 0)) return;
+    const n = [dir[0] / dl, dir[1] / dl, dir[2] / dl];
+    // two axes in the plane (PerpendicularVector, CrossProduct), turned by the mark's angle
+    const p = Math.abs(n[2]) < 0.9 ? [0, 0, 1] : [1, 0, 0];
+    const d = p[0] * n[0] + p[1] * n[1] + p[2] * n[2];
+    let a1 = [p[0] - d * n[0], p[1] - d * n[1], p[2] - d * n[2]];
+    const l1 = Math.hypot(a1[0], a1[1], a1[2]);
+    a1 = [a1[0] / l1, a1[1] / l1, a1[2] / l1];
+    let a2 = [n[1] * a1[2] - n[2] * a1[1], n[2] * a1[0] - n[0] * a1[2], n[0] * a1[1] - n[1] * a1[0]];
+    const ang = Math.random() * 2 * Math.PI, c = Math.cos(ang), s = Math.sin(ang);
+    [a1, a2] = [[a1[0] * c + a2[0] * s, a1[1] * c + a2[1] * s, a1[2] * c + a2[2] * s], [a2[0] * c - a1[0] * s, a2[1] * c - a1[1] * s, a2[2] * c - a1[2] * s]];
+    // the box the mark covers: the square's four sides, 32 units either side of its plane plus the
+    // projection's 20 behind (R_MarkFragments' near and far planes)
+    const planes = [
+      [a1, -radius], [[-a1[0], -a1[1], -a1[2]], -radius], [a2, -radius], [[-a2[0], -a2[1], -a2[2]], -radius],
+      [n, -52], [[-n[0], -n[1], -n[2]], -32],
+    ];
+    const reach = radius * 1.5 + 52, scale = 0.5 / radius;
+    const add = (poly, fn) => {
+      for (const [pn, pd] of planes) {
+        poly = clipPoly(poly, (q) => (q[0] - o[0]) * pn[0] + (q[1] - o[1]) * pn[1] + (q[2] - o[2]) * pn[2] - pd);
+        if (poly.length < 3) return;
+      }
+      if (this.marks.length >= MAX_MARK_POLYS) this.marks.shift();
+      const pts = new Float32Array(poly.length * 3), st = new Float32Array(poly.length * 2);
+      poly.forEach((q, k) => {
+        // lifted off the surface a little along its normal (the shader's polygonOffset)
+        pts[k * 3] = q[0] + fn[0] * 0.5; pts[k * 3 + 1] = q[1] + fn[1] * 0.5; pts[k * 3 + 2] = q[2] + fn[2] * 0.5;
+        const dx = q[0] - o[0], dy = q[1] - o[1], dz = q[2] - o[2];
+        st[k * 2] = 0.5 + (dx * a1[0] + dy * a1[1] + dz * a1[2]) * scale;
+        st[k * 2 + 1] = 0.5 + (dx * a2[0] + dy * a2[1] + dz * a2[2]) * scale;
+      });
+      this.marks.push({ pts, st, n: poly.length, img, blend, color, t0: time, energy });
+    };
+    for (const f of this.markSurfaces(bsp)) {
+      const ce = f.center;
+      if (Math.hypot(ce[0] - o[0], ce[1] - o[1], ce[2] - o[2]) > f.radius + reach) continue;
+      const V = f.verts;
+      const at = (k) => [V[k * 10], V[k * 10 + 1], V[k * 10 + 2]];
+      if (f.type === 1) {
+        // a polygon facing the shot (its convex outline in vertex order)
+        if (f.normal[0] * n[0] + f.normal[1] * n[1] + f.normal[2] * n[2] < 0.5) continue;
+        const poly = [];
+        for (let k = 0; k < f.nverts; k++) poly.push(at(k));
+        add(poly, f.normal);
+      } else {
+        // a patch: each triangle of its tessellation that faces the shot
+        const T = f.tris;
+        for (let k = 0; k + 2 < T.length; k += 3) {
+          const A = at(T[k]), B = at(T[k + 1]), C = at(T[k + 2]);
+          if (Math.max(Math.abs(A[0] - o[0]), Math.abs(A[1] - o[1]), Math.abs(A[2] - o[2])) > reach + 64) continue;
+          const u = [B[0] - A[0], B[1] - A[1], B[2] - A[2]], v = [C[0] - A[0], C[1] - A[1], C[2] - A[2]];
+          let fn = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+          const fl = Math.hypot(fn[0], fn[1], fn[2]);
+          if (!(fl > 0)) continue;
+          fn = [fn[0] / fl, fn[1] / fl, fn[2] / fl];
+          let dot = fn[0] * n[0] + fn[1] * n[1] + fn[2] * n[2];
+          if (dot < 0) { fn = [-fn[0], -fn[1], -fn[2]]; dot = -dot; }   // patches are drawn from both sides
+          if (dot < 0.1) continue;
+          add([A, B, C], fn);
+        }
+      }
+    }
+  }
+
+  /** The temp entities of a tic become sprites, beams, particles and marks. */
+  handleFx(renderer, rows, time, bsp = null) {
     for (const [, kind, x, y, z, x2, y2, z2, n] of rows) {
+      const mark = (img, radius, blend, color, energy) => this.impactMark(bsp, img, [x, y, z], [x2, y2, z2], radius, time, blend, color, energy);
       switch (kind) {
-        case 1: renderer.spawnParticles('gunshot', x, y, z, 6, [x2, y2, z2], 0xff60c0ff); break;
-        case 11: renderer.spawnParticles('gunshot', x, y, z, 3, [x2, y2, z2], 0xff60c0ff); break;
-        case 7: renderer.spawnParticles('gunshot', x, y, z, 10, [x2, y2, z2], 0xffffe0a0); break;
-        case 2: case 9: renderer.spawnParticles('explosion', x, y, z, 0); this.explosions.push({ x, y, z, t0: time, frames: RLBOOM, size: kind === 2 ? 72 : 56, dur: 0.6, blend: 'add' }); break;
-        case 8: renderer.spawnParticles('explosion', x, y, z, 0); this.explosions.push({ x, y, z, t0: time, frames: RLBOOM, size: 120, dur: 0.8, blend: 'add' }); break;
+        case 1: renderer.spawnParticles('gunshot', x, y, z, 6, [x2, y2, z2], 0xff60c0ff); mark('gfx/damage/bullet_mrk', 8); break;
+        case 11: renderer.spawnParticles('gunshot', x, y, z, 3, [x2, y2, z2], 0xff60c0ff); mark('gfx/damage/bullet_mrk', 4); break;
+        case 7: renderer.spawnParticles('gunshot', x, y, z, 10, [x2, y2, z2], 0xffffe0a0); mark('gfx/damage/hole_lg_mrk', 12); break;
+        case 2: case 9: renderer.spawnParticles('explosion', x, y, z, 0); this.explosions.push({ x, y, z, t0: time, frames: RLBOOM, size: kind === 2 ? 72 : 56, dur: 0.6, blend: 'add' }); mark('gfx/damage/burn_med_mrk', 64); break;
+        case 8: renderer.spawnParticles('explosion', x, y, z, 0); this.explosions.push({ x, y, z, t0: time, frames: RLBOOM, size: 120, dur: 0.8, blend: 'add' }); mark('gfx/damage/burn_med_mrk', 32); break;
         case 3: renderer.spawnParticles('blood', x, y, z, Math.min(n, 30), [0, 0, 0], 0xff1010c0); this.explosions.push({ x, y, z, t0: time, frames: BLOOD, size: 24, dur: 0.4, blend: 'blend' }); break;
         case 4: renderer.spawnParticles('rail', x, y, z, 0, [x2, y2, z2]); this.beams.push({ a: [x, y, z], b: [x2, y2, z2], until: time + 0.8, img: 'gfx/misc/railcorethin_mono', width: 4, scroll: 0 }); break;
         case 5: renderer.spawnParticles('teleport', x, y, z, 0); this.explosions.push({ x, y, z, t0: time, frames: ['gfx/misc/teleportEffect2'], size: 48, dur: 0.5, blend: 'add' }); break;
-        case 6: this.explosions.push({ x, y, z, t0: time, frames: ['models/weaphits/plasmaboom'], size: 24, dur: 0.25, blend: 'add' }); break;
+        case 6: this.explosions.push({ x, y, z, t0: time, frames: ['models/weaphits/plasmaboom'], size: 24, dur: 0.25, blend: 'add' }); mark('gfx/damage/plasma_mrk', 16, 'blend', [1, 1, 1], true); break;
+        // a mark alone: the rail's (the energy mark in the rail's colour), a gib's blood (16 to 47 across)
+        case 16: if (n === 64) mark('gfx/damage/plasma_mrk', 24, 'blend', [0.5, 0.75, 1], true); else mark('gfx/damage/blood_stain', 16 + Math.random() * 32, 'blend', [1, 1, 1]); break;
         case 12: this.beams.push({ a: [x, y, z], b: [x2, y2, z2], until: time + 0.07, img: 'gfx/misc/lightning3', width: 10, scroll: -time * 5, owner: n }); break;
         case 13: renderer.spawnParticles('blood', x, y, z, 40, [0, 0, 1], 0xff1010c0); break;
         case 15: this.bubbleTrail([x, y, z], [x2, y2, z2], 32, time); break;
@@ -207,6 +330,7 @@ export function drawScene(renderer, hud, res, bsp, last, frame, opts = {}) {
     if (opts.sqlProjected) r.drawFaces(frame.faces, time);
     else r.drawFaceList(frame.faces, time, state.brushAngles);
   }
+  if (state.marks.length) drawMarks(r, state, time);
 
   // the models
   for (const e of frame.ents) {

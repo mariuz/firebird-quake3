@@ -343,7 +343,7 @@ async function frame() {
     if (fr.sounds.length) { lastSoundId = fr.sounds[fr.sounds.length - 1][0]; audio.playEvents(fr.sounds, listener); }
     audio.update(listener);
     audio.setLoop('weapon', last.WEAPON === 32 ? 'sound/weapons/lightning/lg_hum.wav' : last.WEAPON === 64 ? 'sound/weapons/railgun/rg_hum.wav' : null, !last.DEAD && (last.WEAPON === 32 || last.WEAPON === 64));
-    if (fr.fx.length) { lastFxId = fr.fx[fr.fx.length - 1][0]; state.handleFx(renderer, fr.fx, view.TIME_); }
+    if (fr.fx.length) { lastFxId = fr.fx[fr.fx.length - 1][0]; state.handleFx(renderer, fr.fx, view.TIME_, map.bsp); }
     if (ticked && (scoreboard || last.MATCH_OVER) && frameNo % 10 === 0) scores = (await db.query('SELECT * FROM scoreboard', [], arr)).rows;
     // the bots learn the arena while we play: a few grid columns, then a few nodes' edges, a tic (sql/waypoints.sql)
     if (ticked && map.unlinked > 0) {

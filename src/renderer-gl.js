@@ -488,6 +488,7 @@ export class GLRenderer {
     gl.depthMask(false);
     if (mode === 'add') gl.blendFunc(gl.ONE, gl.ONE);
     else if (mode === 'filter') gl.blendFunc(gl.DST_COLOR, gl.ZERO);
+    else if (mode === 'subtract') gl.blendFunc(gl.ZERO, gl.ONE_MINUS_SRC_COLOR);
     else gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
   }
 
@@ -602,6 +603,26 @@ export class GLRenderer {
     const l = light / 255;
     gl.bufferData(gl.ARRAY_BUFFER, this.quad(p(-hs, hs), p(hs, hs), p(hs, -hs), p(-hs, -hs), [0, 0], [1, 1], [l, l, l, 1]), gl.DYNAMIC_DRAW);
     gl.drawArrays(gl.TRIANGLES, 0, 6);
+    gl.disable(gl.BLEND); gl.depthMask(true);
+  }
+
+  /** A mark on the world: a polygon of n points with texture coordinates, a fan, pulled towards the eye in
+   *  depth (the mark shaders' polygonOffset). */
+  drawMark(pts, st, n, img, blend, color) {
+    const gl = this.gl;
+    const buf = new Float32Array((n - 2) * 3 * 9);
+    let o = 0;
+    const put = (k) => { buf.set([pts[k * 3], pts[k * 3 + 1], pts[k * 3 + 2], st[k * 2], st[k * 2 + 1], color[0], color[1], color[2], color[3]], o); o += 9; };
+    for (let k = 1; k + 1 < n; k++) { put(0); put(k); put(k + 1); }
+    const tex = this.texture(img);
+    this.bindSprite();
+    gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, tex.tex);
+    gl.uniform1i(this.sprite.u.uUseTex, 1);
+    this.setBlend(blend);
+    gl.enable(gl.POLYGON_OFFSET_FILL); gl.polygonOffset(-1, -2);
+    gl.bufferData(gl.ARRAY_BUFFER, buf, gl.DYNAMIC_DRAW);
+    gl.drawArrays(gl.TRIANGLES, 0, (n - 2) * 3);
+    gl.disable(gl.POLYGON_OFFSET_FILL);
     gl.disable(gl.BLEND); gl.depthMask(true);
   }
 

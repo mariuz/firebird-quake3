@@ -593,7 +593,9 @@ export class Renderer {
     }
   }
 
-  /** A Gouraud-lit, affine-textured triangle with z-test. blend: opaque | add | blend; tint: [r, g, b] multipliers or null. */
+  /** A Gouraud-lit, affine-textured triangle with z-test. blend: opaque | add | blend | subtract (the frame
+   *  times one minus the texel: GL_ZERO GL_ONE_MINUS_SRC_COLOR); tint: [r, g, b] multipliers or null, a
+   *  fourth one scaling the texel's alpha when blending. */
   triangle(x0, y0, iz0, s0, t0, l0, x1, y1, iz1, s1, t1, l1, x2, y2, iz2, s2, t2, l2, tex, blend, tint) {
     const { w, h, edgeL, edgeR, fb, zb } = this;
     const ymin = Math.min(y0, y1, y2), ymax = Math.max(y0, y1, y2);
@@ -605,7 +607,7 @@ export class Renderer {
     this.triEdge(ya, yb, x2, y2, iz2, s2, t2, l2, x0, y0, iz0, s0, t0, l0);
     const td = tex.data, tw = tex.w, wm = tex.wm, hm = tex.hm;
     const alpha = tex.hasAlpha;
-    const tr = tint ? tint[0] : 1, tg = tint ? tint[1] : 1, tb = tint ? tint[2] : 1;
+    const tr = tint ? tint[0] : 1, tg = tint ? tint[1] : 1, tb = tint ? tint[2] : 1, ta = tint?.[3] ?? 1;
     for (let y = ya; y <= yb; y++) {
       const o = y * 7, xl = edgeL[o], xr = edgeR[o];
       if (xl === Infinity) continue;
@@ -628,8 +630,11 @@ export class Renderer {
           const d = fb[idx];
           r += d & 255; g += (d >> 8) & 255; b += (d >> 16) & 255;
           if (r > 255) r = 255; if (g > 255) g = 255; if (b > 255) b = 255;
+        } else if (blend === 'subtract') {
+          const d = fb[idx];
+          r = (d & 255) * (1 - Math.min(255, r) / 255); g = ((d >> 8) & 255) * (1 - Math.min(255, g) / 255); b = ((d >> 16) & 255) * (1 - Math.min(255, b) / 255);
         } else if (blend === 'blend') {
-          const d = fb[idx], af = a / 255, ia = 1 - af;
+          const d = fb[idx], af = (a / 255) * ta, ia = 1 - af;
           r = r * af + (d & 255) * ia; g = g * af + ((d >> 8) & 255) * ia; b = b * af + ((d >> 16) & 255) * ia;
         } else {
           zb[idx] = iz;
@@ -686,6 +691,34 @@ export class Renderer {
     const tex = this.texture(img);
     this.triangle(x0, y0, iz, 0, 0, light, x1, y0, iz, tex.w, 0, light, x1, y1, iz, tex.w, tex.h, light, tex, blend, null);
     this.triangle(x0, y0, iz, 0, 0, light, x1, y1, iz, tex.w, tex.h, light, x0, y1, iz, 0, tex.h, light, tex, blend, null);
+  }
+
+  /** A mark on the world: a polygon of n points (xyz) with texture coordinates in 0..1, blended or
+   *  subtracted, coloured [r, g, b, a]; clipped at the near plane, drawn as a fan. */
+  drawMark(pts, st, n, img, blend, color) {
+    const view = this.view, near = 4;
+    const vs = [];
+    for (let k = 0; k < n; k++) {
+      const wx = pts[k * 3] - view.x, wy = pts[k * 3 + 1] - view.y, wz = pts[k * 3 + 2] - view.z;
+      vs.push([wx * view.fwd[0] + wy * view.fwd[1] + wz * view.fwd[2], wx * view.right[0] + wy * view.right[1] + wz * view.right[2],
+        wx * view.up[0] + wy * view.up[1] + wz * view.up[2], st[k * 2], st[k * 2 + 1]]);
+    }
+    const clipped = [];
+    for (let k = 0; k < n; k++) {
+      const a = vs[k], b = vs[(k + 1) % n];
+      if (a[0] >= near) clipped.push(a);
+      if ((a[0] >= near) !== (b[0] >= near)) {
+        const t = (near - a[0]) / (b[0] - a[0]);
+        clipped.push(a.map((v, i) => v + (b[i] - v) * t));
+      }
+    }
+    if (clipped.length < 3) return;
+    const tex = this.texture(img);
+    const P = clipped.map((v) => [view.cx + (v[1] * view.scale) / v[0], view.cy - (v[2] * view.scale) / v[0], 1 / v[0], v[3] * tex.w, v[4] * tex.h]);
+    for (let k = 1; k + 1 < P.length; k++) {
+      const A = P[0], B = P[k], C = P[k + 1];
+      this.triangle(A[0], A[1], A[2], A[3], A[4], 255, B[0], B[1], B[2], B[3], B[4], 255, C[0], C[1], C[2], C[3], C[4], 255, tex, blend, color);
+    }
   }
 
   /** A textured ribbon from a to b facing the camera (the lightning bolt, the rail core). */

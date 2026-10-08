@@ -224,6 +224,10 @@ assert(s.DMG_WORLD === 0, `and its splash came from where it blew up (${s.DMG_X.
 }
 const boom = (await db.query("SELECT COUNT(*) n FROM fx_events WHERE kind = 2")).rows[0].N;
 assert(boom > 0, 'the explosion was reported to the browser');
+// the explosion carries the plane it hit, for the burn mark (CG_MissileHitWall's CG_ImpactMark)
+const plane = (await db.query('SELECT FIRST 1 x2, y2, z2 FROM fx_events WHERE kind = 2 ORDER BY id')).rows[0];
+const nlen = Math.hypot(plane.X2, plane.Y2, plane.Z2);
+assert(Math.abs(nlen - 1) < 1e-3, `the explosion faces the plane it hit (${[plane.X2, plane.Y2, plane.Z2].map((v) => v.toFixed(2)).join(' ')})`);
 
 // a jump pad, if the map has one: stand on it and fly
 const pad = (await db.query("SELECT FIRST 1 id, x + (minx + maxx) / 2 cx, y + (miny + maxy) / 2 cy, z + maxz + 26 cz, p1z FROM ents WHERE classname = 'trigger_push'")).rows[0];

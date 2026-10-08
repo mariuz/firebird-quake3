@@ -17,7 +17,7 @@
 SET TERM ^ ;
 
 -- forward declarations (bodies in game.sql); signatures must not change
-CREATE OR ALTER PROCEDURE impact (e1 INTEGER, e2 INTEGER, sflags INTEGER) AS BEGIN END^
+CREATE OR ALTER PROCEDURE impact (e1 INTEGER, e2 INTEGER, sflags INTEGER, nx DOUBLE PRECISION, ny DOUBLE PRECISION, nz DOUBLE PRECISION) AS BEGIN END^
 
 -- ── point queries ─────────────────────────────────────────────────────────
 -- CM_PointLeafnum from a head node (model space). A negative head is a leaf.
@@ -737,7 +737,7 @@ BEGIN
     IF (nz = 0) THEN blocked = BIN_OR(blocked, 2);
     -- SV_Impact: touch
     UPDATE ents e SET e.x = :px, e.y = :py, e.z = :pz, e.vx = :vx, e.vy = :vy, e.vz = :vz, e.flags = :flags WHERE e.id = :eid;
-    EXECUTE PROCEDURE impact(eid, hit, sfl);
+    EXECUTE PROCEDURE impact(eid, hit, sfl, nx, ny, nz);
     IF (NOT EXISTS (SELECT 1 FROM ents e WHERE e.id = :eid)) THEN EXIT;   -- removed by its touch
     SELECT e.x, e.y, e.z, e.vx, e.vy, e.vz, e.flags FROM ents e WHERE e.id = :eid INTO px, py, pz, vx, vy, vz, flags;
 
@@ -819,7 +819,7 @@ BEGIN
   EXECUTE PROCEDURE trace_move(eid, mnx, mny, mnz, mxx, mxy, mxz, px, py, pz, px + dx, py + dy, pz + dz, mask)
     RETURNING_VALUES fraction, ex, ey, ez, nx, ny, nz, sflags, cts, allsolid, startsolid, hit_ent;
   UPDATE ents e SET e.x = :ex, e.y = :ey, e.z = :ez WHERE e.id = :eid;
-  IF (fraction < 1) THEN EXECUTE PROCEDURE impact(eid, hit_ent, sflags);
+  IF (fraction < 1) THEN EXECUTE PROCEDURE impact(eid, hit_ent, sflags, nx, ny, nz);
   SUSPEND;
 END^
 
