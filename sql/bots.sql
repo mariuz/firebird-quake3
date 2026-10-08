@@ -288,7 +288,7 @@ BEGIN
   SELECT e.x, e.y, e.pmodel FROM ents e WHERE e.id = :eid INTO x, y, pm;
   yaw = vectoyaw(tx - x, ty - y);
   UPDATE ents e SET e.weapon = 16, e.yaw = :yaw, e.ideal_yaw = :yaw, e.pitch = 90, e.vx = 0, e.vy = 0, e.vz = 270,
-         e.flags = BIN_AND(e.flags, BIN_NOT(512)), e.attack_finished = now_() + 0.8e0 WHERE e.id = :eid;
+         e.flags = BIN_AND(e.flags, BIN_NOT(512)), e.attack_finished = MAXVALUE(e.attack_finished, now_() + 0.8e0) WHERE e.id = :eid;
   EXECUTE PROCEDURE eye_of(eid) RETURNING_VALUES ex, ey, ez, fx, fy, fz;
   EXECUTE PROCEDURE fire_weapon(eid, 16, ex, ey, ez - 14, 0, 0, -1, 1);
   EXECUTE PROCEDURE snd(eid, 2, 'sound/player/' || COALESCE(pm, 'sarge') || '/jump1.wav', 1, 1);
