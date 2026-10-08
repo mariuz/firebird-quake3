@@ -103,6 +103,43 @@ if (item) {
   await db.exec(`UPDATE ents SET respawn_time = 0, health = 1 WHERE classname = 'bot' AND id <> ${b}`);
 }
 
+// a rocket jump (BotTravel_RocketJump): up to a ledge the walk does not reach, from a rocket-jump edge's
+// start, with a target on its end; bot_follow_route drives it each think
+{
+  const hops = (p) => (p ? p.split(',').length - 2 : null);
+  const edges = (await q('SELECT e.a, e.b, a.x ax, a.y ay, a.z az, b.x bx, b.y by_, b.z bz, wp_route(e.a, e.b, 0) walk FROM wp_edges e JOIN waypoints a ON a.id = e.a JOIN waypoints b ON b.id = e.b WHERE e.kind = 4 ORDER BY e.a'))
+    .filter((e) => e.WALK === null || hops(e.WALK) > 13);
+  if (!edges.length) console.log('(no rocket jump here the bots would take)');
+  else {
+    const e = edges[0];
+    await db.exec(`UPDATE ents SET st = 'dead', deadflag = 1, health = 0, solid = 0, respawn_time = 1e9, enemy_id = NULL WHERE classname = 'bot' AND id <> ${b}`);
+    await db.exec(`UPDATE ents SET flags = BIN_OR(flags, 64) WHERE id = ${pe}`);   // notarget: nothing to fight
+    const tgt = (await q(`SELECT id FROM spawn_ent('info_notnull', ${e.BX}, ${e.BY_}, ${e.BZ})`))[0].ID;
+    await db.exec(`UPDATE ents SET x = ${e.AX + 20}, y = ${e.AY + 10}, z = ${e.AZ - 1}, vx = 0, vy = 0, vz = 0, health = 100, armor = 0, weapons = BIN_OR(weapons, 16), quad_finished = 0,
+                   nextthink = 1e9, flags = BIN_OR(flags, 512), enemy_id = NULL, st = 'run' WHERE id = ${b}`);
+    await db.exec(`EXECUTE PROCEDURE link_ent(${b})`);
+    await db.exec(`DELETE FROM bot_routes WHERE ent_id = ${b}`);
+    const can = (await q(`SELECT bot_can_rj(${b}) c FROM rdb$database`))[0].C;
+    let arrived = null, top = -1e9, hp = 100;
+    for (let i = 0; i < 100 && arrived === null; i++) {
+      if (i % 2 === 0 && ((await q(`SELECT flags FROM ents WHERE id = ${b}`))[0].FLAGS & 512)) await q(`SELECT moved FROM bot_follow_route(${b}, ${tgt}, 32)`);
+      await tic();
+      const r = (await q(`SELECT x, y, z, health, flags FROM ents WHERE id = ${b}`))[0];
+      top = Math.max(top, r.Z); hp = r.HEALTH;
+      if ((r.FLAGS & 512) && Math.hypot(r.X - e.BX, r.Y - e.BY_) < 48 && Math.abs(r.Z - (e.BZ - 1)) < 30) arrived = i;
+    }
+    assert(can === 1 && arrived !== null && top - e.AZ > 150 && hp < 100,
+      `a bot rocket-jumps up ${(e.BZ - e.AZ).toFixed(0)} to a ledge ${hops(e.WALK) === null ? 'no walk reaches' : `a ${hops(e.WALK)}-node walk away`} (up ${(top - e.AZ).toFixed(0)}, there in ${arrived} tics, its own rocket half as hard: ${hp} health)`);
+    // and it would not with less than 60 health (BotCanAndWantsToRocketJump)
+    await db.exec(`UPDATE ents SET health = 50 WHERE id = ${b}`);
+    assert((await q(`SELECT bot_can_rj(${b}) c FROM rdb$database`))[0].C === 0, 'with 50 health it would rather walk');
+    await db.exec(`UPDATE ents SET flags = BIN_AND(flags, BIN_NOT(64)) WHERE id = ${pe}`);
+    await db.exec(`UPDATE ents SET respawn_time = 0, health = 1 WHERE classname = 'bot' AND id <> ${b}`);
+    await db.exec(`UPDATE ents SET nextthink = 0, health = 100 WHERE id = ${b}`);
+    await db.exec(`DELETE FROM ents WHERE id = ${tgt}`);
+  }
+}
+
 // the chat files are in, and a line comes out whole (variables filled, random strings drawn, no marks left)
 {
   const n = (await q('SELECT (SELECT COUNT(*) FROM bot_chat) c, (SELECT COUNT(*) FROM bot_rnd) r, (SELECT COUNT(*) FROM bot_chatchar) k FROM rdb$database'))[0];

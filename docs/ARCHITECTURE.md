@@ -324,7 +324,8 @@ w, origin, dir, vol)` is shared by the player and the bots; `muzzle` computes th
 the eye and the weapon's offset.
 
 Damage (`game.sql`) is `g_combat.c`: `t_damage(target, inflictor, attacker, damage, knockback, flags,
-mod)` with the knockback velocity, godmode, the battle suit, armour absorbing 66 percent, quad ×3,
+mod)` with the knockback velocity, godmode, the battle suit, half the damage when hurting yourself
+(after the knock is worked out from the whole of it, "so rocket jumping works"), armour absorbing 66 percent, quad ×3,
 pain sounds by health, `killed` → `player_die`/`bot_die` into a corpse (`CONTENTS_CORPSE`, the death
 animation chosen at random) or `gib_ent` under −40 health with a shower of `throw_gib`; the
 `obituary` function knows the 20-odd means of death and their sentences ("was railed by", "almost
@@ -439,7 +440,7 @@ that floor to find the next level. A floor the box does not fit on is tried 40 u
 wall beside the column), a column that finds nothing is tried 56 units to each side (corridors).
 `wp_add` merges anything within 64 units of an existing node.
 
-**Edges** (`wp_edges`: `a → b`, length, kind 0 walk / 1 jump pad / 2 teleporter / 3 drop).
+**Edges** (`wp_edges`: `a → b`, length, kind 0 walk / 1 jump pad / 2 teleporter / 3 drop / 4 rocket jump).
 `wp_link_chunk` links each node to its ten nearest neighbours within 420 units, and then to the four
 nearest on a lower level (the ten are all on the node's own level when the grid is dense, and a
 ledge needs its way down), when `wp_walkable` says a player can get there: first a straight box
@@ -448,10 +449,18 @@ and the two are on one level, a chest-height point trace rules out walls at once
 *stepped walk* of 40-unit steps, each one tried 18 units up (three times for stairs and ramps) and
 settled onto the floor below with a drop of up to 400 units allowed (a fall that hurts a little, the
 AAS's "jump down"), which must end within 48 units of the target. A flat walk is stored both ways; a
-drop is one way. Pads and teleporters get their edges when their nodes are made.
+drop is one way. Pads and teleporters get their edges when their nodes are made. Last, each node
+(not a pad or a teleporter) gets up to two *rocket-jump* edges (the AAS's `TRAVEL_ROCKETJUMP`), one
+way, to nodes 60 to 220 units higher and at least 48 to the side, six tried at most, when
+`wp_rocket_jump` agrees: a floor a shot hits under the start (player clip lets a rocket through), the
+reach of the flight (680 a second up once the rocket's knock is in, measured: a 300-unit apex; down
+at gravity; across with the bots' air control, 16 a tic up to 320, with a fifth to spare), and room
+for it: a box trace up from the start, across at the top, down onto the end. q3dm1 has 8, q3dm7 85,
+q3dm17 2; building them adds nothing measurable to the edge time.
 
 **Routing.** `wp_nearest(x, y, z, see)` finds the node nearest a spot (height weighted ×4), the
-nearest *in sight* for the bot's own position. `wp_route(src, dst)` is a breadth-first search: the
+nearest *in sight* for the bot's own position. `wp_route(src, dst, rj)` is a breadth-first search (over
+the rocket jumps only with `rj` 1, the travel flags with `TFL_ROCKETJUMP`): the
 frontier is the `wp_visit` global temporary table, each level inserted with one `INSERT … SELECT`
 from the edges of the previous level, stopping when the destination appears (40 levels at most), the
 path walked back through `prev` into a string `,n1,n2,…,dst,`. A route costs 1 to 4 ms.
@@ -467,7 +476,17 @@ the edge (`move_step` wants ground under its feet, as Quake 2's did), the bot *j
 velocity is set toward the node at run speed and `run_physics` flies it to the floor, the AAS's
 jump-down reachability. It also keeps the nearest it has been to its next node; no progress for
 1.5 s means it is stuck on something the steps slide along (a corpse, a mover, a corner), so it
-sidesteps and re-routes. Stepping onto a jump pad's node puts the bot in the pad's trigger;
+sidesteps and re-routes. A bot that can and wants to rocket-jump (`bot_can_rj`, Quake III's
+`BotCanAndWantsToRocketJump`: the launcher, 60 health and 90 unless it has 40 armour, no quad, a
+`CHARACTERISTIC_WEAPONJUMPING` of 0.5 or more, read from its character file with the chat ones) routes
+a second time over the rocket jumps and takes that route when there is no walk or the walk is a dozen
+nodes longer (the AAS rates a rocket jump at five seconds). `bot_routes.last_node` remembers the node
+last reached; when the edge from it to the next one is a rocket jump, the bot walks onto its start,
+slowing as it nears it, then `bot_rocket_jump` (`BotTravel_RocketJump`) faces the landing, raises the
+launcher, looks straight down, jumps and fires. In the flight `run_physics` calls `bot_air_steer`
+(`BotFinishTravel_WeaponJump`): the horizontal velocity that would put it over the landing as it comes
+down to it, approached at the air acceleration. The rocket takes 45 health of 100 (half of its 90), and
+the bot lands within a few units of the node. Stepping onto a jump pad's node puts the bot in the pad's trigger;
 `touch_triggers` launches it at the next think and, in the air, it only aims. The bot's think uses
 routes to hunt an enemy out of sight or on another floor, to reach a health item, and to roam between
 items; it falls back to the straight chase when there is no route.
@@ -481,9 +500,10 @@ told `link: false` (screenshots do not need it). Sizes: q3dm1 172 nodes and 1170
 and 3700; q3dm17 287 nodes, 2880 edges, 12 pad edges and 3 teleporter edges; every spawn point can
 route to every other on all three.
 
-**Known limits.** No jumping across gaps, no rocket jumps, no air control, so on q3dm17 the platforms
-reached only by steering off the vertical boost pad stay out of the bots' reach; nodes on roofs and
-other sealed pockets are harmless islands. The bots test runs the hunt from the farthest spawn on
+**Known limits.** No jumping across gaps and no air control except in a rocket jump, so on q3dm17 the
+platforms reached only by steering off the vertical boost pad stay out of the bots' reach; nodes on
+roofs and other sealed pockets are harmless islands. The bots test also puts a bot at the start of a
+rocket-jump edge no walk replaces (q3dm1 has them; q3dm17's two have walks) and checks it gets there. The bots test runs the hunt from the farthest spawn on
 q3dm1 and q3dm17 (four runs in a row pass on each; the criterion is "within 350 units", where a bot
 in sight starts to circle-strafe instead of closing in). The page's console has a `waypoints` button and a `bot
 routes` button; `SELECT wp_route(a, b) FROM rdb$database` asks for a route by hand.

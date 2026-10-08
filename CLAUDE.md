@@ -91,6 +91,9 @@ explosion sprites, beams) and nothing else. The renderers never query the databa
 - Waypoint node heights are the point-trace floor + 25 (the box is only settled on slopes). A box
   dropped from above catches on railings and crate edges and puts nodes on top of them, which
   disconnects the graph (the symptom: "N of M nodes can reach the spawn" collapses).
+- Player clip (`CONTENTS_PLAYERCLIP`, in the 65537 mask the box traces use) stops players, not shots:
+  a node may stand on clip a rocket goes through, and curved patches are one-sided from below. A check
+  that needs a floor a rocket hits traces with mask 1.
 - A trace that starts inside a brush returns `startsolid`; `wp_drop` turns it into −99999 so the
   column scan continues below instead of ending the column.
 - `move_step` never walks off an edge (Quake 2 monsters did not jump down); a bot following a drop

@@ -70,6 +70,7 @@ assert(s.ONGROUND === 1, 'player is on the ground after walking');
 // while something blocks standing up. Back the way we came, which is clear for 150 units
 {
   const pe = (await db.query('SELECT ent_id e FROM player')).rows[0].E;
+  await db.exec("UPDATE ents SET nextthink = 1e9 WHERE classname = 'bot'");   // no rocket's knock in the measurement
   await tic([1, 0, 0, 180, 0, 0, 0, 1, 0]);
   for (let i = 0; i < 3; i++) s = await tic([1, 0, 0, 0, 0, 0, -1, 1, 0]);
   // (the eye's height in the tic row also carries the stair smoothing, so the table's offset is what we check)
@@ -91,6 +92,7 @@ assert(s.ONGROUND === 1, 'player is on the ground after walking');
   s = await tic([1, 0, 0, 0, 0, 0, 0, 1, 0]);
   const stood = (await db.query(`SELECT e.maxz, p.view_ofs FROM ents e JOIN player p ON p.ent_id = e.id WHERE e.id = ${pe}`)).rows[0];
   assert(s.DUCKED === 0 && stood.MAXZ === 32 && stood.VIEW_OFS === 26, 'room again: we stand up, the box 32 high, the eye back at 26');
+  await db.exec("UPDATE ents SET nextthink = 0 WHERE classname = 'bot' AND nextthink > 1e8");
   await tic([1, 0, 0, 180, 0, 0, 0, 1, 0]);
 }
 
@@ -168,6 +170,14 @@ const firstRaise = states.findIndex(([st]) => st === 3), firstReady = states.fin
 assert(states[0][0] === 2 && states[0][1] === oldWeapon && firstRaise > 0 && states.slice(0, firstRaise).every(([st, w]) => st === 2 && w === oldWeapon)
   && firstReady > firstRaise && states.slice(firstRaise, firstReady).every(([st, w]) => st === 3 && w === 16),
   `the old weapon went down, then the new one came up (${states.map(([st]) => st).join('')})`);
+// on a spawn point's floor, looking level (wherever the walks above left us, a floor may not be under the feet)
+{
+  const home = (await db.query("SELECT FIRST 1 e.x, e.y, e.z FROM ents e WHERE e.classname = 'info_player_deathmatch' ORDER BY e.id")).rows[0];
+  await db.exec(`UPDATE ents SET x = ${home.X}, y = ${home.Y}, z = ${home.Z + 9}, vx = 0, vy = 0, vz = 0 WHERE classname = 'player'`);
+  await db.exec('UPDATE player SET pitch = 0 WHERE id = 1');
+  await db.exec("EXECUTE PROCEDURE link_ent((SELECT ent_id FROM player))");
+  for (let i = 0; i < 6; i++) s = await tic([1, 0, 0, 0, 0, 0, 0, 1, 0]);
+}
 const hpBefore = s.HEALTH;
 // without god mode for this one (it would stop the splash)
 await db.exec("UPDATE ents SET flags = BIN_AND(flags, BIN_NOT(16)) WHERE classname = 'player'");
@@ -188,6 +198,11 @@ assert(s.DMG_WORLD === 0, `and its splash came from where it blew up (${s.DMG_X.
 // a far fall (PM_CrashLand): the view's dip is the far one, and the damage comes from no direction
 {
   const pe = (await db.query('SELECT ent_id e FROM player')).rows[0].E;
+  // on the spawn point's floor again (the rocket's knock may have thrown us off a platform's edge)
+  const home = (await db.query("SELECT FIRST 1 e.x, e.y, e.z FROM ents e WHERE e.classname = 'info_player_deathmatch' ORDER BY e.id")).rows[0];
+  await db.exec(`UPDATE ents SET x = ${home.X}, y = ${home.Y}, z = ${home.Z + 9}, vx = 0, vy = 0, vz = 0 WHERE id = ${pe}`);
+  await db.exec(`EXECUTE PROCEDURE link_ent(${pe})`);
+  s = await tic([1, 0, 0, 0, 0, 0, 0, 1, 0]);
   for (let i = 0; i < 20 && s.ONGROUND !== 1; i++) s = await tic([1, 0, 0, 0, 0, 0, 0, 1, 0]);
   // (for the one tic without god mode, the bots hold their fire and nothing is in flight)
   await db.exec("UPDATE ents SET nextthink = 1e9 WHERE classname = 'bot'");

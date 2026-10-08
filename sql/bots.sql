@@ -265,6 +265,59 @@ END^
 
 -- BotMoveToGoal over the waypoint graph (waypoints.sql): a step along the route to the target entity.
 -- Returns 1 when it stepped, 0 when the step was blocked, -1 when there is no route at all
+-- BotCanAndWantsToRocketJump: a rocket launcher, 60 health at least and 90 unless it has 40 armour, no quad,
+-- and a character that likes weapon jumping (0.5 or more). The bots' ammunition is not counted here
+CREATE OR ALTER FUNCTION bot_can_rj (eid INTEGER) RETURNS SMALLINT
+AS
+DECLARE w INTEGER; DECLARE hp INTEGER; DECLARE av INTEGER; DECLARE qf DOUBLE PRECISION;
+BEGIN
+  SELECT e.weapons, e.health, e.armor, e.quad_finished FROM ents e WHERE e.id = :eid INTO w, hp, av, qf;
+  IF (w IS NULL OR BIN_AND(w, 16) = 0 OR hp < 60 OR (hp < 90 AND COALESCE(av, 0) < 40) OR qf > now_()) THEN RETURN 0;
+  IF (EXISTS (SELECT 1 FROM ents e JOIN bot_defs b ON b.name = e.bot JOIN bot_chatchar c ON c.bot = e.bot AND c.skill = b.skill AND c.ckey = 'weaponjumping'
+               WHERE e.id = :eid AND c.val < 0.5e0)) THEN RETURN 0;
+  RETURN 1;
+END^
+
+-- BotTravel_RocketJump at the start: face the landing, the rocket launcher up, look straight down, jump and
+-- fire; BotFinishTravel_WeaponJump steers the flight (bot_air_steer, from run_physics) to (tx, ty, tz)
+CREATE OR ALTER PROCEDURE bot_rocket_jump (eid INTEGER, tx DOUBLE PRECISION, ty DOUBLE PRECISION, tz DOUBLE PRECISION)
+AS
+DECLARE x DOUBLE PRECISION; DECLARE y DOUBLE PRECISION; DECLARE yaw DOUBLE PRECISION; DECLARE pm VARCHAR(16);
+DECLARE ex DOUBLE PRECISION; DECLARE ey DOUBLE PRECISION; DECLARE ez DOUBLE PRECISION; DECLARE fx DOUBLE PRECISION; DECLARE fy DOUBLE PRECISION; DECLARE fz DOUBLE PRECISION;
+BEGIN
+  SELECT e.x, e.y, e.pmodel FROM ents e WHERE e.id = :eid INTO x, y, pm;
+  yaw = vectoyaw(tx - x, ty - y);
+  UPDATE ents e SET e.weapon = 16, e.yaw = :yaw, e.ideal_yaw = :yaw, e.pitch = 90, e.vx = 0, e.vy = 0, e.vz = 270,
+         e.flags = BIN_AND(e.flags, BIN_NOT(512)), e.attack_finished = now_() + 0.8e0 WHERE e.id = :eid;
+  EXECUTE PROCEDURE eye_of(eid) RETURNING_VALUES ex, ey, ez, fx, fy, fz;
+  EXECUTE PROCEDURE fire_weapon(eid, 16, ex, ey, ez - 14, 0, 0, -1, 1);
+  EXECUTE PROCEDURE snd(eid, 2, 'sound/player/' || COALESCE(pm, 'sarge') || '/jump1.wav', 1, 1);
+  EXECUTE PROCEDURE set_anims(eid, 18, 7);
+  UPDATE bot_routes r SET r.rj_x = :tx, r.rj_y = :ty, r.rj_z = :tz, r.rj_until = now_() + 3 WHERE r.ent_id = :eid;
+END^
+
+-- the air control of a bot in a rocket jump's flight: the horizontal velocity that would bring it over the
+-- landing as it comes down to it, approached at Quake III's air acceleration (1, at 320: 16 a tic)
+CREATE OR ALTER PROCEDURE bot_air_steer (eid INTEGER, tx DOUBLE PRECISION, ty DOUBLE PRECISION, tz DOUBLE PRECISION, dt DOUBLE PRECISION)
+AS
+DECLARE x DOUBLE PRECISION; DECLARE y DOUBLE PRECISION; DECLARE z DOUBLE PRECISION;
+DECLARE vx DOUBLE PRECISION; DECLARE vy DOUBLE PRECISION; DECLARE vz DOUBLE PRECISION; DECLARE grav DOUBLE PRECISION;
+DECLARE tl DOUBLE PRECISION; DECLARE wx DOUBLE PRECISION; DECLARE wy DOUBLE PRECISION; DECLARE l DOUBLE PRECISION; DECLARE d DOUBLE PRECISION;
+BEGIN
+  SELECT e.x, e.y, e.z, e.vx, e.vy, e.vz FROM ents e WHERE e.id = :eid INTO x, y, z, vx, vy, vz;
+  SELECT g.gravity FROM game g WHERE g.id = 1 INTO grav;
+  -- the time left until it comes down to the landing's height: z + vz t - g t² / 2 = tz
+  d = vz * vz + 2 * grav * (z - tz);
+  tl = MAXVALUE(dt, IIF(d > 0, (vz + SQRT(d)) / grav, dt));
+  wx = (tx - x) / tl; wy = (ty - y) / tl;
+  l = vlen(wx, wy, 0);
+  IF (l > 320) THEN BEGIN wx = wx * 320 / l; wy = wy * 320 / l; END
+  wx = wx - vx; wy = wy - vy;
+  l = vlen(wx, wy, 0);
+  IF (l > 320 * dt) THEN BEGIN wx = wx * 320 * dt / l; wy = wy * 320 * dt / l; END
+  UPDATE ents e SET e.vx = e.vx + :wx, e.vy = e.vy + :wy WHERE e.id = :eid;
+END^
+
 CREATE OR ALTER PROCEDURE bot_follow_route (eid INTEGER, target INTEGER, dist DOUBLE PRECISION)
 RETURNS (moved SMALLINT)
 AS
@@ -274,13 +327,14 @@ DECLARE nx DOUBLE PRECISION; DECLARE ny DOUBLE PRECISION; DECLARE nz DOUBLE PREC
 DECLARE path VARCHAR(400); DECLARE s VARCHAR(400); DECLARE cut VARCHAR(400); DECLARE built DOUBLE PRECISION; DECLARE rtarget INTEGER;
 DECLARE dst INTEGER; DECLARE src INTEGER; DECLARE odst INTEGER; DECLARE nid INTEGER; DECLARE t DOUBLE PRECISION; DECLARE p INTEGER; DECLARE i INTEGER;
 DECLARE fails SMALLINT; DECLARE yaw DOUBLE PRECISION; DECLARE reach DOUBLE PRECISION; DECLARE prog_d DOUBLE PRECISION; DECLARE prog_t DOUBLE PRECISION; DECLARE stuck SMALLINT = 0;
+DECLARE last_n INTEGER; DECLARE cutn INTEGER; DECLARE rpath VARCHAR(400); DECLARE lx DOUBLE PRECISION; DECLARE ly DOUBLE PRECISION; DECLARE lz DOUBLE PRECISION;
 BEGIN
   moved = 0;
   t = now_();
   SELECT e.x, e.y, e.z FROM ents e WHERE e.id = :eid INTO x, y, z;
   SELECT g.x, g.y, g.z FROM ents g WHERE g.id = :target INTO tx, ty, tz;
   IF (tx IS NULL OR x IS NULL) THEN EXIT;
-  SELECT r.target, r.dst_node, r.path, r.built, r.fails, r.prog_d, r.prog_t FROM bot_routes r WHERE r.ent_id = :eid INTO rtarget, odst, path, built, fails, prog_d, prog_t;
+  SELECT r.target, r.dst_node, r.path, r.built, r.fails, r.prog_d, r.prog_t, r.last_node FROM bot_routes r WHERE r.ent_id = :eid INTO rtarget, odst, path, built, fails, prog_d, prog_t, last_n;
   fails = COALESCE(fails, 0);
   -- no progress toward the next node for a while (a corpse, a mover, a corner the steps slide along): stuck
   IF (prog_t IS NOT NULL AND t - prog_t > 1.5e0) THEN BEGIN stuck = 1; fails = 3; END
@@ -292,8 +346,16 @@ BEGIN
       OR (dst <> odst AND t - built > 0.7e0) OR t - built > 4) THEN
   BEGIN
     src = wp_nearest(x, y, z, 1);
-    path = wp_route(src, dst);
-    built = t; fails = 0; prog_d = NULL; prog_t = t;
+    path = wp_route(src, dst, 0);
+    -- over the rocket jumps too, when it can and wants to; the AAS rates a rocket jump at five seconds of
+    -- travel, so it is worth a dozen nodes of walk, or a ledge there is no walk to
+    IF (bot_can_rj(eid) = 1 AND EXISTS (SELECT 1 FROM wp_edges e WHERE e.kind = 4)) THEN
+    BEGIN
+      rpath = wp_route(src, dst, 1);
+      IF (rpath IS NOT NULL AND (path IS NULL OR CHAR_LENGTH(path) - CHAR_LENGTH(REPLACE(path, ',', '')) > CHAR_LENGTH(rpath) - CHAR_LENGTH(REPLACE(rpath, ',', '')) + 12)) THEN
+        path = rpath;
+    END
+    built = t; fails = 0; prog_d = NULL; prog_t = t; last_n = src;
     IF (path IS NULL) THEN
     BEGIN
       UPDATE OR INSERT INTO bot_routes (ent_id, target, dst_node, path, built, fails, prog_d, prog_t) VALUES (:eid, :target, :dst, NULL, :t, 0, NULL, NULL) MATCHING (ent_id);
@@ -311,11 +373,11 @@ BEGIN
     SELECT w.x, w.y, w.z, w.kind FROM waypoints w WHERE w.id = :nid INTO nx, ny, nz, nk;
     IF (nx IS NULL) THEN LEAVE;
     reach = IIF(nk = 4, 200, 40);
-    IF (vlen(nx - x, ny - y, 0) < reach AND ABS(nz - z) < IIF(nk = 4, 90, 48)) THEN cut = SUBSTRING(s FROM p);
+    IF (vlen(nx - x, ny - y, 0) < reach AND ABS(nz - z) < IIF(nk = 4, 90, 48)) THEN BEGIN cut = SUBSTRING(s FROM p); cutn = nid; END
     s = SUBSTRING(s FROM p);
     i = i + 1;
   END
-  IF (cut IS NOT NULL) THEN BEGIN path = cut; prog_d = NULL; prog_t = t; END
+  IF (cut IS NOT NULL) THEN BEGIN path = cut; prog_d = NULL; prog_t = t; last_n = cutn; END
   p = POSITION(',', path, 2);
   IF (p = 0) THEN
   BEGIN
@@ -327,6 +389,28 @@ BEGIN
   BEGIN
     nid = CAST(SUBSTRING(path FROM 2 FOR p - 2) AS INTEGER);
     SELECT w.x, w.y, w.z FROM waypoints w WHERE w.id = :nid INTO nx, ny, nz;
+    IF (last_n IS NOT NULL AND EXISTS (SELECT 1 FROM wp_edges e WHERE e.a = :last_n AND e.b = :nid AND e.kind = 4)) THEN
+    BEGIN
+      -- a rocket jump (BotTravel_RocketJump): onto its start, slowing as it nears it, then up
+      SELECT w.x, w.y, w.z FROM waypoints w WHERE w.id = :last_n INTO lx, ly, lz;
+      IF (bot_can_rj(eid) = 0) THEN BEGIN fails = 3; moved = 0; END
+      ELSE IF (vlen(lx - x, ly - y, 0) > 12) THEN
+      BEGIN
+        yaw = vectoyaw(lx - x, ly - y);
+        UPDATE ents e SET e.ideal_yaw = :yaw WHERE e.id = :eid;
+        moved = step_direction(eid, yaw, MINVALUE(dist, vlen(lx - x, ly - y, 0)));
+        IF (moved = 0) THEN fails = fails + 1; ELSE fails = 0;
+      END
+      ELSE
+      BEGIN
+        UPDATE OR INSERT INTO bot_routes (ent_id, target, dst_node, path, built, fails, prog_d, prog_t, last_node) VALUES (:eid, :target, :dst, :path, :built, 0, NULL, :t + 2, :last_n) MATCHING (ent_id);
+        EXECUTE PROCEDURE bot_rocket_jump(eid, nx, ny, nz);
+        moved = 1;
+        EXIT;
+      END
+      UPDATE OR INSERT INTO bot_routes (ent_id, target, dst_node, path, built, fails, prog_d, prog_t, last_node) VALUES (:eid, :target, :dst, :path, :built, :fails, NULL, :t, :last_n) MATCHING (ent_id);
+      EXIT;
+    END
     yaw = vectoyaw(nx - x, ny - y);
     UPDATE ents e SET e.ideal_yaw = :yaw WHERE e.id = :eid;
     -- progress: nearer to the node than ever, or not
@@ -351,7 +435,7 @@ BEGIN
     IF (moved = 0) THEN moved = step_direction(eid, anglemod(yaw - 35), dist);
     IF (moved = 0) THEN fails = fails + 1; ELSE fails = 0;
   END
-  UPDATE OR INSERT INTO bot_routes (ent_id, target, dst_node, path, built, fails, prog_d, prog_t) VALUES (:eid, :target, :dst, :path, :built, :fails, :prog_d, :prog_t) MATCHING (ent_id);
+  UPDATE OR INSERT INTO bot_routes (ent_id, target, dst_node, path, built, fails, prog_d, prog_t, last_node) VALUES (:eid, :target, :dst, :path, :built, :fails, :prog_d, :prog_t, :last_n) MATCHING (ent_id);
 END^
 
 -- ── the bot's senses ─────────────────────────────────────────────────────
@@ -1160,6 +1244,7 @@ DECLARE flags INTEGER; DECLARE wl SMALLINT; DECLARE tid INTEGER; DECLARE vz DOUB
 DECLARE f DOUBLE PRECISION; DECLARE ex DOUBLE PRECISION; DECLARE ey DOUBLE PRECISION; DECLARE ez DOUBLE PRECISION;
 DECLARE nx DOUBLE PRECISION; DECLARE ny DOUBLE PRECISION; DECLARE nz DOUBLE PRECISION; DECLARE sf INTEGER; DECLARE ct INTEGER; DECLARE als SMALLINT; DECLARE sts SMALLINT; DECLARE hit INTEGER;
 DECLARE px DOUBLE PRECISION; DECLARE py DOUBLE PRECISION; DECLARE pz DOUBLE PRECISION;
+DECLARE rx DOUBLE PRECISION; DECLARE ry DOUBLE PRECISION; DECLARE rz DOUBLE PRECISION; DECLARE ru DOUBLE PRECISION;
 BEGIN
   t = now_();
   -- thinks that are due (non-pushers)
@@ -1176,6 +1261,8 @@ BEGIN
     BEGIN
       -- a bot in the air: gravity and a slide, until it lands
       -- (moved by the tic's average vertical speed, then given the tic's end: gravity as PM_SlideMove integrates it)
+      SELECT r.rj_x, r.rj_y, r.rj_z, r.rj_until FROM bot_routes r WHERE r.ent_id = :eid INTO rx, ry, rz, ru;
+      IF (ru > t) THEN EXECUTE PROCEDURE bot_air_steer(eid, rx, ry, rz, dt);
       UPDATE ents e SET e.vz = e.vz - (SELECT g.gravity FROM game g WHERE g.id = 1) * :dt / 2, e.flags = BIN_AND(e.flags, BIN_NOT(512)) WHERE e.id = :eid;
       EXECUTE PROCEDURE fly_move(eid, dt) RETURNING_VALUES wl, tid;
       IF (NOT EXISTS (SELECT 1 FROM ents e WHERE e.id = :eid)) THEN CONTINUE;
@@ -1189,6 +1276,7 @@ BEGIN
       BEGIN
         -- landed: shed the velocity (knocks fade on the ground), the legs land
         UPDATE ents e SET e.vx = e.vx * 0.5e0, e.vy = e.vy * 0.5e0, e.vz = 0 WHERE e.id = :eid;
+        IF (ru > t) THEN UPDATE bot_routes r SET r.rj_until = 0 WHERE r.ent_id = :eid;
         UPDATE ents e SET e.vx = 0, e.vy = 0 WHERE e.id = :eid AND ABS(e.vx) + ABS(e.vy) < 30;
       END
       EXECUTE PROCEDURE link_ent(eid);

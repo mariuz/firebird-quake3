@@ -117,6 +117,8 @@ export function loadBotChat(pak, bots) {
     for (let s = 1; s <= 5; s++) {
       const ch = characterAtSkill(blocks, s);
       for (const k of CHAT_KEYS) if (typeof ch[`CHARACTERISTIC_CHAT_${k}`] === 'number') chars.push([b.name, s, k.toLowerCase(), ch[`CHARACTERISTIC_CHAT_${k}`]]);
+      // and whether it rocket-jumps (BotCanAndWantsToRocketJump wants 0.5 or more)
+      if (typeof ch.CHARACTERISTIC_WEAPONJUMPING === 'number') chars.push([b.name, s, 'weaponjumping', ch.CHARACTERISTIC_WEAPONJUMPING]);
     }
   }
   return { rnd, chat, chars };

@@ -1031,6 +1031,8 @@ BEGIN
       EXECUTE PROCEDURE snd(targ, 3, 'sound/items/protect3.wav', 1, 1);
     END
   END
+  -- "always give half damage if hurting self; calculated after knockback, so rocket jumping works"
+  IF (targ = attacker) THEN damage = MAXVALUE(1, TRUNC(damage * 0.5e0));
   -- CheckArmor: armour takes 66 percent
   save = 0;
   IF (BIN_AND(dflags, 2) = 0) THEN

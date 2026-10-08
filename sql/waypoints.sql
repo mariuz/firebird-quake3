@@ -7,7 +7,8 @@
 --   WP_EDGES   a → b when a player box can walk from a to b: a straight
 --              box trace with floor probes, else a stepped walk that
 --              climbs stairs and drops off ledges (one way); jump pads
---              and teleporters are edges of their own
+--              and teleporters are edges of their own, and so is a rocket
+--              jump up to a ledge (the AAS's TRAVEL_ROCKETJUMP)
 --   WP_ROUTE   breadth-first over the edges, the path as a string of nodes
 --
 -- The bots route to the player when they cannot see him, and roam between
@@ -25,7 +26,7 @@ CREATE TABLE wp_edges (
   a INTEGER NOT NULL,
   b INTEGER NOT NULL,
   len DOUBLE PRECISION NOT NULL,
-  kind SMALLINT DEFAULT 0 NOT NULL,     -- 0 walk 1 jump pad 2 teleporter 3 drop (one way)
+  kind SMALLINT DEFAULT 0 NOT NULL,     -- 0 walk 1 jump pad 2 teleporter 3 drop (one way) 4 rocket jump (one way)
   PRIMARY KEY (a, b)
 );
 CREATE INDEX wp_edges_a ON wp_edges (a);
@@ -39,7 +40,10 @@ CREATE TABLE bot_routes (
   built DOUBLE PRECISION,
   fails SMALLINT DEFAULT 0 NOT NULL,
   prog_d DOUBLE PRECISION,               -- the nearest it has been to its next node, and when:
-  prog_t DOUBLE PRECISION                -- no progress for a while means it is stuck, whatever the steps say
+  prog_t DOUBLE PRECISION,               -- no progress for a while means it is stuck, whatever the steps say
+  last_node INTEGER,                     -- the node it last reached: the start of the edge it is on
+  rj_x DOUBLE PRECISION, rj_y DOUBLE PRECISION, rj_z DOUBLE PRECISION,   -- a rocket jump's landing, steered for in the air
+  rj_until DOUBLE PRECISION DEFAULT 0 NOT NULL
 );
 
 -- where the build of the graph has got to: the next grid column to scan, and the phase
@@ -270,6 +274,40 @@ BEGIN
     VALUES (1, :minx + 64, :miny + 64, :minx, :miny, :minz, :maxx, :maxy, :maxz, 0) MATCHING (id);
 END^
 
+-- can a rocket jump take a player from a to b (the AAS's weapon-jump reachability)? Up at about 680 a
+-- second once the rocket's knock is in (the jump's 270 and the splash's 400 or so, measured: the apex is
+-- 300 over the floor), down at gravity; across with the air control a bot steers with (Quake III's air
+-- acceleration, 16 a tic up to 320), with a margin. The flight's room: up from a, across, down onto b
+CREATE OR ALTER FUNCTION wp_rocket_jump (ax DOUBLE PRECISION, ay DOUBLE PRECISION, az DOUBLE PRECISION, bx DOUBLE PRECISION, by_ DOUBLE PRECISION, bz DOUBLE PRECISION) RETURNS SMALLINT
+AS
+DECLARE h DOUBLE PRECISION; DECLARE d DOUBLE PRECISION; DECLARE tf DOUBLE PRECISION; DECLARE n DOUBLE PRECISION; DECLARE reach DOUBLE PRECISION; DECLARE top DOUBLE PRECISION;
+DECLARE f DOUBLE PRECISION; DECLARE ex DOUBLE PRECISION; DECLARE ey DOUBLE PRECISION; DECLARE ez DOUBLE PRECISION;
+DECLARE nx DOUBLE PRECISION; DECLARE ny DOUBLE PRECISION; DECLARE nz DOUBLE PRECISION;
+DECLARE sf INTEGER; DECLARE ct INTEGER; DECLARE als SMALLINT; DECLARE sts SMALLINT; DECLARE hit INTEGER;
+BEGIN
+  h = bz - az; d = vlen(bx - ax, by_ - ay, 0);
+  IF (h <= 0 OR h > 250 OR d < 48) THEN RETURN 0;      -- a ledge, not a floor overhead
+  -- a floor a rocket hits under the start (not the player clip a shot goes through)
+  EXECUTE PROCEDURE trace_move(NULL, 0, 0, 0, 0, 0, 0, ax, ay, az, ax, ay, az - 40, 1)
+    RETURNING_VALUES f, ex, ey, ez, nx, ny, nz, sf, ct, als, sts, hit;
+  IF (f >= 1 OR ez < az - 30) THEN RETURN 0;
+  tf = (680 + SQRT(680e0 * 680 - 1600 * h)) / 800;
+  n = tf / 0.05e0;
+  reach = IIF(n <= 20, 0.4e0 * n * (n + 1), 168 + (n - 20) * 16);
+  IF (d > reach * 0.8e0) THEN RETURN 0;
+  top = az + MINVALUE(280, h + 90);
+  EXECUTE PROCEDURE trace_move(NULL, -15, -15, -24, 15, 15, 32, ax, ay, az, ax, ay, top, 65537)
+    RETURNING_VALUES f, ex, ey, ez, nx, ny, nz, sf, ct, als, sts, hit;
+  IF (f < 1 OR sts = 1) THEN RETURN 0;
+  EXECUTE PROCEDURE trace_move(NULL, -15, -15, -24, 15, 15, 32, ax, ay, top, bx, by_, top, 65537)
+    RETURNING_VALUES f, ex, ey, ez, nx, ny, nz, sf, ct, als, sts, hit;
+  IF (f < 1 OR sts = 1) THEN RETURN 0;
+  EXECUTE PROCEDURE trace_move(NULL, -15, -15, -24, 15, 15, 32, bx, by_, top, bx, by_, bz - 30, 65537)
+    RETURNING_VALUES f, ex, ey, ez, nx, ny, nz, sf, ct, als, sts, hit;
+  IF (f >= 1 OR sts = 1 OR nz < 0.7e0 OR ez < bz - 4 OR ez > bz + 3) THEN RETURN 0;
+  RETURN 1;
+END^
+
 -- the walkable edges of up to `cnt` nodes not yet linked, each to its nearest neighbours; returns how many
 -- nodes remain. The game calls it a few nodes per frame, so the arena opens while the bots learn their way
 CREATE OR ALTER PROCEDURE wp_link_chunk (cnt INTEGER)
@@ -307,6 +345,27 @@ BEGIN
           INSERT INTO wp_edges (a, b, len, kind) VALUES (:b, :a, vlen(:bx - :ax, :by_ - :ay, :bz - :az), 0);
       END
       pass = pass + 1;
+    END
+    -- and up to two rocket jumps to a ledge above, beyond a jump and within the reach (six tried at most;
+    -- not from or onto a pad or a teleporter)
+    IF (NOT EXISTS (SELECT 1 FROM waypoints w WHERE w.id = :a AND w.kind IN (3, 5))) THEN
+    BEGIN
+      n = 0; pass = 0;
+      FOR SELECT w2.id, w2.x, w2.y, w2.z FROM waypoints w2
+           WHERE w2.z > :az + 60 AND w2.z <= :az + 220 AND ABS(w2.x - :ax) < 260 AND ABS(w2.y - :ay) < 260 AND w2.kind NOT IN (3, 5)
+           ORDER BY (w2.x - :ax) * (w2.x - :ax) + (w2.y - :ay) * (w2.y - :ay)
+           INTO b, bx, by_, bz
+      DO
+      BEGIN
+        IF (n >= 2 OR pass >= 6) THEN LEAVE;
+        IF (EXISTS (SELECT 1 FROM wp_edges e WHERE e.a = :a AND e.b = :b)) THEN CONTINUE;
+        pass = pass + 1;
+        IF (wp_rocket_jump(ax, ay, az, bx, by_, bz) = 1) THEN
+        BEGIN
+          INSERT INTO wp_edges (a, b, len, kind) VALUES (:a, :b, vlen(:bx - :ax, :by_ - :ay, :bz - :az), 4);
+          n = n + 1;
+        END
+      END
     END
   END
   SELECT COUNT(*) FROM waypoints w WHERE w.linked = 0 INTO remaining;
@@ -418,8 +477,9 @@ BEGIN
   RETURN best;
 END^
 
--- the route from node `src` to node `dst` as ',n1,n2,…,dst,' (without src), NULL when there is none
-CREATE OR ALTER FUNCTION wp_route (src INTEGER, dst INTEGER) RETURNS VARCHAR(400)
+-- the route from node `src` to node `dst` as ',n1,n2,…,dst,' (without src), NULL when there is none; over
+-- the rocket jumps too when `rj` is 1 (the travel flags with TFL_ROCKETJUMP)
+CREATE OR ALTER FUNCTION wp_route (src INTEGER, dst INTEGER, rj SMALLINT) RETURNS VARCHAR(400)
 AS
 DECLARE level INTEGER = 0; DECLARE added INTEGER; DECLARE path VARCHAR(400); DECLARE n INTEGER; DECLARE p INTEGER;
 BEGIN
@@ -431,7 +491,7 @@ BEGIN
   BEGIN
     INSERT INTO wp_visit (node, prev, depth)
     SELECT x.b, MIN(x.node), :level + 1
-      FROM (SELECT e.b, v.node FROM wp_visit v JOIN wp_edges e ON e.a = v.node WHERE v.depth = :level
+      FROM (SELECT e.b, v.node FROM wp_visit v JOIN wp_edges e ON e.a = v.node WHERE v.depth = :level AND (e.kind <> 4 OR :rj = 1)
               AND NOT EXISTS (SELECT 1 FROM wp_visit w WHERE w.node = e.b)) x
      GROUP BY x.b;
     added = ROW_COUNT;

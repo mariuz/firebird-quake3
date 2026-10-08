@@ -13,14 +13,13 @@ is a bug report; it is the gap between a 20 Hz SQL deathmatch and the 1999 game.
 
 Nothing left in this section: the frames between tics with the predicted player, crouching, the time
 limit with the intermission and the rotation, the view's kicks, the zoom, the weapon switch, the bots'
-chat, the rewards and the countdown, and spectating are all in (see §8). What is left starts with §2.
+chat, the rewards and the countdown, and spectating are all in (see §8). What is left starts with §3.
 
 ## 2. Movement and physics
 
-| Gap | Notes |
-| --- | --- |
-| Ladders | Quake III has none; nothing to do |
-| Knockback feel | `t_damage` applies Quake III's knockback and its 50 to 200 ms without friction (`PMF_TIME_KNOCKBACK`); rocket jumps work for the player, the bots never use them |
+Nothing left here either: the movement matches `bg_pmove.c` (substeps, slopes, landings, the knock's
+time without friction), turning movers carry their riders, and the bots rocket-jump (see §8). Quake III
+has no ladders.
 
 ## 3. The game: `game/` and `cgame/`
 
@@ -108,7 +107,10 @@ Collision against brushes and patch facets, brush models with their own leaf, ro
 the jump key, the knock's time without friction, `PM_CrashLand`'s landings, `PM_WalkMove` on a slope
 at the full speed along it: `npm run test:pmove` checks it side by side; `SURF_SLICK` floors), movers
 that push, crush and carry, a turning one (`func_rotating`, `func_pendulum`) carrying its riders round
-its axis and turning their view with it (none in the demo's arenas; the test builds one), swimming with its
+its axis and turning their view with it (none in the demo's arenas; the test builds one), half damage
+from your own rocket after its full knock (`G_Damage`: "so rocket jumping works"), the bots' rocket
+jumps to ledges no walk reaches (`TRAVEL_ROCKETJUMP` edges, `BotCanAndWantsToRocketJump`, the jump
+and the shot straight down, the flight steered with the air acceleration), swimming with its
 bubbles (shots and rockets in water, `CG_BubbleTrail`), the view's wave and the muffled sound with the
 head under (the demo's arenas have lava only, a registered pak's have water), crouching (`PM_CheckDuck`, the crouch animations, the
 smoothed eye; the bots never crouch); the first-person view's kick away from a hit, landing dips by the
