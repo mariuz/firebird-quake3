@@ -97,6 +97,20 @@ const queue = async () => (await q("SELECT name, team FROM scoreboard")).filter(
   console.log('scoreboard', board.map((r) => `${r.NAME.trim()}${r.TEAM === 3 ? ' (waiting)' : ''} ${r.WINS}-${r.LOSSES}`).join(', '));
 }
 
+// one of the two leaves while behind: the other gets the win (ClientDisconnect), the next comes in
+{
+  for (let i = 0; i < 100; i++) await tic();
+  const d = await playing();
+  const other = d.find((x) => x !== pe);
+  await db.exec(`UPDATE player SET frags = 2 WHERE id = 1`);
+  const w0 = (await q(`SELECT wins w FROM ents WHERE id = ${pe}`))[0].W;
+  await db.exec(`EXECUTE PROCEDURE kick_bot('${name(other)}')`);
+  await tic();
+  const w1 = (await q(`SELECT wins w FROM ents WHERE id = ${pe}`))[0].W;
+  const d2 = await playing();
+  assert(w1 === w0 + 1 && d2.length === 2 && d2.includes(pe) && !d2.includes(other), `${name(other)} leaves the duel behind 0 to 2: a win for us, ${name(d2.find((x) => x !== pe))} comes in`);
+}
+
 // alone: waiting for players; a bot comes in at the console and the countdown starts
 {
   await loadMap(db, pak, res, mapName, { skill: 3, bots: 0, gametype: 1, warmup: 4 });

@@ -76,10 +76,16 @@ assert(s.ONGROUND === 1, 'player is on the ground after walking');
   // (the eye's height in the tic row also carries the stair smoothing, so the table's offset is what we check)
   const box = (await db.query(`SELECT e.maxz, e.viewheight, p.view_ofs FROM ents e JOIN player p ON p.ent_id = e.id WHERE e.id = ${pe}`)).rows[0];
   assert(s.DUCKED === 1 && box.MAXZ === 16 && box.VIEW_OFS === 12 && box.VIEWHEIGHT === 12, `crouching: the box 16 high, the eye 12 above the origin instead of 26 (${box.VIEW_OFS})`);
-  const from = { x: s.PX, y: s.PY };
-  for (let i = 0; i < 20; i++) s = await tic([1, 1, 0, 0, 0, 0, -1, 1, 0]);
-  const crept = Math.hypot(s.PX - from.x, s.PY - from.y);
-  assert(crept > 40 && crept < 100, `crouch-walking is a quarter of the run (${crept.toFixed(1)} units in a second)`);
+  // (the speed on the floor: from some spawn points the way back ends at a ledge, and crouched in the
+  // air there is no quarter cap)
+  let crept = 0, grounded = 0;
+  for (let i = 0; i < 20; i++) {
+    const a = s;
+    s = await tic([1, 1, 0, 0, 0, 0, -1, 1, 0]);
+    if (i >= 4 && a.ONGROUND === 1 && s.ONGROUND === 1) { crept += Math.hypot(s.PX - a.PX, s.PY - a.PY); grounded++; }
+  }
+  crept = grounded ? crept / (grounded * 0.05) : 0;
+  assert(grounded >= 5 && crept > 40 && crept < 100, `crouch-walking is a quarter of the run (${crept.toFixed(1)} units a second on the floor)`);
   // a bot standing on our head: no room to stand up
   const b = (await db.query("SELECT FIRST 1 id FROM ents WHERE classname = 'bot' ORDER BY id")).rows[0].ID;
   const keep = (await db.query(`SELECT x, y, z FROM ents WHERE id = ${b}`)).rows[0];

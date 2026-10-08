@@ -119,6 +119,12 @@ BEGIN
     IF (RAND() > chat_char(eid, 'enterexitgame')) THEN EXIT;
     ctype = 'game_enter'; v0 = me; v1 = chat_opponent(eid);
   END
+  ELSE IF (ev = 'game_exit') THEN
+  BEGIN
+    -- BotChat_ExitGame, as it leaves
+    IF (RAND() > chat_char(eid, 'enterexitgame')) THEN EXIT;
+    ctype = 'game_exit'; v0 = me; v1 = chat_opponent(eid);
+  END
   ELSE IF (ev = 'level_end') THEN
   BEGIN
     IF (RAND() > chat_char(eid, 'startendlevel')) THEN EXIT;
@@ -963,6 +969,47 @@ BEGIN
   IF ((SELECT p.spectator FROM player p WHERE p.id = 1) = 1) THEN EXECUTE PROCEDURE make_spectator;
   ELSE EXECUTE PROCEDURE player_respawn;
   FOR SELECT e.id FROM ents e WHERE e.classname = 'bot' AND e.queued = 0 INTO b DO EXECUTE PROCEDURE bot_respawn(b);
+END^
+
+-- ── joining and leaving mid-game ─────────────────────────────────────────
+-- G_AddBot (the addbot command, the Add Bots menu): a bot of the roster that is not in the arena joins,
+-- at the skill asked for; a team game puts it on PickTeam's team, a tournament queues it (tourney_check)
+CREATE OR ALTER PROCEDURE add_bot (bname VARCHAR(16), skill SMALLINT)
+AS
+DECLARE id INTEGER;
+BEGIN
+  IF (NOT EXISTS (SELECT 1 FROM bot_defs b WHERE b.name = :bname)) THEN EXIT;
+  IF (EXISTS (SELECT 1 FROM ents e WHERE e.classname = 'bot' AND e.bot = :bname)) THEN EXIT;   -- one of each
+  IF (EXISTS (SELECT 1 FROM game g WHERE g.id = 1 AND g.match_over = 1)) THEN EXIT;
+  IF (skill IS NOT NULL) THEN UPDATE bot_defs b SET b.skill = MAXVALUE(1, MINVALUE(5, :skill)) WHERE b.name = :bname;
+  EXECUTE PROCEDURE spawn_bot(bname) RETURNING_VALUES id;
+  UPDATE game g SET g.num_bots = (SELECT COUNT(*) FROM ents e WHERE e.classname = 'bot') WHERE g.id = 1;
+END^
+
+-- ClientDisconnect (clientkick, the Remove Bots menu): the bot says its goodbye (BotChat_ExitGame) and is
+-- gone, with what it had in flight; nobody keeps it for an enemy or a view; in a tournament the one
+-- behind who leaves mid-duel gives the other a win
+CREATE OR ALTER PROCEDURE kick_bot (bname VARCHAR(16))
+AS
+DECLARE eid INTEGER; DECLARE first_ INTEGER; DECLARE second_ INTEGER;
+BEGIN
+  SELECT FIRST 1 e.id FROM ents e WHERE e.classname = 'bot' AND e.bot = :bname INTO eid;
+  IF (eid IS NULL) THEN EXIT;
+  IF (EXISTS (SELECT 1 FROM game g WHERE g.id = 1 AND g.gametype = 1 AND g.match_over = 0 AND g.warmup_end <= g.time_)
+      AND EXISTS (SELECT 1 FROM ents e WHERE e.id = :eid AND e.queued = 0)) THEN
+  BEGIN
+    SELECT FIRST 1 d.eid FROM duel_ranked d INTO first_;
+    SELECT FIRST 1 SKIP 1 d.eid FROM duel_ranked d INTO second_;
+    IF (second_ = eid) THEN UPDATE ents e SET e.wins = e.wins + 1 WHERE e.id = :first_;
+  END
+  EXECUTE PROCEDURE bot_chat_event(eid, 'game_exit', NULL, 0);
+  EXECUTE PROCEDURE say(bname || ' was kicked.');
+  DELETE FROM ents e WHERE e.owner_id = :eid AND e.classname IN ('rocket', 'grenade', 'plasma', 'bfg');
+  UPDATE ents e SET e.enemy_id = NULL WHERE e.enemy_id = :eid;
+  UPDATE player p SET p.follow_id = NULL WHERE p.follow_id = :eid;
+  DELETE FROM bot_routes r WHERE r.ent_id = :eid;
+  DELETE FROM ents e WHERE e.id = :eid;
+  UPDATE game g SET g.num_bots = (SELECT COUNT(*) FROM ents e WHERE e.classname = 'bot') WHERE g.id = 1;
 END^
 
 -- ── scoring and the announcer ────────────────────────────────────────────

@@ -197,6 +197,7 @@ async function startMap(name) {
   lastTic = performance.now() - TIC_MS;
   prev = null; prevPose = null; curPose = null; frameAt = 0;
   running = true;
+  refreshBotMenus().catch((err) => console.error(err));
 }
 
 // ── the loop ─────────────────────────────────────────────────────────────
@@ -495,6 +496,28 @@ $('spectate').addEventListener('click', () => {
   if (!db || !running || !last) return;
   db.exec(`EXECUTE PROCEDURE set_spectator(${last.SPECTATOR ? 0 : 1})`).catch((err) => console.error(err));
 });
+// bots joining and leaving mid-game (G_AddBot, clientkick): the menus offer the roster's absent ones and
+// those in the arena
+async function refreshBotMenus() {
+  if (!db) return;
+  const roster = (await db.query('SELECT name FROM bot_defs ORDER BY name')).rows.map((r) => r.NAME.trim());
+  const here = new Set((await db.query("SELECT bot FROM ents WHERE classname = 'bot'")).rows.map((r) => r.BOT.trim()));
+  const fill = (sel, label, names) => sel.replaceChildren(new Option(label, ''), ...names.map((n) => new Option(n, n)));
+  fill($('addbot'), 'Add bot…', roster.filter((n) => !here.has(n)));
+  fill($('kickbot'), 'Remove bot…', roster.filter((n) => here.has(n)));
+}
+const botMenu = (id, sql) => {
+  $(id).addEventListener('focus', () => refreshBotMenus().catch((err) => console.error(err)));
+  $(id).addEventListener('change', async (e) => {
+    const n = e.target.value;
+    e.target.value = '';
+    if (!n || !db || !running) return;
+    try { await db.exec(sql(n)); } catch (err) { console.error(err); }
+    await refreshBotMenus();
+  });
+};
+botMenu('addbot', (n) => `EXECUTE PROCEDURE add_bot('${n}', ${settings.skill | 0})`);
+botMenu('kickbot', (n) => `EXECUTE PROCEDURE kick_bot('${n}')`);
 // the name the bots call you by
 const cleanName = (s) => String(s ?? '').replace(/[^\x20-\x7e]/g, '').replace(/'/g, '').trim().slice(0, 15) || 'Player';
 async function setPlayerName() { if (db) await db.exec(`UPDATE player SET name = '${cleanName(settings.name)}' WHERE id = 1`); }

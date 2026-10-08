@@ -26,7 +26,6 @@ has no ladders.
 | Gap | Notes |
 | --- | --- |
 | **Gametypes** | free-for-all, tournament and team deathmatch. Capture the flag (`team_CTF_*`, flags, `target_score`, the team overlay) is absent; the demo pak has no CTF maps, the full pak does. Teammates have no friend marker over their heads (`cg_drawFriend`: the demo pak lacks `sprites/friend1.tga`) |
-| **Join and leave** | the player and the bots are there for the match; no mid-game `addbot`/`kick` from the UI (the console's `spawn_bot` works) |
 | **`misc_model`, `misc_portal_surface`, `misc_portal_camera`** | skipped at spawn; portal surfaces and cameras need the renderer's portal pass |
 | **`shooter_*`, `target_laser`** | not spawned (none in the demo maps) |
 | **Grappling hook** | not in Quake III's arenas; nothing to do |
@@ -116,7 +115,9 @@ fraglimit and tied time limit, "red leads" / "blue leads" / "teams are tied", th
 teammates alone and holding fire with one in the way, the HUD's two scores and the team scoreboard:
 `npm run test:team`); the tournament (`GT_TOURNAMENT`: two play and the rest wait as spectators in the
 order they came, "waiting for players" and the countdown when both are there, wins and losses, the
-loser to the back of the queue and the arena restarted for the next: `npm run test:tourney`), swimming with its
+loser to the back of the queue and the arena restarted for the next: `npm run test:tourney`); bots
+joining and leaving mid-game (`addbot` at a skill and `kick` from the page's menus: `G_AddBot`,
+`ClientDisconnect`, the goodbye of `BotChat_ExitGame`), swimming with its
 bubbles (shots and rockets in water, `CG_BubbleTrail`), the view's wave and the muffled sound with the
 head under (the demo's arenas have lava only, a registered pak's have water), crouching (`PM_CheckDuck`, the crouch animations, the
 smoothed eye; the bots never crouch); the first-person view's kick away from a hit, landing dips by the

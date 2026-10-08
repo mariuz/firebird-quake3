@@ -140,6 +140,30 @@ if (item) {
   }
 }
 
+// joining and leaving mid-game: addbot at a skill, one of each; kick, and nothing is left pointing at it
+{
+  const absent = (await q("SELECT name FROM bot_defs d WHERE NOT EXISTS (SELECT 1 FROM ents e WHERE e.classname = 'bot' AND e.bot = d.name) ORDER BY name"))[0].NAME.trim();
+  await db.exec(`EXECUTE PROCEDURE add_bot('${absent}', 4)`);
+  await db.exec(`EXECUTE PROCEDURE add_bot('${absent}', 4)`);
+  await db.exec("EXECUTE PROCEDURE add_bot('Nobody', 4)");
+  const added = await q(`SELECT e.id, e.health, e.cluster, d.skill FROM ents e JOIN bot_defs d ON d.name = e.bot WHERE e.classname = 'bot' AND e.bot = '${absent}'`);
+  const n = (await q('SELECT num_bots n FROM game'))[0].N;
+  assert(added.length === 1 && added[0].HEALTH > 0 && added[0].CLUSTER !== null && added[0].SKILL === 4 && n === bots.length + 1,
+    `${absent} joins mid-game at skill 4, once (${n} bots now; an unknown name is nothing)`);
+  // something of it for the kick to clear: a rocket in flight, a bot after it, our view on it
+  const id = added[0].ID;
+  await db.exec(`EXECUTE PROCEDURE launch_missile(${id}, 'rocket', 'models/ammo/rocket/rocket.md3', 0, 0, 2000, 1, 0, 0, 900, 100, 100, 120, 0, 10)`);
+  await db.exec(`UPDATE ents SET enemy_id = ${id} WHERE id = ${bots[0].ID}`);
+  await db.exec(`UPDATE player SET follow_id = ${id} WHERE id = 1`);
+  await db.exec(`EXECUTE PROCEDURE kick_bot('${absent}')`);
+  const left = (await q(`SELECT (SELECT COUNT(*) FROM ents WHERE id = ${id} OR owner_id = ${id}) e, (SELECT COUNT(*) FROM ents WHERE enemy_id = ${id}) en,
+                         (SELECT follow_id FROM player) f, (SELECT num_bots FROM game) n FROM rdb$database`))[0];
+  const said = (await q('SELECT FIRST 3 msg FROM messages ORDER BY id DESC')).map((m) => m.MSG);
+  assert(left.E === 0 && left.EN === 0 && left.F === null && left.N === bots.length && said.includes(`${absent} was kicked.`),
+    `${absent} is kicked: gone with its rocket, nobody's enemy or view (${said.join(' / ')})`);
+  await tic();
+}
+
 // the chat files are in, and a line comes out whole (variables filled, random strings drawn, no marks left)
 {
   const n = (await q('SELECT (SELECT COUNT(*) FROM bot_chat) c, (SELECT COUNT(*) FROM bot_rnd) r, (SELECT COUNT(*) FROM bot_chatchar) k FROM rdb$database'))[0];

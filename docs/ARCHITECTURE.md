@@ -411,7 +411,16 @@ how long it searches. Measured with a standing player (`.prof/fair.mjs`): skill 
 about two minutes, skill 2 after 25 s, skill 5 after 5 s.
 
 `spawn_bot(name)` adds a bot from `bot_defs` (Sarge, Grunt, Major, Visor, Daemia, Stripe with their
-models and skins); the page's console has an "add Visor" button.
+models and skins). Mid-game, `add_bot(name, skill)` is `G_AddBot` (the `addbot` command and the Add
+Bots menu): a roster bot not in the arena joins at the skill asked for (one of each; not during the
+intermission), on `PickTeam`'s team in a team game, into the queue in a tournament. `kick_bot(name)`
+is `ClientDisconnect` through `clientkick`: the bot may say its goodbye (`game_exit`, `BotChat_ExitGame`),
+"Sarge was kicked." goes to the console, its missiles in flight go with it, and no bot keeps it for an
+enemy nor the player's view for the one it follows; in a tournament, the one behind who leaves a
+running duel gives the other a win. Both keep `game.num_bots`. The page has "Add bot…" and "Remove
+bot…" menus beside Spectate (the absent roster and the bots in the arena), and the console has
+`addbot Visor` and `kick Visor` buttons. Both are executable procedures: an `EXECUTE PROCEDURE` of a
+selectable one (with `SUSPEND`) does not run through the driver.
 
 ---
 

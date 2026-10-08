@@ -94,6 +94,8 @@
           <option value="off">Off</option>
         </select> <input id="musicvol" type="range" min="0" max="100" step="5"></label>
         <button id="spectate" type="button" title="Leave the match and watch: fly about, or fire to follow a bot through its eyes (jump lets go); press again to join">Spectate</button>
+        <select id="addbot" title="A bot of the pak's roster joins the match now, at the Skill above (addbot)"><option value="">Add bot…</option></select>
+        <select id="kickbot" title="A bot leaves the match now (kick)"><option value="">Remove bot…</option></select>
         <span id="engine" class="pill">Firebird</span>
         <span id="mapname" class="pill"></span>
       </div>
@@ -121,7 +123,8 @@
         <button data-sql="SELECT * FROM view_setup(NULL, NULL, NULL, NULL, NULL)">view_setup</button>
         <button data-sql="SELECT COUNT(*) brushes, (SELECT COUNT(*) FROM brushes WHERE facet = 1) patch_facets, (SELECT COUNT(*) FROM brushsides) sides, (SELECT COUNT(*) FROM leaves) leaves, (SELECT COUNT(*) FROM faces) faces, (SELECT COUNT(*) FROM face_verts) verts FROM brushes">geometry</button>
         <button data-sql="EXECUTE PROCEDURE player_impulse(99)">give all</button>
-        <button data-sql="SELECT * FROM spawn_bot('Visor')">add Visor</button>
+        <button data-sql="EXECUTE PROCEDURE add_bot('Visor', 3)">addbot Visor</button>
+        <button data-sql="EXECUTE PROCEDURE kick_bot('Visor')">kick Visor</button>
         <button data-sql="UPDATE ents SET health = 1 WHERE classname = 'bot' AND health > 0">one-hit bots</button>
         <button data-sql="UPDATE ents SET flags = BIN_OR(flags, 16) WHERE classname = 'player'">god</button>
         <button data-sql="SELECT * FROM messages ORDER BY id">console</button>

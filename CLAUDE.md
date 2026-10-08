@@ -77,7 +77,8 @@ explosion sprites, beams) and nothing else. The renderers never query the databa
 - `FIRST 1 SKIP (:k)` needs the parentheses. `OVER`, `COUNT`, `WAIT`, `RANDOM`, `TIME`, `VALUE` are
   reserved. `CASE`/`IIF` over string literals pads with spaces: `TRIM()` the result.
 - Procedures with outputs: `EXECUTE PROCEDURE p(...) RETURNING_VALUES a, b` in PSQL; functions are
-  expressions. Calling a function that does DML from a `WHERE` is asking for trouble.
+  expressions. From the page or a test, a selectable procedure (with `SUSPEND`) runs only as
+  `SELECT … FROM p(...)`; `db.exec('EXECUTE PROCEDURE p(...)')` of one silently does nothing. Calling a function that does DML from a `WHERE` is asking for trouble.
 - Global temporary tables (`wp_visit`, `clip_planes`, `pushed`, `sel_faces`) are emptied between the
   statements the page sends.
 - A `WHILE` that steps a coordinate must provably advance (see `wp_scan_column`); an infinite loop in
