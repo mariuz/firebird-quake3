@@ -311,7 +311,22 @@ sound, the lead state. Each tic:
    tie is the teams'; the winner is "Red team" or "Blue team" and the win music plays for its side.
    `q3_tic` returns `gametype`, `red_score`, `blue_score` and the player's `team`; the HUD's corner
    shows the two scores with ours marked, and `scoreboard` returns each row's team so the page lists
-   the teams under their names and scores; `check_exit_rules` (Quake III's `CheckExitRules`) runs after
+   the teams under their names and scores. The *tournament* (`gametype` 1, `GT_TOURNAMENT`) has two
+   play and the others wait as spectators: the player through `player.spectator`, a bot through
+   `ents.queued` (`bot_to_queue`: invisible, not solid, `FL_NOTARGET`, its think idling), each with
+   `spec_time` (`sess.spectatorTime`). `init_map` lets the first two who came play. `tourney_check`
+   (`CheckTournament`, from `check_exit_rules` every tic) queues a third who came in at the console,
+   pulls the one who waited longest when fewer than two play (`tourney_pull`, `AddTournamentPlayer`),
+   shows "Waiting for players" with the countdown held off (`warmup_end` 1e9) while there are not two,
+   and once there are, clears the scores and starts the countdown with "prepare to fight" and "You vs
+   Daemia". `end_match` adds a win to the first of the two (`duel_ranked`) and a loss to the second
+   (`AdjustTournamentScores`, `ents.wins`, `losses`). The intermission ends through `exit_level`
+   (`ExitLevel`, for the fire after five seconds and the thirty-second timeout alike): any other game
+   type sets `exit_kind` for the page to load the next arena; a tournament sends the second of the two
+   to the back of the queue (`RemoveTournamentLoser`) and restarts in place (`map_restart`: the items
+   back, nothing in flight, the winner respawned, the next pulled in by `tourney_check`). Asking to
+   play while two play leaves the player waiting. The ranking, the lead and the limits leave the
+   waiting bots out; the scoreboard lists them as team 3 in queue order, with wins and losses; `check_exit_rules` (Quake III's `CheckExitRules`) runs after
    every tic for the time limit: "five minutes" and "one minute" once each (`game.time_warnings`),
    and at the limit either the leader wins or, with the lead tied (`ScoreIsTied`, the player and the
    bots compared), play goes on as sudden death, announced two seconds in, until a frag breaks the

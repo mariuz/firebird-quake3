@@ -2,7 +2,7 @@
 // under Node, the painter runs against a stub canvas, and the frames are
 // written as PNGs to docs/. Also a convenient end-to-end test.
 //
-//   node scripts/screenshot.mjs [map] [out-prefix] [--at=x,y,z,yaw] [--sql] [--size=640x480] [--bots=N] [--team] [--scores]
+//   node scripts/screenshot.mjs [map] [out-prefix] [--at=x,y,z,yaw] [--sql] [--size=640x480] [--bots=N] [--team | --tourney] [--scores]
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -37,7 +37,7 @@ const db = new FirebirdBrowser('memory://quake3', { transport: new DirectTranspo
 await createSchema(db, sql);
 const pak = new Pk3(fs.readFileSync(process.env.PAK ?? path.join(root, 'public/pak/pak0.pk3')).buffer);
 const res = await loadResources(db, pak, { width: W, height: H });
-const bsp = await loadMap(db, pak, res, mapName, { skill: 2, bots, link: false, gametype: process.argv.includes('--team') ? 3 : 0, team: 1 });   // the bots need no routes for a still frame
+const bsp = await loadMap(db, pak, res, mapName, { skill: 2, bots, link: false, gametype: process.argv.includes('--team') ? 3 : process.argv.includes('--tourney') ? 1 : 0, team: 1, warmup: 4 });   // the bots need no routes for a still frame
 await db.exec("UPDATE ents SET flags = BIN_OR(flags, 16) WHERE classname = 'player'");
 const renderer = new Renderer(stubCanvas, res);
 renderer.setSize(W, H);

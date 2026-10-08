@@ -37,7 +37,7 @@ CREATE TABLE game (
   warmup_end     DOUBLE PRECISION DEFAULT 0 NOT NULL,   -- the countdown before the match ends then (the clock counts from it)
   warmup_said    SMALLINT DEFAULT 0 NOT NULL,           -- the last of three, two, one said (0: done)
   has_water      SMALLINT DEFAULT 0 NOT NULL,           -- the map has water: the shots look for bubbles
-  gametype       SMALLINT DEFAULT 0 NOT NULL,           -- g_gametype: 0 free for all, 3 team deathmatch (GT_TEAM)
+  gametype       SMALLINT DEFAULT 0 NOT NULL,           -- g_gametype: 0 free for all, 1 tournament (GT_TOURNAMENT), 3 team deathmatch (GT_TEAM)
   red_score      INTEGER DEFAULT 0 NOT NULL,            -- level.teamScores[TEAM_RED], [TEAM_BLUE]
   blue_score     INTEGER DEFAULT 0 NOT NULL,
   team_lead      SMALLINT DEFAULT 0 NOT NULL,           -- who leads, as last announced: 0 tied 1 red 2 blue
@@ -290,6 +290,10 @@ CREATE TABLE ents (
   n_impressive SMALLINT DEFAULT 0 NOT NULL,
   n_gauntlet   SMALLINT DEFAULT 0 NOT NULL,
   pteam        SMALLINT DEFAULT 0 NOT NULL,             -- sessionTeam: 0 free, 1 red, 2 blue
+  queued       SMALLINT DEFAULT 0 NOT NULL,             -- a tournament's bot waiting its turn (TEAM_SPECTATOR); the player's is player.spectator
+  spec_time    DOUBLE PRECISION DEFAULT 0 NOT NULL,     -- since when it waits (sess.spectatorTime): the longest waiting plays next
+  wins         SMALLINT DEFAULT 0 NOT NULL,             -- a tournament's sess.wins and sess.losses
+  losses       SMALLINT DEFAULT 0 NOT NULL,
   pmodel     VARCHAR(16),                   -- the player model (sarge, grunt …)
   pskin      VARCHAR(16),
   legs_anim  INTEGER DEFAULT 22 NOT NULL,   -- LEGS_IDLE

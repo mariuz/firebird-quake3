@@ -655,6 +655,7 @@ BEGIN
   SELECT e.st, e.enemy_id, e.flags, e.goal_id, e.respawn_time, e.search_time, e.attack_finished, e.lefty, e.legs_anim, e.x, e.y, e.z, e.yaw, e.teleport_time, e.health, COALESCE(b.skill, 2)
     FROM ents e LEFT JOIN bot_defs b ON b.name = e.bot WHERE e.id = :eid INTO st, enemy, flags, goal, rt, srch, af, lefty, legs, x, y, z, yaw, tt, hp, skill;
   IF (st IS NULL) THEN EXIT;
+  IF (st = 'queue') THEN BEGIN UPDATE ents e SET e.nextthink = :t + 0.5e0 WHERE e.id = :eid; EXIT; END   -- a tournament's spectator
   SELECT g.match_over, IIF(g.warmup_end > :t, 1, 0) FROM game g WHERE g.id = 1 INTO match_done, waiting;
   IF (match_done = 1) THEN BEGIN UPDATE ents e SET e.nextthink = :t + 0.5e0, e.vx = 0, e.vy = 0 WHERE e.id = :eid; EXIT; END
   IF (waiting = 1) THEN BEGIN UPDATE ents e SET e.nextthink = :t + 0.1e0 WHERE e.id = :eid; EXIT; END   -- the countdown
@@ -844,6 +845,126 @@ BEGIN
   SUSPEND;
 END^
 
+-- ── the tournament (GT_TOURNAMENT) ──────────────────────────────────────
+-- how many play: the player unless spectating, and the bots not waiting their turn
+CREATE OR ALTER FUNCTION duelists RETURNS INTEGER
+AS
+BEGIN
+  RETURN (SELECT COUNT(*) FROM ents e WHERE e.classname = 'bot' AND e.queued = 0)
+       + (SELECT IIF(p.spectator = 1, 0, 1) FROM player p WHERE p.id = 1);
+END^
+
+-- the two who play, best first (level.sortedClients)
+CREATE OR ALTER PROCEDURE duel_ranked
+RETURNS (eid INTEGER, frags INTEGER)
+AS
+BEGIN
+  FOR SELECT x.eid, x.frags FROM (
+        SELECT p.ent_id AS eid, p.frags FROM player p WHERE p.id = 1 AND p.spectator = 0
+        UNION ALL
+        SELECT e.id, e.frags FROM ents e WHERE e.classname = 'bot' AND e.queued = 0) x
+      ORDER BY x.frags DESC, x.eid INTO eid, frags DO SUSPEND;
+END^
+
+-- a bot to the spectators (SetTeam): out of sight and reach, waiting, and nobody's enemy or view
+CREATE OR ALTER PROCEDURE bot_to_queue (eid INTEGER)
+AS
+BEGIN
+  UPDATE ents e SET e.queued = 1, e.spec_time = now_(), e.st = 'queue', e.deadflag = 0, e.health = 100, e.solid = 0, e.takedamage = 0, e.alpha = 1,
+         e.movetype = 0, e.vx = 0, e.vy = 0, e.vz = 0, e.flags = BIN_OR(e.flags, 64), e.enemy_id = NULL, e.goal_id = NULL,
+         e.think = 'bot_think', e.nextthink = now_() + 0.5e0, e.respawn_time = 0 WHERE e.id = :eid;
+  EXECUTE PROCEDURE link_ent(eid);
+  UPDATE ents e SET e.enemy_id = NULL WHERE e.enemy_id = :eid;
+  UPDATE player p SET p.follow_id = NULL WHERE p.follow_id = :eid;
+  EXECUTE PROCEDURE say((SELECT e.bot FROM ents e WHERE e.id = :eid) || ' joined the spectators.');
+END^
+
+-- AddTournamentPlayer: the spectator that has waited longest comes in
+CREATE OR ALTER PROCEDURE tourney_pull
+AS
+DECLARE b INTEGER; DECLARE bt DOUBLE PRECISION; DECLARE pt DOUBLE PRECISION; DECLARE nm VARCHAR(32);
+BEGIN
+  SELECT FIRST 1 e.id, e.spec_time FROM ents e WHERE e.classname = 'bot' AND e.queued = 1 ORDER BY e.spec_time, e.id INTO b, bt;
+  SELECT IIF(p.spectator = 1, e.spec_time, NULL), p.name FROM player p JOIN ents e ON e.id = p.ent_id WHERE p.id = 1 INTO pt, nm;
+  IF (pt IS NOT NULL AND (b IS NULL OR pt <= bt)) THEN
+  BEGIN
+    UPDATE player p SET p.spectator = 0, p.follow_id = NULL WHERE p.id = 1;
+    EXECUTE PROCEDURE player_respawn;
+    EXECUTE PROCEDURE say(COALESCE(nm, 'Player') || ' entered the game');
+  END
+  ELSE IF (b IS NOT NULL) THEN
+  BEGIN
+    UPDATE ents e SET e.queued = 0, e.flags = BIN_AND(e.flags, BIN_NOT(64)) WHERE e.id = :b;
+    EXECUTE PROCEDURE bot_respawn(b);
+    EXECUTE PROCEDURE say((SELECT e.bot FROM ents e WHERE e.id = :b) || ' entered the game');
+  END
+END^
+
+-- CheckTournament, every tic of a tournament's match: two to play, pulled from the queue; with fewer,
+-- "waiting for players" (the countdown held off); with two, the countdown from scores of nothing
+CREATE OR ALTER PROCEDURE tourney_check
+AS
+DECLARE we DOUBLE PRECISION; DECLARE t DOUBLE PRECISION;
+BEGIN
+  t = now_();
+  -- a third come in (a bot added at the console): it waits its turn
+  WHILE (duelists() > 2 AND EXISTS (SELECT 1 FROM ents e WHERE e.classname = 'bot' AND e.queued = 0)) DO
+    EXECUTE PROCEDURE bot_to_queue((SELECT MAX(e.id) FROM ents e WHERE e.classname = 'bot' AND e.queued = 0));
+  IF (duelists() < 2) THEN EXECUTE PROCEDURE tourney_pull;
+  IF (duelists() < 2) THEN EXECUTE PROCEDURE tourney_pull;
+  SELECT g.warmup_end FROM game g WHERE g.id = 1 INTO we;
+  IF (duelists() < 2) THEN
+  BEGIN
+    -- (on the screen for as long as it waits, as CG_DrawWarmup draws it)
+    IF (we < 1e8) THEN UPDATE game g SET g.warmup_end = 1e9, g.warmup_said = 0 WHERE g.id = 1;
+    IF (NOT EXISTS (SELECT 1 FROM player p WHERE p.id = 1 AND p.cprint = 'Waiting for players' AND p.cprint_time > :t + 1)) THEN
+      EXECUTE PROCEDURE cprint('Waiting for players');
+    EXIT;
+  END
+  IF (we >= 1e8) THEN
+  BEGIN
+    -- both here (the warmup, then map_restart's clean slate): scores from nothing, "prepare to fight"
+    UPDATE game g SET g.warmup_end = :t + 4, g.warmup_said = 4, g.time_warnings = 0 WHERE g.id = 1;
+    UPDATE player p SET p.frags = 0, p.deaths = 0, p.lead_state = 1 WHERE p.id = 1;
+    UPDATE ents e SET e.frags = 0, e.deaths = 0 WHERE e.classname = 'bot';
+    EXECUTE PROCEDURE snd_local('sound/feedback/prepare.wav');
+    EXECUTE PROCEDURE cprint((SELECT LIST(TRIM(IIF(d.eid = player_ent(), (SELECT COALESCE(p.name, 'You') FROM player p WHERE p.id = 1), (SELECT e.bot FROM ents e WHERE e.id = d.eid))), ' vs ') FROM duel_ranked d));
+  END
+END^
+
+-- ExitLevel: the intermission is over. A tournament does not change the arena: RemoveTournamentLoser
+-- sends the second of the two to the back of the queue, and map_restart brings everything back for
+-- the next duel (the next in the queue is pulled in by tourney_check); the rest go to the next map
+CREATE OR ALTER PROCEDURE exit_level
+AS
+DECLARE loser INTEGER; DECLARE pe INTEGER; DECLARE b INTEGER;
+BEGIN
+  IF ((SELECT g.gametype FROM game g WHERE g.id = 1) <> 1) THEN
+  BEGIN
+    UPDATE game g SET g.exit_kind = 1 WHERE g.id = 1;
+    EXIT;
+  END
+  IF (NOT EXISTS (SELECT 1 FROM game g WHERE g.id = 1 AND g.match_over = 1)) THEN EXIT;
+  pe = player_ent();
+  SELECT FIRST 1 SKIP 1 d.eid FROM duel_ranked d INTO loser;
+  IF (loser = pe) THEN
+  BEGIN
+    EXECUTE PROCEDURE make_spectator;
+    UPDATE ents e SET e.spec_time = now_() WHERE e.id = :pe;
+    EXECUTE PROCEDURE say((SELECT COALESCE(p.name, 'Player') FROM player p WHERE p.id = 1) || ' joined the spectators.');
+  END
+  ELSE IF (loser IS NOT NULL) THEN EXECUTE PROCEDURE bot_to_queue(loser);
+  -- map_restart: the items back, nothing in flight, the scores cleared by the next countdown
+  UPDATE game g SET g.match_over = 0, g.winner = NULL, g.over_time = 0, g.exit_kind = 0, g.time_warnings = 0,
+         g.warmup_end = 1e9, g.warmup_said = 0 WHERE g.id = 1;
+  UPDATE ents e SET e.nextthink = now_() WHERE e.think = 'item_respawn';
+  DELETE FROM ents e WHERE e.classname IN ('rocket', 'grenade', 'plasma', 'bfg');
+  -- whoever stays back in the arena at a spawn point; the spectating player back to the spectators' place
+  IF ((SELECT p.spectator FROM player p WHERE p.id = 1) = 1) THEN EXECUTE PROCEDURE make_spectator;
+  ELSE EXECUTE PROCEDURE player_respawn;
+  FOR SELECT e.id FROM ents e WHERE e.classname = 'bot' AND e.queued = 0 INTO b DO EXECUTE PROCEDURE bot_respawn(b);
+END^
+
 -- ── scoring and the announcer ────────────────────────────────────────────
 -- ── the end of a match ───────────────────────────────────────────────────
 -- BeginIntermission, FindIntermissionPoint and MoveClientToIntermission: the view goes to the map's
@@ -880,6 +1001,12 @@ BEGIN
   UPDATE game g SET g.match_over = 1, g.winner = :wname, g.over_time = :t, g.next_map = COALESCE(:nm, :cur) WHERE g.id = 1;
   EXECUTE PROCEDURE cprint(IIF(wname = 'You', 'You win!', wname || ' wins'));
   EXECUTE PROCEDURE snd_local(IIF(wname = 'You' OR wname = (SELECT IIF(e.pteam = 1, 'Red team', 'Blue team') FROM ents e WHERE e.id = player_ent() AND e.pteam > 0), 'music/win.wav', 'music/loss.wav'));
+  -- AdjustTournamentScores: a win for the first of the two, a loss for the second
+  IF ((SELECT g.gametype FROM game g WHERE g.id = 1) = 1) THEN
+  BEGIN
+    UPDATE ents e SET e.wins = e.wins + 1 WHERE e.id = (SELECT FIRST 1 d.eid FROM duel_ranked d);
+    UPDATE ents e SET e.losses = e.losses + 1 WHERE e.id = (SELECT FIRST 1 SKIP 1 d.eid FROM duel_ranked d);
+  END
   EXECUTE PROCEDURE begin_intermission;
   -- the bots have their say about it (BotChat_EndLevel)
   FOR SELECT e.id FROM ents e WHERE e.classname = 'bot' ORDER BY e.id INTO b DO EXECUTE PROCEDURE bot_chat_event(b, 'level_end', NULL, 0);
@@ -898,8 +1025,14 @@ BEGIN
     INTO t, tl, mo, warn, ot, ek, we, ws;
   IF (mo = 1) THEN
   BEGIN
-    IF (ek = 0 AND t > ot + 30) THEN UPDATE game g SET g.exit_kind = 1 WHERE g.id = 1;
+    IF (ek = 0 AND t > ot + 30) THEN EXECUTE PROCEDURE exit_level;
     EXIT;
+  END
+  IF ((SELECT g.gametype FROM game g WHERE g.id = 1) = 1) THEN
+  BEGIN
+    EXECUTE PROCEDURE tourney_check;
+    SELECT g.warmup_end, g.warmup_said FROM game g WHERE g.id = 1 INTO we, ws;
+    IF (we >= 1e8) THEN EXIT;
   END
   -- the countdown (CG_DrawWarmup, CG_MapRestart): three, two, one, and "fight!"
   IF (ws > 0) THEN
@@ -945,9 +1078,9 @@ BEGIN
   ELSE IF (t >= tl * 60) THEN
   BEGIN
     SELECT IIF(p.spectator = 1, -1000000, p.frags) FROM player p WHERE p.id = 1 INTO pf;   -- a spectator is not ranked
-    SELECT MAX(e.frags) FROM ents e WHERE e.classname = 'bot' INTO bf;
+    SELECT MAX(e.frags) FROM ents e WHERE e.classname = 'bot' AND e.queued = 0 INTO bf;
     top = MAXVALUE(pf, COALESCE(bf, pf));
-    n = IIF(pf = top, 1, 0) + (SELECT COUNT(*) FROM ents e WHERE e.classname = 'bot' AND e.frags = :top);
+    n = IIF(pf = top, 1, 0) + (SELECT COUNT(*) FROM ents e WHERE e.classname = 'bot' AND e.queued = 0 AND e.frags = :top);
     IF (n > 1) THEN
     BEGIN
       -- ScoreIsTied: play on, the next frag at the top wins
@@ -960,7 +1093,7 @@ BEGIN
     END
     ELSE
     BEGIN
-      IF (pf = top) THEN wname = 'You'; ELSE SELECT FIRST 1 e.bot FROM ents e WHERE e.classname = 'bot' ORDER BY e.frags DESC INTO wname;
+      IF (pf = top) THEN wname = 'You'; ELSE SELECT FIRST 1 e.bot FROM ents e WHERE e.classname = 'bot' AND e.queued = 0 ORDER BY e.frags DESC INTO wname;
       EXECUTE PROCEDURE sprint('Timelimit hit.');
       EXECUTE PROCEDURE end_match(wname);
     END
@@ -1046,10 +1179,10 @@ BEGIN
     EXIT;
   END
   -- the lead
-  SELECT p.frags, p.lead_state FROM player p WHERE p.id = 1 INTO pf, oldlead;
-  SELECT COALESCE(MAX(e.frags), 0) FROM ents e WHERE e.classname = 'bot' INTO bf;
+  SELECT IIF(p.spectator = 1, -1000000, p.frags), p.lead_state FROM player p WHERE p.id = 1 INTO pf, oldlead;
+  SELECT COALESCE(MAX(e.frags), 0) FROM ents e WHERE e.classname = 'bot' AND e.queued = 0 INTO bf;
   lead = IIF(pf > bf, 2, IIF(pf = bf, 1, 0));
-  IF (lead <> oldlead AND (attacker = pe OR victim = pe OR oldlead = 2 OR lead = 2)) THEN
+  IF (lead <> oldlead AND pf > -1000000 AND (attacker = pe OR victim = pe OR oldlead = 2 OR lead = 2)) THEN
   BEGIN
     UPDATE player p SET p.lead_state = :lead WHERE p.id = 1;
     EXECUTE PROCEDURE snd_local(CASE lead WHEN 2 THEN 'sound/feedback/takenlead.wav' WHEN 1 THEN 'sound/feedback/tiedlead.wav' ELSE 'sound/feedback/lostlead.wav' END);
@@ -1061,7 +1194,7 @@ BEGIN
     EXECUTE PROCEDURE snd_local(CASE left_ WHEN 1 THEN 'sound/feedback/1_frag.wav' WHEN 2 THEN 'sound/feedback/2_frags.wav' ELSE 'sound/feedback/3_frags.wav' END);
   IF (lim > 0 AND top >= lim) THEN
   BEGIN
-    IF (pf >= lim) THEN wname = 'You'; ELSE SELECT FIRST 1 e.bot FROM ents e WHERE e.classname = 'bot' ORDER BY e.frags DESC INTO wname;
+    IF (pf >= lim) THEN wname = 'You'; ELSE SELECT FIRST 1 e.bot FROM ents e WHERE e.classname = 'bot' AND e.queued = 0 ORDER BY e.frags DESC INTO wname;
     EXECUTE PROCEDURE sprint('Fraglimit hit.');
     EXECUTE PROCEDURE end_match(wname);
   END
@@ -1418,7 +1551,7 @@ BEGIN
          MAXVALUE(0, p.quad_finished - g.time_), MAXVALUE(0, p.haste_finished - g.time_), MAXVALUE(0, p.invis_finished - g.time_), MAXVALUE(0, p.regen_finished - g.time_),
          MAXVALUE(0, p.enviro_finished - g.time_), MAXVALUE(0, p.flight_finished - g.time_), p.holdable,
          e.leaf, e.cluster, g.match_over, g.winner, p.land_time, IIF(p.follow_id IS NULL, p.onground, IIF(BIN_AND(e.flags, 512) <> 0, 1, 0)), p.move_speed, p.weapon_sound,
-         (SELECT COALESCE(MAX(b.frags), 0) FROM ents b WHERE b.classname = 'bot'), p.ducked, g.fraglimit, g.timelimit, g.over_time, g.next_map,
+         (SELECT COALESCE(MAX(b.frags), 0) FROM ents b WHERE b.classname = 'bot' AND b.queued = 0), p.ducked, g.fraglimit, g.timelimit, g.over_time, g.next_map,
          p.dmg_z, p.dmg_world, p.land_change, e.vx, e.vy, g.warmup_end, e.award, e.award_time, e.n_excellent, e.n_impressive, e.n_gauntlet, p.spectator, IIF(p.follow_id IS NULL, NULL, e.bot),
          p.mover_yaw / :tics, g.gametype, g.red_score, g.blue_score, (SELECT o.pteam FROM ents o WHERE o.id = p.ent_id)
     FROM game g CROSS JOIN player p JOIN ents e ON e.id = COALESCE(p.follow_id, p.ent_id)   -- following: the one followed
@@ -1433,14 +1566,18 @@ END^
 
 -- the scoreboard: the player and the bots by frags
 CREATE OR ALTER PROCEDURE scoreboard
-RETURNS (name VARCHAR(32), frags INTEGER, deaths INTEGER, is_player SMALLINT, team SMALLINT)
+RETURNS (name VARCHAR(32), frags INTEGER, deaths INTEGER, is_player SMALLINT, team SMALLINT, wins SMALLINT, losses SMALLINT)
 AS
+DECLARE st DOUBLE PRECISION;
 BEGIN
-  FOR SELECT x.name, x.frags, x.deaths, x.is_player, x.team FROM (
-        SELECT 'You' AS name, p.frags, p.deaths, 1 AS is_player, COALESCE((SELECT e.pteam FROM ents e WHERE e.id = p.ent_id), 0) AS team FROM player p WHERE p.id = 1
+  -- (a tournament's spectators, the queue, are team 3 (TEAM_SPECTATOR), in the order they will play)
+  FOR SELECT x.name, x.frags, x.deaths, x.is_player, x.team, x.wins, x.losses, x.spec_time FROM (
+        SELECT 'You' AS name, p.frags, p.deaths, 1 AS is_player,
+               IIF(p.spectator = 1 AND g.gametype = 1, 3, COALESCE(e.pteam, 0)) AS team, e.wins, e.losses, e.spec_time
+          FROM player p CROSS JOIN game g LEFT JOIN ents e ON e.id = p.ent_id WHERE p.id = 1 AND g.id = 1
         UNION ALL
-        SELECT e.bot, e.frags, e.deaths, 0, e.pteam FROM ents e WHERE e.classname = 'bot') x
-      ORDER BY x.team, x.frags DESC, x.deaths INTO name, frags, deaths, is_player, team DO SUSPEND;
+        SELECT e.bot, e.frags, e.deaths, 0, IIF(e.queued = 1, 3, e.pteam), e.wins, e.losses, e.spec_time FROM ents e WHERE e.classname = 'bot') x
+      ORDER BY x.team, IIF(x.team = 3, x.spec_time, -x.frags), x.deaths INTO name, frags, deaths, is_player, team, wins, losses, st DO SUSPEND;
 END^
 
 -- G_InitGame + ClientBegin: the map's entities, the player and the bots
@@ -1455,7 +1592,7 @@ BEGIN
          g.fraglimit = COALESCE(:fraglimit, 20), g.timelimit = COALESCE(:timelimit, 0), g.time_warnings = 0,
          g.warmup_end = COALESCE(:warmup, 0), g.warmup_said = IIF(COALESCE(:warmup, 0) > 0, 4, 0),
          g.has_water = IIF(EXISTS (SELECT 1 FROM brushes b WHERE BIN_AND(b.contents, 32) <> 0), 1, 0),
-         g.gametype = IIF(COALESCE(:gametype, 0) >= 3, 3, 0), g.red_score = 0, g.blue_score = 0, g.team_lead = 0 WHERE g.id = 1;
+         g.gametype = IIF(COALESCE(:gametype, 0) >= 3, 3, IIF(:gametype = 1, 1, 0)), g.red_score = 0, g.blue_score = 0, g.team_lead = 0 WHERE g.id = 1;
   -- the sky: the first sky shader the map's faces use
   SELECT FIRST 1 t.name FROM textures t WHERE BIN_AND(t.flags, 4) <> 0 INTO skyname;
   UPDATE game g SET g.sky = :skyname WHERE g.id = 1;
@@ -1482,11 +1619,29 @@ BEGIN
     EXECUTE PROCEDURE spawn_bot(b) RETURNING_VALUES pe;
     i = i + 1;
   END
+  -- a tournament: the first two to come play, the others are spectators in the order they came (a
+  -- spectating player last); CheckTournament starts the countdown
+  IF (COALESCE(gametype, 0) = 1) THEN
+  BEGIN
+    i = (SELECT IIF(p.spectator = 1, 0, 1) FROM player p WHERE p.id = 1);
+    FOR SELECT e.id FROM ents e WHERE e.classname = 'bot' ORDER BY e.id INTO pe DO
+    BEGIN
+      IF (i >= 2) THEN
+      BEGIN
+        EXECUTE PROCEDURE bot_to_queue(pe);
+        UPDATE ents e SET e.spec_time = now_() + :i * 0.001e0 WHERE e.id = :pe;
+      END
+      i = i + 1;
+    END
+    UPDATE ents e SET e.spec_time = now_() + 1 WHERE e.id = player_ent() AND (SELECT p.spectator FROM player p WHERE p.id = 1) = 1;
+    UPDATE game g SET g.warmup_end = 1e9, g.warmup_said = 0 WHERE g.id = 1;
+  END
   -- the bots' greetings (BotChat_StartLevel)
   FOR SELECT e.id FROM ents e WHERE e.classname = 'bot' ORDER BY e.id INTO pe DO EXECUTE PROCEDURE bot_chat_event(pe, 'level_start', NULL, 0);
   -- the level name, and "fight"
   UPDATE player p SET p.cprint = (SELECT g.level_msg FROM game g WHERE g.id = 1), p.cprint_time = 3 WHERE p.id = 1;
-  EXECUTE PROCEDURE snd_local(IIF(COALESCE(warmup, 0) > 0, 'sound/feedback/prepare.wav', 'sound/feedback/fight.wav'));   -- "prepare to fight", or straight in
+  IF (COALESCE(gametype, 0) <> 1) THEN   -- (a tournament's countdown says it when its two are there)
+    EXECUTE PROCEDURE snd_local(IIF(COALESCE(warmup, 0) > 0, 'sound/feedback/prepare.wav', 'sound/feedback/fight.wav'));   -- "prepare to fight", or straight in
 END^
 
 SET TERM ; ^

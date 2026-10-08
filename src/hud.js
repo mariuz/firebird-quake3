@@ -182,6 +182,11 @@ export class Hud {
     if (hud.GAMETYPE >= 3) {
       const head = (tm, name, score) => [`${name} ${score ?? 0}`, '', '', 0, tm, true];
       rows = [head(1, 'Red', hud.RED_SCORE), ...rows.filter((x) => x[4] === 1), head(2, 'Blue', hud.BLUE_SCORE), ...rows.filter((x) => x[4] === 2)];
+    } else if (hud.GAMETYPE === 1) {
+      // a tournament: the two with their frags and wins-losses, then the queue, next first
+      const wl = (x) => [x[0], x[1], `${x[5] ?? 0}-${x[6] ?? 0}`, x[3], x[4]];
+      const queue = rows.filter((x) => x[4] === 3);
+      rows = [...rows.filter((x) => x[4] !== 3).map(wl), ...(queue.length ? [['Waiting', '', '', 0, 3, true], ...queue.map((x) => [x[0], '', `${x[5] ?? 0}-${x[6] ?? 0}`, x[3], 3])] : [])];
     }
     const bw = Math.round(300 * k), bh = (rows.length + 2) * (cs + 4) + cs;
     const bx = (r.w - bw) >> 1, by = Math.round(r.h * 0.2);
@@ -192,8 +197,8 @@ export class Hud {
     let y = by + cs + 10;
     for (const [name, frags, deaths, isPlayer, team, isHead] of rows) {
       if (isHead) {
-        r.fillRect(bx + 4, y - 2, bw - 8, cs + 4, team === 1 ? 0xff2020a0 : 0xffa04020, 0.5);
-        r.drawString(this.font, String(name), bx + 8, y, cs, team === 1 ? [1, 0.4, 0.4] : [0.5, 0.6, 1]);
+        r.fillRect(bx + 4, y - 2, bw - 8, cs + 4, team === 1 ? 0xff2020a0 : team === 2 ? 0xffa04020 : 0xff404040, 0.5);
+        r.drawString(this.font, String(name), bx + 8, y, cs, team === 1 ? [1, 0.4, 0.4] : team === 2 ? [0.5, 0.6, 1] : [0.8, 0.8, 0.8]);
         y += cs + 4;
         continue;
       }

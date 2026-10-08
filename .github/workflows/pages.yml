@@ -67,6 +67,9 @@ jobs:
       - name: Team deathmatch
         run: npm run test:team
 
+      - name: Tournament
+        run: npm run test:tourney
+
       - name: Headless screenshots
         run: npm run screenshots
 

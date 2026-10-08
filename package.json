@@ -21,7 +21,8 @@
     "test:dm17": "node scripts/sql-smoke.mjs q3dm17",
     "test:view": "node scripts/view-test.mjs",
     "test:pmove": "node scripts/pmove-test.mjs",
-    "test:team": "node scripts/team-test.mjs"
+    "test:team": "node scripts/team-test.mjs",
+    "test:tourney": "node scripts/tourney-test.mjs"
   },
   "license": "MIT",
   "dependencies": {

@@ -478,8 +478,13 @@ BEGIN
   BEGIN
     IF (EXISTS (SELECT 1 FROM ents e WHERE e.id = :pe AND e.deadflag = 0 AND e.health > 0)) THEN EXECUTE PROCEDURE player_die(pe, 20);
     EXECUTE PROCEDURE make_spectator;
+    UPDATE ents e SET e.spec_time = now_() WHERE e.id = :pe;
     EXECUTE PROCEDURE say(nm || ' joined the spectators.');
   END
+  ELSE IF (on_ = 0 AND spec = 1 AND (SELECT g.gametype FROM game g WHERE g.id = 1) = 1
+           AND (SELECT COUNT(*) FROM ents e WHERE e.classname = 'bot' AND e.queued = 0) >= 2) THEN
+    -- a tournament with its two: the player waits in the queue (CheckTournament pulls the longest waiting)
+    EXECUTE PROCEDURE sprint('Waiting to play');
   ELSE IF (on_ = 0 AND spec = 1) THEN
   BEGIN
     UPDATE player p SET p.spectator = 0, p.follow_id = NULL WHERE p.id = 1;
@@ -494,8 +499,8 @@ AS
 DECLARE cur INTEGER; DECLARE nxt INTEGER; DECLARE nm VARCHAR(16);
 BEGIN
   SELECT p.follow_id FROM player p WHERE p.id = 1 INTO cur;
-  SELECT FIRST 1 e.id, e.bot FROM ents e WHERE e.classname = 'bot' AND e.id > COALESCE(:cur, 0) ORDER BY e.id INTO nxt, nm;
-  IF (nxt IS NULL) THEN SELECT FIRST 1 e.id, e.bot FROM ents e WHERE e.classname = 'bot' ORDER BY e.id INTO nxt, nm;
+  SELECT FIRST 1 e.id, e.bot FROM ents e WHERE e.classname = 'bot' AND e.queued = 0 AND e.id > COALESCE(:cur, 0) ORDER BY e.id INTO nxt, nm;
+  IF (nxt IS NULL) THEN SELECT FIRST 1 e.id, e.bot FROM ents e WHERE e.classname = 'bot' AND e.queued = 0 ORDER BY e.id INTO nxt, nm;
   IF (nxt IS NULL) THEN EXIT;
   UPDATE player p SET p.follow_id = :nxt WHERE p.id = 1;
 END^
@@ -559,7 +564,7 @@ BEGIN
     EXECUTE PROCEDURE toss_move(pe, dt);
     IF (t > deadt + 1.7e0 AND (fire = 1 OR jump = 1)) THEN
     BEGIN
-      IF (match_done = 1) THEN UPDATE game g SET g.exit_kind = 1 WHERE g.id = 1;
+      IF (match_done = 1) THEN EXECUTE PROCEDURE exit_level;
       ELSE EXECUTE PROCEDURE player_respawn;
     END
     EXIT;
@@ -567,7 +572,7 @@ BEGIN
   IF (match_done = 1) THEN
   BEGIN
     -- CheckIntermissionExit: never in less than five seconds, then as soon as the player is ready
-    IF (fire = 1 AND t > (SELECT g.over_time FROM game g WHERE g.id = 1) + 5) THEN UPDATE game g SET g.exit_kind = 1 WHERE g.id = 1;
+    IF (fire = 1 AND t > (SELECT g.over_time FROM game g WHERE g.id = 1) + 5) THEN EXECUTE PROCEDURE exit_level;
     EXIT;
   END
 
