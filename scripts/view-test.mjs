@@ -6,7 +6,7 @@
 //   node scripts/view-test.mjs
 
 import fs from 'node:fs';
-import { FrameState, firstPersonView, zoomedFov, fovY, mapTorsoToWeaponFrame, viewTorsoFrame, underwaterFov, sceneLights, litByDlights, MAX_DLIGHTS, findPortals, portalView, portalFade, perpendicular, floorBelow, drawShadows } from '../src/scene.js';
+import { FrameState, firstPersonView, zoomedFov, fovY, mapTorsoToWeaponFrame, viewTorsoFrame, underwaterFov, sceneLights, litByDlights, MAX_DLIGHTS, drawRail, drawBolt, findPortals, portalView, portalFade, perpendicular, floorBelow, drawShadows } from '../src/scene.js';
 import { tagTransform, autospriteQuads, fogST, fogFactor } from '../src/renderer.js';
 import { parseDeform, waveValue, deformVertex, envTexCoords, parseShaderScript, surfaceLook } from '../src/shader.js';
 import { Md3, parseAnimationCfg } from '../src/md3.js';
@@ -290,6 +290,24 @@ const markBsp = {
   assert(drawn.length === 2 && drawn.every((d) => d.img === 'gfx/damage/shadow' && d.blend === 'subtract') && drawn[0].k > drawn[1].k && Math.abs(drawn[0].k - (1 - 24 / 128)) < 0.02,
     `a shadow under each player, darker for the one on the ground (${drawn.map((d) => d.k.toFixed(2)).join(', ')})`);
   assert(st.marks.length === 0, 'and they are not kept as marks');
+}
+
+// the rail (cg_oldRail 1: RB_SurfaceRailCore and the rings of DoRailDiscs) and the lightning (four ribbons, two stages)
+{
+  const st = new FrameState();
+  const calls = [];
+  const r = { drawMark: (pts, stc, n, img, blend, color) => calls.push({ img, blend, k: color[0] }), spawnParticles() {} };
+  st.handleFx(r, [[0, 4, 0, 0, 40, 320, 0, 40, 0], [0, 12, 0, 50, 40, 200, 50, 40, 0]], 10);
+  const [rail, bolt] = st.beams;
+  assert(rail.kind === 'rail' && bolt.kind === 'bolt' && rail.a[2] === 32 && Math.abs(rail.until - 10.4) < 1e-6, 'a rail shot lasts 0.4 s, nudged 8 down; a lightning beam its tic');
+  const view = { x: 0, y: -200, z: 40 };
+  drawRail(r, view, rail, 10);
+  const discs = calls.filter((c) => c.img === 'gfx/misc/raildisc_mono2').length, cores = calls.filter((c) => c.img === 'gfx/misc/railcorethin_mono');
+  assert(cores.length === 1 && discs === 320 / 32 - 1 && calls.every((c) => c.blend === 'add'), `a 320-unit rail: its core and a ring every 32 units but the last (${discs})`);
+  calls.length = 0; drawRail(r, view, rail, 10.3);
+  assert(Math.abs(calls[0].k - 0.375 * 0.25) < 1e-6, `three quarters through, a quarter of its colour is left (${calls[0].k.toFixed(3)})`);
+  calls.length = 0; drawBolt(r, view, bolt, 10);
+  assert(calls.length === 8 && calls.every((c) => c.img === 'gfx/misc/lightning3'), 'the lightning: four ribbons, each in two stages');
 }
 
 // and the hand model really carries the gun down on those frames (with the pak, when it is there)

@@ -50,7 +50,7 @@ the order a player notices them on the demo maps:
 | **Entity shadows, the rest** | the stencil shadows (`cg_shadows 2`) and the projected ones (3); the blob is traced down by a point, not the 30-unit box | `scene.js` `drawShadows` |
 | **MD3 LOD** | `_1.md3`, `_2.md3` picked by screen size | `md3.js`/`loader.js`; the demo models have them |
 | **Curved surface LOD** | `r_lodCurveError` | the patches are tessellated once at level 4 |
-| **Lightning bolt and rail rings** | the LG's beam shader, the rail's spiral and core | the port draws a textured beam for both |
+| **Rail and lightning, the rest** | each shooter's `color1` for the rail (one colour here); `cg_oldRail 0`'s particle spiral; the lightning's impact flash model and its beam bending with the shooter's aim between tics | `scene.js` `drawRail`, `drawBolt` |
 | **Texture quality** | trilinear/anisotropic filtering, `r_picmip` | the WebGL painter samples the mip chain nearest; the software one picks one mip per polygon |
 | **Cinematics** | RoQ videos on `videoMap` surfaces and the intro | none |
 | **2D** | the full menu and HUD art (`gfx/2d/*`) with the `bigchars` font | the status bar, numbers, icons and the console font are drawn; menus are not |
@@ -149,7 +149,8 @@ and `deformVertexes wave` and `move` (the lava, the banners, the bobbing lamps);
 and `fogparms`: q3dm7's red pit and orange ground fog, q3tourney2's hell fogs) as `RB_CalcFogTexCoords` and
 `R_FogFactor` have them; the portal (q3dm7's teleporter shows its camera's view, `R_MirrorViewBySurface`, fogged
 over in 256 units by `alphaGen portal`); the blob shadow under every player and under the player itself
-(`CG_PlayerShadow`, `cg_shadows 1`);
+(`CG_PlayerShadow`, `cg_shadows 1`); the rail's core and rings (`cg_oldRail 1`) fading over 400 ms and the lightning
+gun's four crossed ribbons;
 lightmaps with the overbright
 shift, the light grid for models, sky cloud layers, blend/add/filter surfaces, scroll/scale/turb
 tcMods, animMap, two-sided surfaces; the software and WebGL painters; positional sound, loops,

@@ -693,6 +693,16 @@ it per pixel (the groups are split by fog too); the software painter draws each 
 (`fogFace`) with s and t where the lightmap coordinates go and blends the pixels that face left on top.
 A fog surface without stages of its own (`fog_intel`) is not drawn; it was a checkerboard before.
 
+*The rail and the lightning* are the renderer's own surfaces (tr_surface.c), drawn as quads through
+`drawMark`. A rail shot (effect 4) is `CG_RailTrail` with `cg_oldRail 1`: nudged 8 units down, for
+`cg_railTrailTime` (400 ms) fading to nothing, a core (`RB_SurfaceRailCore`: 6 either side of the line,
+turned to the eye, `railcorethin_mono` scrolling) and rings (`DoRailDiscs`: a disc every 32 units but
+the last, its corners 4 out at 45 + 90 i degrees around the line, `raildisc_mono2` turning 30 degrees a
+second), in one colour where Quake III takes the shooter's `color1`. A lightning beam (effect 12, a
+tic long) is `RB_SurfaceLightningBolt`: four ribbons 8 either side, the first facing the eye, each turned
+45 degrees about the line, each in `lightningBolt`'s two stages (scrolling at 5 and 7.2, the second
+mirrored, pulsing at 7.1 and 8.1 a second). `drawRail` and `drawBolt` in `src/scene.js`.
+
 *Shadows* are `CG_PlayerShadow`'s blobs (`cg_shadows 1`): for every player model in the frame and for
 the player itself, `floorBelow` steps a point down through the brushes (`Bsp.pointContents`, solid and
 player clip) for the floor within 128 units, and `drawShadows` lays the 24-unit `markShadow` there

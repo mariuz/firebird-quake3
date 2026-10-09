@@ -159,6 +159,73 @@ export function litByDlights(light, x, y, z, lights) {
   return { ...light, directed, dir: [dir[0] / n, dir[1] / n, dir[2] / n] };
 }
 
+// ── the rail and the lightning (tr_surface.c: RB_SurfaceRailCore, RB_SurfaceRailRings, RB_SurfaceLightningBolt) ──
+// cg_railTrailTime 400; r_railCoreWidth 6, r_railWidth 16, r_railSegmentLength 32; the colour is the shooter's
+// color1 times 0.75 in Quake III (one colour for all here), fading to nothing (LE_FADE_RGB)
+const RAIL_TIME = 0.4, RAIL_CORE_WIDTH = 6, RAIL_WIDTH = 16, RAIL_SEGMENT = 32, RAIL_COLOR = [0.375, 0.56, 0.75];
+const quadSt = (t0, t1) => Float32Array.of(t0, 0, t0, 1, t1, 1, t1, 0);
+/** DoRailCore: a ribbon from a to b spanWidth either side along `right`, its texture t = length / 256 long */
+function railCore(a, b, right, w) {
+  return Float32Array.of(a[0] + right[0] * w, a[1] + right[1] * w, a[2] + right[2] * w, a[0] - right[0] * w, a[1] - right[1] * w, a[2] - right[2] * w,
+    b[0] - right[0] * w, b[1] - right[1] * w, b[2] - right[2] * w, b[0] + right[0] * w, b[1] + right[1] * w, b[2] + right[2] * w);
+}
+/** the side that faces the eye: the cross of the eye's lines to both ends */
+function beamRight(view, a, b) {
+  const v1 = norm3(sub3(a, [view.x, view.y, view.z])), v2 = norm3(sub3(b, [view.x, view.y, view.z]));
+  return norm3(cross3(v1, v2));
+}
+export function drawRail(r, view, b, time) {
+  const k = Math.max(0, 1 - (time - b.t0) / RAIL_TIME), col = [RAIL_COLOR[0] * k, RAIL_COLOR[1] * k, RAIL_COLOR[2] * k, 1];
+  const d = sub3(b.b, b.a), len = Math.hypot(d[0], d[1], d[2]);
+  if (!(len > 0) || k <= 0) return;
+  const dir = [d[0] / len, d[1] / len, d[2] / len];
+  // the core: railCore, scrolling once a second
+  const s0 = time * 1;
+  r.drawMark(railCore(b.a, b.b, beamRight(view, b.a, b.b), RAIL_CORE_WIDTH), quadSt(s0, s0 + len / 256), 4, 'gfx/misc/railcorethin_mono', 'add', col);
+  // the rings (DoRailDiscs): a disc every 32 units, its four corners at 45 + 90 i degrees, 4 out (a quarter of
+  // r_railWidth), the first a segment in on a long shot; railDisc's texture turning 30 degrees a second
+  let segs = Math.floor(len / RAIL_SEGMENT);
+  if (segs > 1) segs--;
+  if (!segs) return;
+  // MakeNormalVectors
+  let right = [dir[2], -dir[0], dir[1]];
+  const dd = dot3(right, dir);
+  right = norm3([right[0] - dd * dir[0], right[1] - dd * dir[1], right[2] - dd * dir[2]]);
+  const up = cross3(right, dir);
+  const step = dir.map((v) => v * RAIL_SEGMENT), radius = RAIL_WIDTH * 0.25;
+  const corners = [0, 1, 2, 3].map((i) => {
+    const a = ((45 + i * 90) * Math.PI) / 180, c = Math.cos(a), s = Math.sin(a);
+    return [0, 1, 2].map((k2) => b.a[k2] + (right[k2] * c + up[k2] * s) * radius + (segs > 1 ? step[k2] : 0));
+  });
+  const ang = (-30 * time * Math.PI) / 180, ca = Math.cos(ang), sa = Math.sin(ang);
+  const rot = (s, t) => [0.5 + (s - 0.5) * ca - (t - 0.5) * sa, 0.5 + (s - 0.5) * sa + (t - 0.5) * ca];
+  const st = Float32Array.from([[1, 0], [1, 1], [0, 1], [0, 0]].flatMap(([s, t]) => rot(s, t)));
+  for (let i = 0; i < segs; i++) {
+    const pts = new Float32Array(12);
+    corners.forEach((p, j) => pts.set([p[0] + step[0] * i, p[1] + step[1] * i, p[2] + step[2] * i], j * 3));
+    r.drawMark(pts, st, 4, 'gfx/misc/raildisc_mono2', 'add', col);
+  }
+}
+/** RB_SurfaceLightningBolt: four ribbons 8 either side, the first facing the eye, each turned 45 degrees about
+ *  the beam; lightningBolt's two stages (scrolling at 5 and 7.2, pulsing at 7.1 and 8.1 a second) */
+export function drawBolt(r, view, b, time) {
+  const d = sub3(b.b, b.a), len = Math.hypot(d[0], d[1], d[2]);
+  if (!(len > 0)) return;
+  const dir = [d[0] / len, d[1] / len, d[2] / len];
+  let right = beamRight(view, b.a, b.b);
+  const t = len / 256;
+  const wave = (amp, freq) => Math.min(1, 1 + amp * Math.sin(time * freq * 2 * Math.PI));
+  const g1 = wave(0.5, 7.1), g2 = wave(0.8, 8.1);
+  const st1 = Float32Array.of(-5 * time, 0, -5 * time, 1, t * 2 - 5 * time, 1, t * 2 - 5 * time, 0);
+  const st2 = Float32Array.of(-7.2 * time, 0, -7.2 * time, -1, -1.3 * t - 7.2 * time, -1, -1.3 * t - 7.2 * time, 0);
+  for (let i = 0; i < 4; i++) {
+    const pts = railCore(b.a, b.b, right, 8);
+    r.drawMark(pts, st1, 4, 'gfx/misc/lightning3', 'add', [g1, g1, g1, 1]);
+    r.drawMark(pts, st2, 4, 'gfx/misc/lightning3', 'add', [g2, g2, g2, 1]);
+    right = rotateAround(dir, right, 45);
+  }
+}
+
 // CG_PlayerShadow: the trace down is 128 units, against what stops a player
 const SHADOW_DISTANCE = 128, SHADOW_MASK = 1 | 0x10000;
 
@@ -231,7 +298,7 @@ export class FrameState {
   constructor() {
     this.brushAngles = new Map();
     this.explosions = [];     // { x, y, z, t0, frames, size, dur, blend }
-    this.beams = [];          // { a, b, until, img, width, scroll }
+    this.beams = [];          // { kind: 'rail' | 'bolt', a, b, t0, until, owner }
     this.messages = [];       // [{ id, time, text }]
     this.kick = { dmgSeen: null, at: -1e9, pitch: 0, roll: 0, bob: 0 };   // the first-person view's state
     this.bubbles = [];        // { p: [x, y, z], v: [vx, vy, vz], t0, dur } (CG_BubbleTrail's local entities)
@@ -437,12 +504,13 @@ export class FrameState {
         case 2: case 9: renderer.spawnParticles('explosion', x, y, z, 0); this.explosions.push({ x, y, z, t0: time, frames: RLBOOM, size: kind === 2 ? 72 : 56, dur: 0.6, blend: 'add', light: DL_BOOM }); mark('gfx/damage/burn_med_mrk', 64); break;
         case 8: renderer.spawnParticles('explosion', x, y, z, 0); this.explosions.push({ x, y, z, t0: time, frames: RLBOOM, size: 120, dur: 0.8, blend: 'add' }); mark('gfx/damage/burn_med_mrk', 32); break;
         case 3: renderer.spawnParticles('blood', x, y, z, Math.min(n, 30), [0, 0, 0], 0xff1010c0); this.explosions.push({ x, y, z, t0: time, frames: BLOOD, size: 24, dur: 0.4, blend: 'blend' }); break;
-        case 4: renderer.spawnParticles('rail', x, y, z, 0, [x2, y2, z2]); this.beams.push({ a: [x, y, z], b: [x2, y2, z2], until: time + 0.8, img: 'gfx/misc/railcorethin_mono', width: 4, scroll: 0 }); break;
+        // CG_RailTrail (cg_oldRail 1): the core and the rings, nudged 8 down, fading for cg_railTrailTime
+        case 4: this.beams.push({ kind: 'rail', a: [x, y, z - 8], b: [x2, y2, z2 - 8], t0: time, until: time + RAIL_TIME }); break;
         case 5: renderer.spawnParticles('teleport', x, y, z, 0); this.explosions.push({ x, y, z, t0: time, frames: ['gfx/misc/teleportEffect2'], size: 48, dur: 0.5, blend: 'add' }); break;
         case 6: this.explosions.push({ x, y, z, t0: time, frames: ['models/weaphits/plasmaboom'], size: 24, dur: 0.25, blend: 'add' }); mark('gfx/damage/plasma_mrk', 16, 'blend', [1, 1, 1], true); break;
         // a mark alone: the rail's (the energy mark in the rail's colour), a gib's blood (16 to 47 across)
         case 16: if (n === 64) mark('gfx/damage/plasma_mrk', 24, 'blend', [0.5, 0.75, 1], true); else mark('gfx/damage/blood_stain', 16 + Math.random() * 32, 'blend', [1, 1, 1]); break;
-        case 12: this.beams.push({ a: [x, y, z], b: [x2, y2, z2], until: time + 0.07, img: 'gfx/misc/lightning3', width: 10, scroll: -time * 5, owner: n }); break;
+        case 12: this.beams.push({ kind: 'bolt', a: [x, y, z], b: [x2, y2, z2], t0: time, until: time + 0.07, owner: n }); break;
         case 13: renderer.spawnParticles('blood', x, y, z, 40, [0, 0, 1], 0xff1010c0); break;
         case 15: this.bubbleTrail([x, y, z], [x2, y2, z2], 32, time); break;
         case 17: this.ejectBrass(x, y, z, x2, n, time); break;
@@ -686,8 +754,8 @@ export function drawScene(renderer, hud, res, bsp, last, frame, opts = {}) {
     const k = Math.min(x.frames.length - 1, Math.floor(((time - x.t0) / x.dur) * x.frames.length));
     r.drawSprite(x.frames[k], [x.x, x.y, x.z], x.size * (0.6 + 0.6 * (time - x.t0) / x.dur), x.blend);
   }
-  state.beams = state.beams.filter((b) => b.until > time);
-  for (const b of state.beams) r.drawBeam(b.a, b.b, b.img, b.width, 'add', b.scroll);
+  state.beams = state.beams.filter((b) => b.until > time && time >= b.t0 - 0.1);
+  for (const b of state.beams) (b.kind === 'rail' ? drawRail : drawBolt)(r, view, b, time);
   r.runParticles(opts.dt ?? 0.05, time);
   r.drawParticles();
   r.drawAlphaPolys();
