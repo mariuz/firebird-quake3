@@ -276,6 +276,40 @@ if (item) {
   await bset(b, 'health = 100, enviro_finished = 0, haste_finished = 0, regen_finished = 0, attack_finished = 0');
 }
 
+// the long-term goal (BotChooseLTGItem) by the bot's item weights (its *_i.c over fw_items.c): armour and health
+// weigh by what it has, a gun by whether it holds it; and an item it took is timed (the avoid goal): a goal
+// again only when the trip is longer than the wait
+{
+  const set = (sql) => db.exec(`UPDATE ents SET ${sql} WHERE id = ${b}`);
+  const w = async (cls) => (await q(`SELECT bot_item_weight(${b}, '${cls}') w FROM rdb$database`))[0].W;
+  await set('health = 30, armor = 0, weapons = 3'); const hurt = await w('item_health'), bare = await w('item_armor_body'), noRl = await w('weapon_rocketlauncher');
+  await set('health = 100, armor = 150, weapons = 3 + 16'); const fine = await w('item_health'), clad = await w('item_armor_body'), rl = await w('weapon_rocketlauncher');
+  const rows = (await q(`SELECT COUNT(*) n FROM bot_iw WHERE bot = (SELECT bot FROM ents WHERE id = ${b})`))[0].N;
+  assert(rows > 100 && hurt > fine && bare > clad && noRl > rl && rl <= 1,
+    `item weights from the botfiles (${rows} rows): health hurt ${hurt} / fine ${fine}, red armour bare ${bare} / at 150 ${clad}, rocket launcher ${noRl} / held ${rl}`);
+  // the timing, on a quad 48 units off, every other item gone for the while (and not known to come back)
+  const me = (await q(`SELECT x, y, z FROM ents WHERE id = ${b}`))[0];
+  const gone = (await q("SELECT id FROM ents WHERE classname = 'item' AND solid = 1")).map((r) => r.ID);
+  if (gone.length) await db.exec(`UPDATE ents SET solid = 0 WHERE id IN (${gone.join(',')})`);
+  await db.exec(`DELETE FROM bot_avoid WHERE ent_id = ${b}`);
+  const quad = (await q(`SELECT id FROM spawn_ent('item', ${me.X + 48}, ${me.Y}, ${me.Z})`))[0].ID;
+  await db.exec(`UPDATE ents SET item = 'item_quad', solid = 1 WHERE id = ${quad}`);
+  const ltg = async () => (await q(`SELECT bot_choose_ltg(${b}) g FROM rdb$database`))[0].G;
+  const present = await ltg();
+  await db.exec(`EXECUTE PROCEDURE bot_item_touch(${quad}, ${b})`);
+  const avoid = (await q(`SELECT avoid_until - (SELECT now_() FROM rdb$database) a FROM bot_avoid WHERE ent_id = ${b} AND item_id = ${quad}`))[0]?.A;
+  const taken = await ltg();
+  await db.exec(`UPDATE bot_avoid SET avoid_until = (SELECT now_() FROM rdb$database) + 0.1 WHERE ent_id = ${b} AND item_id = ${quad}`);
+  const timed = await ltg();
+  await db.exec(`DELETE FROM bot_avoid WHERE ent_id = ${b} AND item_id = ${quad}`);
+  const unknown = await ltg();
+  assert(present === quad && Math.abs(avoid - 120) < 1 && taken === null && timed === quad && unknown === null,
+    `a quad 48 off: the goal (${present === quad}); taken, avoided for its 120 s (${avoid?.toFixed(0)}) and no goal (${taken}); back in 0.1 s, a goal again (${timed === quad}); gone and not its own, nothing (${unknown})`);
+  await db.exec(`DELETE FROM ents WHERE id = ${quad}`);
+  if (gone.length) await db.exec(`UPDATE ents SET solid = 1 WHERE id IN (${gone.join(',')})`);
+  await set('health = 100, armor = 0, weapons = 3, quad_finished = 0');
+}
+
 // a rocket jump (BotTravel_RocketJump): up to a ledge the walk does not reach, from a rocket-jump edge's
 // start, with a target on its end; bot_follow_route drives it each think
 {

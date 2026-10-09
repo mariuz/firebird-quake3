@@ -62,6 +62,7 @@ explosion sprites, beams) and nothing else. The renderers never query the databa
 | weapons, the player's think, respawn | `sql/player.sql` |
 | corpses (the body queue, sinking) | `body_queue`, `body_release`, `body_sink` in `sql/game.sql`; made in `player_die`/`bot_die`, released by the respawns |
 | bot behaviour, skill characteristics (`bot_char`) | `sql/bots.sql` |
+| the bots' item goals (weights, timing) | `src/itemweights.js` (the botfiles into `bot_iw` rows), `bot_inv`, `bot_item_weight`, `bot_choose_ltg` and `bot_avoid` in `sql/bots.sql` |
 | retreat or chase, grenade avoidance | `bot_aggression`, `bot_retreat_goal`, `bot_avoid_grenade` in `sql/bots.sql`, used in `bot_think` |
 | bot chat | `src/botchat.js` (the pak's botfiles into rows), `bot_say` and `bot_chat_event` at the top of `sql/bots.sql` |
 | bot navigation (nodes, edges, routing, incremental build) | `sql/waypoints.sql`, `bot_follow_route` in `sql/bots.sql`; the edge kinds' tests (`wp_walkable`, `wp_jump`, `wp_rocket_jump`, `wp_pad_steer`) |

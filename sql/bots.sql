@@ -553,6 +553,77 @@ BEGIN
 END^
 
 -- aim at the enemy (leading projectiles when skilled enough), scattered by the aim accuracy, and fire
+-- An inventory value of the botfiles' (inv.h's INVENTORY_*) for a bot: health, armour, a gun held (1 or 0),
+-- the powerups it carries; ammunition is 50 for a gun held and 0 for one not (the bots count none)
+CREATE OR ALTER FUNCTION bot_inv (eid INTEGER, v VARCHAR(32)) RETURNS DOUBLE PRECISION
+AS
+DECLARE hp INTEGER; DECLARE av INTEGER; DECLARE w INTEGER; DECLARE bit_ INTEGER; DECLARE t DOUBLE PRECISION;
+DECLARE qf DOUBLE PRECISION; DECLARE hf DOUBLE PRECISION; DECLARE inf DOUBLE PRECISION; DECLARE rf DOUBLE PRECISION; DECLARE ef DOUBLE PRECISION;
+BEGIN
+  SELECT e.health, e.armor, e.weapons, e.quad_finished, e.haste_finished, e.invis_finished, e.regen_finished, e.enviro_finished FROM ents e WHERE e.id = :eid
+    INTO hp, av, w, qf, hf, inf, rf, ef;
+  t = now_();
+  IF (v = 'INVENTORY_HEALTH') THEN RETURN hp;
+  IF (v = 'INVENTORY_ARMOR') THEN RETURN av;
+  bit_ = CASE v WHEN 'INVENTORY_GAUNTLET' THEN 1 WHEN 'INVENTORY_MACHINEGUN' THEN 2 WHEN 'INVENTORY_SHOTGUN' THEN 4 WHEN 'INVENTORY_GRENADELAUNCHER' THEN 8
+                WHEN 'INVENTORY_ROCKETLAUNCHER' THEN 16 WHEN 'INVENTORY_LIGHTNING' THEN 32 WHEN 'INVENTORY_RAILGUN' THEN 64 WHEN 'INVENTORY_PLASMAGUN' THEN 128
+                WHEN 'INVENTORY_BFG10K' THEN 256 ELSE 0 END;
+  IF (bit_ > 0) THEN RETURN IIF(BIN_AND(w, bit_) <> 0, 1, 0);
+  bit_ = CASE v WHEN 'INVENTORY_BULLETS' THEN 2 WHEN 'INVENTORY_SHELLS' THEN 4 WHEN 'INVENTORY_GRENADES' THEN 8 WHEN 'INVENTORY_ROCKETS' THEN 16
+                WHEN 'INVENTORY_LIGHTNINGAMMO' THEN 32 WHEN 'INVENTORY_SLUGS' THEN 64 WHEN 'INVENTORY_CELLS' THEN 128 WHEN 'INVENTORY_BFGAMMO' THEN 256 ELSE 0 END;
+  IF (bit_ > 0) THEN RETURN IIF(BIN_AND(w, bit_) <> 0, 50, 0);
+  RETURN CASE v WHEN 'INVENTORY_QUAD' THEN IIF(qf > t, 1, 0) WHEN 'INVENTORY_HASTE' THEN IIF(hf > t, 1, 0) WHEN 'INVENTORY_INVISIBILITY' THEN IIF(inf > t, 1, 0)
+                WHEN 'INVENTORY_REGEN' THEN IIF(rf > t, 1, 0) WHEN 'INVENTORY_ENVIRONMENTSUIT' THEN IIF(ef > t, 1, 0) ELSE 0 END;
+END^
+
+-- FuzzyWeight (be_ai_weight.c): the bot's weight for an item class from its character's item weights
+-- (bot_iw), the first case its inventory is under, two levels deep
+CREATE OR ALTER FUNCTION bot_item_weight (eid INTEGER, cls VARCHAR(40)) RETURNS DOUBLE PRECISION
+AS
+DECLARE bn VARCHAR(16); DECLARE v1 VARCHAR(32); DECLARE v2 VARCHAR(32); DECLARE o1 INTEGER; DECLARE inv DOUBLE PRECISION; DECLARE w DOUBLE PRECISION;
+BEGIN
+  SELECT e.bot FROM ents e WHERE e.id = :eid INTO bn;
+  IF (NOT EXISTS (SELECT 1 FROM bot_iw r WHERE r.bot = :bn AND r.cls = :cls)) THEN RETURN 0;
+  SELECT FIRST 1 r.v1 FROM bot_iw r WHERE r.bot = :bn AND r.cls = :cls INTO v1;
+  inv = IIF(v1 IS NULL, 0, bot_inv(eid, v1));
+  SELECT MIN(r.o1) FROM bot_iw r WHERE r.bot = :bn AND r.cls = :cls AND :inv < r.b1 INTO o1;
+  IF (o1 IS NULL) THEN RETURN 0;
+  SELECT FIRST 1 r.v2 FROM bot_iw r WHERE r.bot = :bn AND r.cls = :cls AND r.o1 = :o1 INTO v2;
+  inv = IIF(v2 IS NULL, 0, bot_inv(eid, v2));
+  SELECT FIRST 1 r.w FROM bot_iw r WHERE r.bot = :bn AND r.cls = :cls AND r.o1 = :o1 AND :inv < r.b2 ORDER BY r.o2 INTO w;
+  RETURN COALESCE(w, 0);
+END^
+
+-- BotChooseLTGItem (be_ai_goal.c): the item worth the most for its travel time, the weight over the seconds it
+-- takes to get there (a straight line at run speed, height counted twice, for the AAS's travel time). One it
+-- took itself and that is still to come back is a goal when the trip takes longer than the wait (avoid time
+-- minus 0.9 of the travel time, as botlib has it): the bot times it. One gone that another took is not known
+-- to come back. Ammunition and holdables are left out (the bots count no ammunition and carry no holdable),
+-- and the flight (they have no use for it)
+CREATE OR ALTER FUNCTION bot_choose_ltg (eid INTEGER) RETURNS INTEGER
+AS
+DECLARE x DOUBLE PRECISION; DECLARE y DOUBLE PRECISION; DECLARE z DOUBLE PRECISION; DECLARE t DOUBLE PRECISION;
+DECLARE gid INTEGER; DECLARE cls VARCHAR(40); DECLARE gx DOUBLE PRECISION; DECLARE gy DOUBLE PRECISION; DECLARE gz DOUBLE PRECISION;
+DECLARE sol SMALLINT; DECLARE av DOUBLE PRECISION; DECLARE w DOUBLE PRECISION; DECLARE tt DOUBLE PRECISION;
+DECLARE best INTEGER; DECLARE bestw DOUBLE PRECISION = 0;
+BEGIN
+  t = now_();
+  SELECT e.x, e.y, e.z FROM ents e WHERE e.id = :eid INTO x, y, z;
+  FOR SELECT g.id, g.item, g.x, g.y, g.z, g.solid, (SELECT a.avoid_until FROM bot_avoid a WHERE a.ent_id = :eid AND a.item_id = g.id)
+        FROM ents g JOIN item_defs i ON i.cls = g.item
+       WHERE g.classname = 'item' AND i.kind IN ('H', 'A', 'W', 'P') AND NOT (i.kind = 'P' AND i.bit = 32)
+        INTO gid, cls, gx, gy, gz, sol, av
+  DO
+  BEGIN
+    IF (sol <> 1 AND (av IS NULL OR av <= t)) THEN CONTINUE;
+    tt = vlen(gx - x, gy - y, (gz - z) * 2) / 320 + 0.1e0;
+    IF (av IS NOT NULL AND av - t - tt * 0.9e0 > 0) THEN CONTINUE;
+    w = bot_item_weight(eid, cls);
+    IF (w > 0 AND w / tt > bestw) THEN BEGIN bestw = w / tt; best = gid; END
+  END
+  RETURN best;
+END^
+
 -- BotAggression (ai_dmq3.c): how keen on a fight the bot is, 0 to 100. With the quad 70 (unless it holds the
 -- gauntlet far from the enemy); none with the enemy 200 above, under 60 health, or under 80 without 40 armour;
 -- else by the best gun it holds: BFG 100, railgun 95, lightning and rockets 90, plasma 85, grenades 80,
@@ -693,6 +764,8 @@ BEGIN
   ELSE EXIT;
   EXECUTE PROCEDURE snd(other, 3, snd_, 1, 1);
   EXECUTE PROCEDURE item_taken(item, IIF(kind = 'W', 5, resp));
+  -- botlib's avoid goal: this one comes back in its respawn time
+  UPDATE OR INSERT INTO bot_avoid (ent_id, item_id, avoid_until) VALUES (:other, :item, now_() + IIF(:kind = 'W', 5, :resp)) MATCHING (ent_id, item_id);
 END^
 
 -- ── pain, death, respawn ─────────────────────────────────────────────────
@@ -892,17 +965,17 @@ BEGIN
   BEGIN
     -- nothing in sight: wander toward an item, or just roam
     UPDATE ents e SET e.enemy_id = NULL, e.st = 'stand' WHERE e.id = :eid AND e.enemy_id IS NOT NULL;
-    IF (goal IS NOT NULL AND NOT EXISTS (SELECT 1 FROM ents g WHERE g.id = :goal AND g.solid = 1 AND vlen(g.x - :x, g.y - :y, 0) > 40)) THEN
+    -- (a timed item not back yet stays the goal while it is on the way and back within 3 s)
+    IF (goal IS NOT NULL AND NOT EXISTS (SELECT 1 FROM ents g WHERE g.id = :goal AND vlen(g.x - :x, g.y - :y, 0) > 40
+                                          AND (g.solid = 1 OR (g.think = 'item_respawn' AND g.nextthink - :t < 3)))) THEN
     BEGIN
       goal = NULL;
       UPDATE ents e SET e.goal_id = NULL WHERE e.id = :eid;
     END
     IF (goal IS NULL AND RAND() < 0.3e0) THEN
     BEGIN
-      -- roam to an item anywhere near, over the graph (BotRoamGoal); the good ones draw it, as Q3's item weights do
-      SELECT FIRST 1 g.id FROM ents g JOIN item_defs i ON i.cls = g.item WHERE g.classname = 'item' AND g.solid = 1 AND ABS(g.x - :x) < 1800 AND ABS(g.y - :y) < 1800
-         AND NOT (i.kind = 'P' AND i.bit = 32)
-       ORDER BY ABS(g.x - :x) + ABS(g.y - :y) + ABS(g.z - :z) * 2 + RAND() * 1200 - IIF(i.kind IN ('W', 'P', 'A'), 400, 0) INTO goal;
+      -- the long-term goal (BotChooseLTGItem): the item worth the most for the trip, by the bot's item weights
+      goal = bot_choose_ltg(eid);
       UPDATE ents e SET e.goal_id = :goal WHERE e.id = :eid;
     END
     -- nothing to do but roam: now and then a word (BotChat_Random, a chance in a hundred a think, then the character's)
@@ -1773,6 +1846,7 @@ BEGIN
   SELECT FIRST 1 t.name FROM textures t WHERE BIN_AND(t.flags, 4) <> 0 INTO skyname;
   UPDATE game g SET g.sky = :skyname WHERE g.id = 1;
   UPDATE bot_defs b SET b.skill = :skill;
+  DELETE FROM bot_avoid;
   EXECUTE PROCEDURE spawn_map_ents;
   EXECUTE PROCEDURE build_waypoints;
   DELETE FROM bot_routes;

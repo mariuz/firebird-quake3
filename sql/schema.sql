@@ -480,6 +480,31 @@ CREATE TABLE bot_rnd (
   msg    VARCHAR(600) NOT NULL,
   PRIMARY KEY (name, idx)
 );
+-- the bots' item weights (botlib's be_ai_weight.c over the pak's botfiles, read by src/itemweights.js): a
+-- weight is the first case (o1, in the file's order) whose bound b1 the inventory value v1 is under, and
+-- within it the first (o2) whose bound b2 the value v2 is under; b 1e9 is the default, v null no switch
+CREATE TABLE bot_iw (
+  bot  VARCHAR(16) NOT NULL,
+  cls  VARCHAR(40) NOT NULL,
+  o1   SMALLINT NOT NULL,
+  v1   VARCHAR(32),
+  b1   DOUBLE PRECISION NOT NULL,
+  o2   SMALLINT NOT NULL,
+  v2   VARCHAR(32),
+  b2   DOUBLE PRECISION NOT NULL,
+  w    DOUBLE PRECISION NOT NULL
+);
+CREATE INDEX bot_iw_cls ON bot_iw (bot, cls);
+
+-- the items a bot took, until they respawn (BotSetAvoidGoalTime with the item's respawn time): the bot
+-- does not go for one until its travel time covers what is left, so it is back as the item is
+CREATE TABLE bot_avoid (
+  ent_id      INTEGER NOT NULL,
+  item_id     INTEGER NOT NULL,
+  avoid_until DOUBLE PRECISION NOT NULL,
+  PRIMARY KEY (ent_id, item_id)
+);
+
 CREATE TABLE bot_chatchar (
   bot    VARCHAR(16) NOT NULL,
   skill  SMALLINT NOT NULL,

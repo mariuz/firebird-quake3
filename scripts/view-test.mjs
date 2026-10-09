@@ -11,6 +11,7 @@ import { Renderer, tagTransform, autospriteQuads, fogST, fogFactor } from '../sr
 import { parseDeform, waveValue, deformVertex, envTexCoords, parseShaderScript, surfaceLook, shellMesh, eyeInModel } from '../src/shader.js';
 import { Md3, parseAnimationCfg } from '../src/md3.js';
 import { postgameMedals } from '../src/hud.js';
+import { parseWeights, preprocess, weightOf } from '../src/itemweights.js';
 import { Pk3 } from '../src/pk3.js';
 
 let failed = 0;
@@ -359,6 +360,31 @@ const markBsp = {
   assert(m.map((x) => x.join(' ')).join(', ') === 'accuracy 36%, impressive 2, gauntlet 1, frags 20, victory Perfect', `the postgame medals (${m.map((x) => x.join(' ')).join(', ')})`);
   const lost = postgameMedals({ ACC_SHOTS: 0, ACC_HITS: 0, N_IMPRESSIVE: 0, N_EXCELLENT: 0, N_GAUNTLET: 0, FRAGS: 3, WINNER: 'Sarge', DEATHS: 0 });
   assert(lost.length === 1 && lost[0][0] === 'frags', 'no shots, no accuracy; no win, no perfect');
+}
+
+// the bots' item weights (be_ai_weight.c's switches, botfiles/fw_items.c): the first case the inventory is
+// under, two levels deep, balance() its first value, the macros of the bot's own file
+{
+  const defines = new Map();
+  const text = preprocess(`#define FS_HEALTH 2
+#define W_RL 120
+#define SCALE(v) balance($evalfloat(MZ(FS_HEALTH*v)), 0, 0)
+#define MZ(value) (value) < 0 ? 0 : (value)
+weight "item_health" { switch(INVENTORY_HEALTH) { case 50: return SCALE(40); case 100: return SCALE(10); default: return 0; } }
+weight "weapon_rl" { switch(INVENTORY_RL) { case 1: return W_RL; default: {
+#ifdef WEAPONS_STAY
+  return 99;
+#else
+  switch(INVENTORY_ROCKETS) { case 10: return 30; default: return 1; }
+#endif
+} } }
+weight "item_quad" { return 400; }`, () => null, defines);
+  const ws = parseWeights(text, defines);
+  const h = ws.get('item_health'), rl = ws.get('weapon_rl');
+  assert(weightOf(h, { INVENTORY_HEALTH: 30 }) === 80 && weightOf(h, { INVENTORY_HEALTH: 70 }) === 20 && weightOf(h, { INVENTORY_HEALTH: 125 }) === 0,
+    'a health weight by the health: under 50 twice 40, under 100 twice 10, else nothing');
+  assert(weightOf(rl, { INVENTORY_RL: 0 }) === 120 && weightOf(rl, { INVENTORY_RL: 1, INVENTORY_ROCKETS: 5 }) === 30 && weightOf(rl, { INVENTORY_RL: 1, INVENTORY_ROCKETS: 50 }) === 1
+    && ws.get('item_quad') === 400, 'a gun: its weight when not held; held, by its ammunition (the #else); a constant');
 }
 
 // and the hand model really carries the gun down on those frames (with the pak, when it is there)
