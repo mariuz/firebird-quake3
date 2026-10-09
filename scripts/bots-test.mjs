@@ -28,18 +28,34 @@ await db.exec(`UPDATE ents SET flags = BIN_OR(flags, 16) WHERE id = ${pe}`);   /
 const bots = await q("SELECT id, bot, pmodel FROM ents WHERE classname = 'bot'");
 assert(bots.length === 4, `four bots joined (${bots.map((b) => b.BOT).join(', ')})`);
 
-// a bot sees the player: put one in front of us
+// a bot sees the player: put one in front of us, on a floor (on q3dm17 straight ahead may be the void)
 const b = bots[0].ID;
 const p = (await q(`SELECT x, y, z, yaw FROM ents WHERE id = ${pe}`))[0];
-await db.exec(`UPDATE ents SET x = ${p.X + Math.cos((p.YAW * Math.PI) / 180) * 200}, y = ${p.Y + Math.sin((p.YAW * Math.PI) / 180) * 200}, z = ${p.Z}, vx = 0, vy = 0, vz = 0, enemy_id = NULL WHERE id = ${b}`);
+let spot = null;
+for (const d of [200, 150, 100, 64]) {
+  for (const turn of [0, 45, -45, 90, -90]) {
+    const a = ((p.YAW + turn) * Math.PI) / 180, x = p.X + Math.cos(a) * d, y = p.Y + Math.sin(a) * d;
+    const c = (await q(`SELECT point_contents(${x}, ${y}, ${p.Z}) here, point_contents(${x}, ${y}, ${p.Z - 32}) below FROM rdb$database`))[0];
+    if (c.HERE === 0 && (c.BELOW & 65537) !== 0) { spot = [x, y]; break; }
+  }
+  if (spot) break;
+}
+spot ??= [p.X + Math.cos((p.YAW * Math.PI) / 180) * 200, p.Y + Math.sin((p.YAW * Math.PI) / 180) * 200];
+await db.exec(`UPDATE ents SET x = ${spot[0]}, y = ${spot[1]}, z = ${p.Z}, vx = 0, vy = 0, vz = 0, enemy_id = NULL WHERE id = ${b}`);
 await db.exec(`EXECUTE PROCEDURE link_ent(${b})`);
-for (let i = 0; i < 70; i++) await tic();
+// (noticed at any tic: the fight that follows may kill it before the 70 are up)
+let found = null;
+for (let i = 0; i < 70; i++) {
+  await tic();
+  found ??= (await q(`SELECT enemy_id FROM ents WHERE id = ${b}`))[0].ENEMY_ID;
+}
 let s = (await q(`SELECT enemy_id, st, attack_finished, weapon FROM ents WHERE id = ${b}`))[0];
-assert(s.ENEMY_ID !== null, `the bot found an enemy (${s.ENEMY_ID}, ${s.ST.trim()})`);
+assert(found !== null, `the bot found an enemy (${found}; now ${s.ST.trim()})`);
 const shots = (await q("SELECT COUNT(*) n FROM sound_events WHERE snd LIKE 'sound/weapons/%' AND ent_id <> " + pe))[0].N;
 assert(shots > 0, `the bots fired (${shots} shots)`);
 
-// a bot dies and respawns
+// a bot dies and respawns (alive for it: the fight above may have killed it already)
+if ((await q(`SELECT deadflag FROM ents WHERE id = ${b}`))[0].DEADFLAG) await db.exec(`EXECUTE PROCEDURE bot_respawn(${b})`);
 const hpBefore = (await q(`SELECT health FROM ents WHERE id = ${b}`))[0].HEALTH;
 await db.exec(`EXECUTE PROCEDURE t_damage(${b}, ${pe}, ${pe}, ${hpBefore + 20}, 50, 0, 17)`);
 s = (await q(`SELECT st, deadflag, respawn_time FROM ents WHERE id = ${b}`))[0];
@@ -66,7 +82,7 @@ assert(s.DEADFLAG === 0 && s.HEALTH > 0 && s.CLUSTER !== null, `the bot respawne
   const waiting = (await q("SELECT COUNT(*) n FROM ents c JOIN ents o ON o.id = c.body_of WHERE c.classname = 'corpse' AND (c.think IS NOT NULL OR o.deadflag = 0)"))[0].N;
   assert(released.length >= 1 && released.every((r) => Math.abs(r.WAIT - 5) < 1e-6) && waiting === 0,
     `a respawn leaves its body 5 s more (${released.length} released); a body whose owner is still dead waits`);
-  const c = released[0].ID;
+  const c = released[0]?.ID ?? -1;
   const z0 = (await q(`SELECT z FROM ents WHERE id = ${c}`))[0].Z;
   await db.exec(`UPDATE ents SET ltime = (SELECT now_() FROM rdb$database) - 5, nextthink = (SELECT now_() FROM rdb$database) WHERE id = ${c}`);
   for (let i = 0; i < 10; i++) await tic();
