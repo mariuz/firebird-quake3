@@ -308,6 +308,21 @@ if (item) {
   await db.exec(`DELETE FROM ents WHERE id = ${quad}`);
   if (gone.length) await db.exec(`UPDATE ents SET solid = 1 WHERE id IN (${gone.join(',')})`);
   await set('health = 100, armor = 0, weapons = 3, quad_finished = 0');
+
+  // BotChooseBestFightWeapon: with every gun, the one its character weighs the most (bots/NAME_w.c); the
+  // lightning gun weighs a tenth past 768 across
+  await set(`weapons = 511, enemy_id = ${pe}`);
+  const gw = [];
+  for (let bit = 1; bit <= 256; bit *= 2) gw.push([bit, (await q(`SELECT bot_item_weight(${b}, 'weapon:${bit}') w FROM rdb$database`))[0].W]);
+  const fav = gw.reduce((a, c) => (c[1] > a[1] ? c : a));
+  const chosen = (await q(`SELECT bot_best_weapon(${b}, 300) w FROM rdb$database`))[0].W;
+  const pp = (await q(`SELECT x, y, z FROM ents WHERE id = ${pe}`))[0];
+  await set(`x = ${pp.X + 300}, y = ${pp.Y}`); const lgNear = (await q(`SELECT bot_item_weight(${b}, 'weapon:32') w FROM rdb$database`))[0].W;
+  await set(`x = ${pp.X + 1000}, y = ${pp.Y}`); const lgFar = (await q(`SELECT bot_item_weight(${b}, 'weapon:32') w FROM rdb$database`))[0].W;
+  assert(chosen === fav[0] && fav[1] > 0 && lgNear > 0 && Math.abs(lgFar - Math.trunc(lgNear * 0.1)) < 1e-6,
+    `the favourite gun (${gw.map(([k, v]) => `${k}:${v}`).join(' ')}): ${chosen}; the lightning gun ${lgNear} near, ${lgFar} far`);
+  await set(`weapons = 3, enemy_id = NULL, x = ${me.X}, y = ${me.Y}, z = ${me.Z}`);
+  await db.exec(`EXECUTE PROCEDURE link_ent(${b})`);
 }
 
 // a rocket jump (BotTravel_RocketJump): up to a ledge the walk does not reach, from a rocket-jump edge's

@@ -1,15 +1,20 @@
-// itemweights.js – the bots' item weights, read as botlib reads them (be_ai_weight.c, ReadWeightConfig):
+// itemweights.js – the bots' item and weapon weights, read as botlib reads them (be_ai_weight.c, ReadWeightConfig):
 //
-//   botfiles/bots/NAME_c.c    the character: CHARACTERISTIC_ITEMWEIGHTS "bots/NAME_i.c"
+//   botfiles/bots/NAME_c.c    the character: CHARACTERISTIC_ITEMWEIGHTS "bots/NAME_i.c",
+//                             CHARACTERISTIC_WEAPONWEIGHTS "bots/NAME_w.c"
 //   botfiles/bots/NAME_i.c    the bot's scales (FS_HEALTH, FS_ARMOR, W_*, GWW_*), then #include "fw_items.c"
+//   botfiles/bots/NAME_w.c    its gun weights (W_SHOTGUN …), then #include "fw_weap.c"
 //   botfiles/fw_items.c       weight "item_…" { switch (INVENTORY_…) { case N: return …; default: … } }
+//   botfiles/fw_weap.c        weight "Rocket Launcher" { … } (the gun held, its ammunition, for the lightning
+//                             gun the enemy's distance)
 //
 // A weight is a number or a switch on one inventory value; botlib takes the first `case N` the inventory is
 // under (in the file's order), `default` when none is. `balance(w, min, max)` is the weight w (the other two
-// bound the interbreeding of the fuzzy weights, which the game never does). Switches nest two deep at most
-// in the pak's files. Here each weight becomes rows [cls, o1, v1, b1, o2, v2, b2, w] (o: the case's place in
-// its switch, v: the inventory name, b: the case's bound, 1e9 for default; v2 null for one level), which
-// BOT_ITEM_WEIGHT in sql/bots.sql evaluates against the bot's inventory.
+// bound the interbreeding of the fuzzy weights, which the game never does). Switches nest three deep at most
+// in the pak's files. Here each weight becomes rows [cls, o1, v1, b1, o2, v2, b2, o3, v3, b3, w] (o: the case's
+// place in its switch, v: the inventory name, b: the case's bound, 1e9 for default; v null below the last
+// level), which BOT_ITEM_WEIGHT in sql/bots.sql evaluates against the bot's inventory. A gun's weight is
+// stored under the class 'weapon:BIT' (BIT its WP bit).
 
 const TOKEN = /\/\/[^\n]*|\/\*[\s\S]*?\*\/|"((?:[^"\\\n]|\\.)*)"|(\d+(?:\.\d+)?)|(\$?[A-Za-z_][A-Za-z_0-9]*)|(\?|:|<|[-+*/(){},;])/g;
 
@@ -154,30 +159,43 @@ export function parseWeights(text, defines) {
   return out;
 }
 
-/** A weight node as rows [o1, v1, b1, o2, v2, b2, w]. */
-function flatten(node) {
-  if (typeof node === 'number') return [[0, null, 1e9, 0, null, 1e9, node]];
-  const rows = [];
-  node.cases.forEach(([b1, sub], o1) => {
-    if (typeof sub === 'number') rows.push([o1, node.v, b1, 0, null, 1e9, sub]);
-    else sub.cases.forEach(([b2, w], o2) => rows.push([o1, node.v, b1, o2, sub.v, b2, typeof w === 'number' ? w : 0]));
-  });
-  return rows;
+/** A weight node as rows [o1, v1, b1, o2, v2, b2, o3, v3, b3, w], three levels (deeper switches weigh 0). */
+function rowsOf(node) {
+  const out = [];
+  const walk = (n, path) => {
+    if (typeof n === 'number' || path.length >= 3) {
+      const levels = [...path];
+      while (levels.length < 3) levels.push([0, null, 1e9]);
+      out.push([...levels.flat(), typeof n === 'number' ? n : 0]);
+      return;
+    }
+    n.cases.forEach(([b, sub], o) => walk(sub, [...path, [o, n.v, b]]));
+  };
+  walk(node, []);
+  return out;
 }
 
-/** Every bot's item weights: rows [bot, cls, o1, v1, b1, o2, v2, b2, w]. */
+// fw_weap.c's weight names and the guns' WP bits
+const WEAPON_BITS = { Gauntlet: 1, Machinegun: 2, Shotgun: 4, 'Grenade Launcher': 8, 'Rocket Launcher': 16, 'Lightning Gun': 32, Railgun: 64, 'Plasma Gun': 128, BFG10K: 256 };
+
+/** Every bot's item and weapon weights: rows [bot, cls, o1, v1, b1, o2, v2, b2, o3, v3, b3, w]. */
 export function loadItemWeights(pak, bots) {
   const read = (n) => { try { return pak.text(`botfiles/${n}`); } catch { return null; } };
   const out = [];
   for (const b of bots) {
     const base = b.name.toLowerCase();
     const ch = read(`bots/${base}_c.c`) ?? '';
-    const file = ch.match(/CHARACTERISTIC_ITEMWEIGHTS\s+"([^"]+)"/)?.[1] ?? `bots/${base}_i.c`;
-    const text = read(file);
-    if (!text) continue;
-    const defines = new Map();
-    const weights = parseWeights(preprocess(text, read, defines), defines);
-    for (const [cls, node] of weights) for (const r of flatten(node)) out.push([b.name, cls, ...r]);
+    for (const [key, fallback, weapons] of [['ITEMWEIGHTS', `bots/${base}_i.c`, false], ['WEAPONWEIGHTS', `bots/${base}_w.c`, true]]) {
+      const file = ch.match(new RegExp(`CHARACTERISTIC_${key}\\s+"([^"]+)"`))?.[1] ?? fallback;
+      const text = read(file);
+      if (!text) continue;
+      const defines = new Map();
+      const weights = parseWeights(preprocess(text, read, defines), defines);
+      for (const [name, node] of weights) {
+        const cls = weapons ? (WEAPON_BITS[name] ? `weapon:${WEAPON_BITS[name]}` : null) : name;
+        if (cls) for (const r of rowsOf(node)) out.push([b.name, cls, ...r]);
+      }
+    }
   }
   return out;
 }

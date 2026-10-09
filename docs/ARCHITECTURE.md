@@ -408,7 +408,10 @@ A think:
    is 0.4 as good nine times in ten (`BotAimAtEnemy`);
    a newly noticed enemy is not shot at before the skill's reaction time has passed;
 3. with an enemy: faces it (`change_yaw`, the yaw speed per skill), picks a weapon for the distance
-   (`bot_best_weapon`: gauntlet when touching, shotgun and lightning close, rockets and rail far),
+   (`bot_best_weapon`, `BotChooseBestFightWeapon`: the gun held its character's `bots/NAME_w.c` with
+   `fw_weap.c` weighs the most, through the same `bot_iw` rows as the items under 'weapon:BIT', so Daemia
+   fights with the shotgun (750), Grunt the railgun (370), Major the rocket launcher (200), Stripe the BFG
+   (950); the lightning gun weighs a tenth past 768 across, `ENEMY_HORIZONTAL_DIST` from `bot_inv`),
    weighs the fight (`bot_aggression`, `BotAggression`: 70 with the quad; 0 with the enemy 200 units
    above, under 60 health, or under 80 without 40 armour; else by the best gun held, BFG 100, railgun 95,
    lightning and rockets 90, plasma 85, grenades 80, shotgun 50, the machinegun alone 0). Under 50 it

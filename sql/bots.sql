@@ -533,26 +533,6 @@ BEGIN
   RETURN best;
 END^
 
--- the weapon a bot likes best for the distance among those it holds
-CREATE OR ALTER FUNCTION bot_best_weapon (eid INTEGER, dist DOUBLE PRECISION) RETURNS INTEGER
-AS
-DECLARE w INTEGER;
-BEGIN
-  SELECT e.weapons FROM ents e WHERE e.id = :eid INTO w;
-  IF (BIN_AND(w, 64) <> 0 AND dist > 500) THEN RETURN 64;
-  IF (BIN_AND(w, 16) <> 0 AND dist > 180) THEN RETURN 16;
-  IF (BIN_AND(w, 32) <> 0 AND dist < 700) THEN RETURN 32;
-  IF (BIN_AND(w, 128) <> 0) THEN RETURN 128;
-  IF (BIN_AND(w, 4) <> 0 AND dist < 600) THEN RETURN 4;
-  IF (BIN_AND(w, 64) <> 0) THEN RETURN 64;
-  IF (BIN_AND(w, 16) <> 0) THEN RETURN 16;
-  IF (BIN_AND(w, 8) <> 0 AND dist > 150) THEN RETURN 8;
-  IF (BIN_AND(w, 4) <> 0) THEN RETURN 4;
-  IF (BIN_AND(w, 2) <> 0) THEN RETURN 2;
-  RETURN 1;
-END^
-
--- aim at the enemy (leading projectiles when skilled enough), scattered by the aim accuracy, and fire
 -- An inventory value of the botfiles' (inv.h's INVENTORY_*) for a bot: health, armour, a gun held (1 or 0),
 -- the powerups it carries; ammunition is 50 for a gun held and 0 for one not (the bots count none)
 CREATE OR ALTER FUNCTION bot_inv (eid INTEGER, v VARCHAR(32)) RETURNS DOUBLE PRECISION
@@ -563,6 +543,9 @@ BEGIN
   SELECT e.health, e.armor, e.weapons, e.quad_finished, e.haste_finished, e.invis_finished, e.regen_finished, e.enviro_finished FROM ents e WHERE e.id = :eid
     INTO hp, av, w, qf, hf, inf, rf, ef;
   t = now_();
+  -- the enemy's distance across and its height over the bot (the weapon weights' ENEMY_HORIZONTAL_DIST)
+  IF (v = 'ENEMY_HORIZONTAL_DIST') THEN RETURN COALESCE((SELECT vlen(o.x - e.x, o.y - e.y, 0) FROM ents e JOIN ents o ON o.id = e.enemy_id WHERE e.id = :eid), 0);
+  IF (v = 'ENEMY_HEIGHT') THEN RETURN COALESCE((SELECT o.z - e.z FROM ents e JOIN ents o ON o.id = e.enemy_id WHERE e.id = :eid), 0);
   IF (v = 'INVENTORY_HEALTH') THEN RETURN hp;
   IF (v = 'INVENTORY_ARMOR') THEN RETURN av;
   bit_ = CASE v WHEN 'INVENTORY_GAUNTLET' THEN 1 WHEN 'INVENTORY_MACHINEGUN' THEN 2 WHEN 'INVENTORY_SHOTGUN' THEN 4 WHEN 'INVENTORY_GRENADELAUNCHER' THEN 8
@@ -576,21 +559,27 @@ BEGIN
                 WHEN 'INVENTORY_REGEN' THEN IIF(rf > t, 1, 0) WHEN 'INVENTORY_ENVIRONMENTSUIT' THEN IIF(ef > t, 1, 0) ELSE 0 END;
 END^
 
--- FuzzyWeight (be_ai_weight.c): the bot's weight for an item class from its character's item weights
--- (bot_iw), the first case its inventory is under, two levels deep
+-- FuzzyWeight (be_ai_weight.c): the bot's weight for an item class or a gun ('weapon:BIT') from its
+-- character's weights (bot_iw), the first case its inventory is under, three levels deep
 CREATE OR ALTER FUNCTION bot_item_weight (eid INTEGER, cls VARCHAR(40)) RETURNS DOUBLE PRECISION
 AS
-DECLARE bn VARCHAR(16); DECLARE v1 VARCHAR(32); DECLARE v2 VARCHAR(32); DECLARE o1 INTEGER; DECLARE inv DOUBLE PRECISION; DECLARE w DOUBLE PRECISION;
+DECLARE bn VARCHAR(16); DECLARE v VARCHAR(32); DECLARE o1 INTEGER; DECLARE o2 INTEGER; DECLARE inv DOUBLE PRECISION; DECLARE w DOUBLE PRECISION;
 BEGIN
   SELECT e.bot FROM ents e WHERE e.id = :eid INTO bn;
   IF (NOT EXISTS (SELECT 1 FROM bot_iw r WHERE r.bot = :bn AND r.cls = :cls)) THEN RETURN 0;
-  SELECT FIRST 1 r.v1 FROM bot_iw r WHERE r.bot = :bn AND r.cls = :cls INTO v1;
-  inv = IIF(v1 IS NULL, 0, bot_inv(eid, v1));
+  SELECT FIRST 1 r.v1 FROM bot_iw r WHERE r.bot = :bn AND r.cls = :cls INTO v;
+  inv = IIF(v IS NULL, 0, bot_inv(eid, v));
   SELECT MIN(r.o1) FROM bot_iw r WHERE r.bot = :bn AND r.cls = :cls AND :inv < r.b1 INTO o1;
   IF (o1 IS NULL) THEN RETURN 0;
-  SELECT FIRST 1 r.v2 FROM bot_iw r WHERE r.bot = :bn AND r.cls = :cls AND r.o1 = :o1 INTO v2;
-  inv = IIF(v2 IS NULL, 0, bot_inv(eid, v2));
-  SELECT FIRST 1 r.w FROM bot_iw r WHERE r.bot = :bn AND r.cls = :cls AND r.o1 = :o1 AND :inv < r.b2 ORDER BY r.o2 INTO w;
+  v = NULL;
+  SELECT FIRST 1 r.v2 FROM bot_iw r WHERE r.bot = :bn AND r.cls = :cls AND r.o1 = :o1 INTO v;
+  inv = IIF(v IS NULL, 0, bot_inv(eid, v));
+  SELECT MIN(r.o2) FROM bot_iw r WHERE r.bot = :bn AND r.cls = :cls AND r.o1 = :o1 AND :inv < r.b2 INTO o2;
+  IF (o2 IS NULL) THEN RETURN 0;
+  v = NULL;
+  SELECT FIRST 1 r.v3 FROM bot_iw r WHERE r.bot = :bn AND r.cls = :cls AND r.o1 = :o1 AND r.o2 = :o2 INTO v;
+  inv = IIF(v IS NULL, 0, bot_inv(eid, v));
+  SELECT FIRST 1 r.w FROM bot_iw r WHERE r.bot = :bn AND r.cls = :cls AND r.o1 = :o1 AND r.o2 = :o2 AND :inv < r.b3 ORDER BY r.o3 INTO w;
   RETURN COALESCE(w, 0);
 END^
 
@@ -624,6 +613,41 @@ BEGIN
   RETURN best;
 END^
 
+-- the weapon a bot likes best among those it holds
+CREATE OR ALTER FUNCTION bot_best_weapon (eid INTEGER, dist DOUBLE PRECISION) RETURNS INTEGER
+AS
+DECLARE w INTEGER; DECLARE bit_ INTEGER = 1; DECLARE best INTEGER; DECLARE bestw DOUBLE PRECISION = 0; DECLARE ww DOUBLE PRECISION;
+BEGIN
+  SELECT e.weapons FROM ents e WHERE e.id = :eid INTO w;
+  -- BotChooseBestFightWeapon: the gun held its character weighs the most (bots/NAME_w.c with fw_weap.c:
+  -- each gun's own weight, the lightning gun's a tenth past 768 across); without the files, by distance
+  IF (EXISTS (SELECT 1 FROM bot_iw r JOIN ents e ON e.bot = r.bot WHERE e.id = :eid AND r.cls STARTING WITH 'weapon:')) THEN
+  BEGIN
+    WHILE (bit_ <= 256) DO
+    BEGIN
+      IF (BIN_AND(w, bit_) <> 0) THEN
+      BEGIN
+        ww = bot_item_weight(eid, 'weapon:' || bit_);
+        IF (ww > bestw) THEN BEGIN bestw = ww; best = bit_; END
+      END
+      bit_ = bit_ * 2;
+    END
+    IF (best IS NOT NULL) THEN RETURN best;
+  END
+  IF (BIN_AND(w, 64) <> 0 AND dist > 500) THEN RETURN 64;
+  IF (BIN_AND(w, 16) <> 0 AND dist > 180) THEN RETURN 16;
+  IF (BIN_AND(w, 32) <> 0 AND dist < 700) THEN RETURN 32;
+  IF (BIN_AND(w, 128) <> 0) THEN RETURN 128;
+  IF (BIN_AND(w, 4) <> 0 AND dist < 600) THEN RETURN 4;
+  IF (BIN_AND(w, 64) <> 0) THEN RETURN 64;
+  IF (BIN_AND(w, 16) <> 0) THEN RETURN 16;
+  IF (BIN_AND(w, 8) <> 0 AND dist > 150) THEN RETURN 8;
+  IF (BIN_AND(w, 4) <> 0) THEN RETURN 4;
+  IF (BIN_AND(w, 2) <> 0) THEN RETURN 2;
+  RETURN 1;
+END^
+
+-- aim at the enemy (leading projectiles when skilled enough), scattered by the aim accuracy, and fire
 -- BotAggression (ai_dmq3.c): how keen on a fight the bot is, 0 to 100. With the quad 70 (unless it holds the
 -- gauntlet far from the enemy); none with the enemy 200 above, under 60 health, or under 80 without 40 armour;
 -- else by the best gun it holds: BFG 100, railgun 95, lightning and rockets 90, plasma 85, grenades 80,

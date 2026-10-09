@@ -480,9 +480,10 @@ CREATE TABLE bot_rnd (
   msg    VARCHAR(600) NOT NULL,
   PRIMARY KEY (name, idx)
 );
--- the bots' item weights (botlib's be_ai_weight.c over the pak's botfiles, read by src/itemweights.js): a
--- weight is the first case (o1, in the file's order) whose bound b1 the inventory value v1 is under, and
--- within it the first (o2) whose bound b2 the value v2 is under; b 1e9 is the default, v null no switch
+-- the bots' item and weapon weights (botlib's be_ai_weight.c over the pak's botfiles, read by
+-- src/itemweights.js; a gun's class is 'weapon:BIT'): a weight is the first case (o1, in the file's order)
+-- whose bound b1 the inventory value v1 is under, within it the first (o2) whose bound b2 the value v2 is
+-- under, and within that the first (o3) for v3; b 1e9 is the default, v null no switch at that level
 CREATE TABLE bot_iw (
   bot  VARCHAR(16) NOT NULL,
   cls  VARCHAR(40) NOT NULL,
@@ -492,6 +493,9 @@ CREATE TABLE bot_iw (
   o2   SMALLINT NOT NULL,
   v2   VARCHAR(32),
   b2   DOUBLE PRECISION NOT NULL,
+  o3   SMALLINT NOT NULL,
+  v3   VARCHAR(32),
+  b3   DOUBLE PRECISION NOT NULL,
   w    DOUBLE PRECISION NOT NULL
 );
 CREATE INDEX bot_iw_cls ON bot_iw (bot, cls);
