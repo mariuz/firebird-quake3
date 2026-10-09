@@ -56,7 +56,8 @@ export function autospriteQuads(f, look, ox = 0, oy = 0, oz = 0) {
   }
   return f.sprites.map((s) => ({ image: look.image, center: [s.c[0] + ox, s.c[1] + oy, s.c[2] + oz], size: s.size, blend: look.blend === 'opaque' ? 'blend' : look.blend }));
 }
-const DLIGHT_LOOK = { blend: 'opaque' };   // a dlight pass is drawn at once, never kept for the translucent pass
+const DLIGHT_LOOK = { blend: 'opaque' };
+const PORTAL_LOOK = { blend: 'opaque' };   // a dlight pass is drawn at once, never kept for the translucent pass
 
 export class Renderer {
   constructor(canvas, res, opts = {}) {
@@ -228,6 +229,38 @@ export class Renderer {
   /** The frame's dynamic lights: [{ x, y, z, radius, color: [r, g, b] }] */
   setDlights(lights) { this.dlights = lights ?? []; }
 
+  /** The view through a portal is painted into the frame like any other, then kept: */
+  beginPortalView() { this.portalFaces = null; }
+  /** ... its pixels for the portal's faces, k of them through the portal's fog (none without a view) */
+  endPortalView(k, faces) {
+    if (faces && k > 0) {
+      if (!this.portalImg || this.portalImg.length !== this.fb.length) this.portalImg = new Uint32Array(this.fb.length);
+      this.portalImg.set(this.fb);
+    }
+    this.portalK = k; this.portalFaces = faces;
+  }
+
+  /** A portal face's pixels: the portal's view where they are on the screen, darkened by its fog; the depth a
+   *  hair behind the face, so its own stages drawn over it at the face's depth pass */
+  portalSpans(y0, y1) {
+    const { w, edgeL, edgeR, fb, zb } = this, img = this.portalImg, k = this.portalK ?? 0;
+    for (let y = y0; y <= y1; y++) {
+      const o = y * 7, xl = edgeL[o], xr = edgeR[o];
+      if (xl === Infinity || xr === -Infinity) continue;
+      const xs = Math.max(0, Math.ceil(xl - 0.5)), xe = Math.min(w - 1, Math.ceil(xr - 0.5) - 1);
+      if (xs > xe) continue;
+      const span = xr - xl || 1, diz = (edgeR[o + 1] - edgeL[o + 1]) / span;
+      let iz = edgeL[o + 1] + diz * (xs + 0.5 - xl);
+      for (let x = xs, idx = y * w + xs; x <= xe; x++, idx++, iz += diz) {
+        if (iz <= zb[idx]) continue;
+        zb[idx] = iz * 0.99998;
+        if (!img || k <= 0) { fb[idx] = 0xff000000; continue; }
+        const c = img[idx];
+        fb[idx] = (0xff000000 | ((((c >> 16) & 255) * k) << 16) | ((((c >> 8) & 255) * k) << 8) | ((c & 255) * k)) >>> 0;
+      }
+    }
+  }
+
   /**
    * ProjectDlightTexture for a planar face just drawn (its vertices in this.vv): for each light within
    * reach of its plane, the face again with the light's in-plane offset in dlight-image texels where the
@@ -346,6 +379,15 @@ export class Renderer {
         vv[o] = vf; vv[o + 1] = vr; vv[o + 2] = vu;
         if (vf >= near) { vv[o + 3] = cx + (vr * sc) / vf; vv[o + 4] = cy - (vu * sc) / vf; } else behind = true;
         vv[o + 5] = verts[vi + 3]; vv[o + 6] = verts[vi + 4]; vv[o + 7] = verts[vi + 5]; vv[o + 8] = verts[vi + 6];
+      }
+      if (this.portalFaces?.has(face)) {
+        // the view through the portal under the portal's own stages
+        const pass = { portalpass: true, look: PORTAL_LOOK, f };
+        if (f.fan) this.emitPoly(0, 1, 2, m, behind, pass, true);
+        else for (let k = 0; k + 2 < f.tris.length; k += 3) {
+          const a = f.tris[k], b = f.tris[k + 1], c = f.tris[k + 2];
+          this.emitPoly(a, b, c, 3, vv[a * 9] < near || vv[b * 9] < near || vv[c * 9] < near, pass, false);
+        }
       }
       if (look.tcGen === 'environment' || look.env) {
         // the vertices' chrome coordinates (RB_CalcEnvironmentTexCoords), from where they are in the world
@@ -509,6 +551,7 @@ export class Renderer {
   drawSurfacePoly(poly, n, info) {
     if (info.dlight) { this.fillPolygon(poly, n, null, null, 'dlight', 0, 0, 0, 0, null, info.dlight); return; }
     if (info.fogpass) { this.fillPolygon(poly, n, null, null, 'fog', 0, 0, 0, 0, null, info.fogpass); return; }
+    if (info.portalpass) { this.fillPolygon(poly, n, null, null, 'portal'); return; }
     const { f, look, bsp } = info;
     if (look.sky) { this.fillPolygon(poly, n, null, null, 'sky', 0, 0, 0, 0); return; }
     const tex = this.texture(this.animImage(look, look.image, look.anim, look.animFps));
@@ -598,6 +641,7 @@ export class Renderer {
     if (mode === 'sky') { this.skySpans(y0, y1); return; }
     if (mode === 'dlight') { this.dlightSpans(y0, y1, dl.mod, dl.color); return; }
     if (mode === 'fog') { this.fogSpans(y0, y1, dl); return; }
+    if (mode === 'portal') { this.portalSpans(y0, y1); return; }
     const td = tex.data, wm = tex.wm, hm = tex.hm;
     const lm = page;
     const tphase = this.time * 2;

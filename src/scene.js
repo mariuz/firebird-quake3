@@ -15,6 +15,97 @@ const BLOOD = [201, 202, 203, 204, 205].map((i) => `models/weaphits/blood${i}.tg
 const TRAIL_STEP = 0.05, MAX_PUFFS = 400, BRASS_TIME = 2.5, BRASS_GRAVITY = 800, BRASS_BOUNCE = 0.4, MAX_BRASS = 64;
 const ROCKET_TRAIL = { dur: 2, radius: 64 }, GRENADE_TRAIL = { dur: 0.7, radius: 32 };
 
+// ── portals (misc_portal_surface → misc_portal_camera, R_GetPortalOrientations) ──
+const sub3 = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+const dot3 = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+const cross3 = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+const norm3 = (a) => { const l = Math.hypot(a[0], a[1], a[2]) || 1; return [a[0] / l, a[1] / l, a[2] / l]; };
+/** PerpendicularVector: the axis src leans on least, projected off src */
+export function perpendicular(src) {
+  let pos = 0, min = 1;
+  for (let i = 0; i < 3; i++) if (Math.abs(src[i]) < min) { pos = i; min = Math.abs(src[i]); }
+  const t = [0, 0, 0];
+  t[pos] = 1;
+  const d = dot3(t, src);
+  return norm3([t[0] - d * src[0], t[1] - d * src[1], t[2] - d * src[2]]);
+}
+/** RotatePointAroundVector by degrees (Rodrigues) */
+function rotateAround(dir, p, deg) {
+  const a = (deg * Math.PI) / 180, c = Math.cos(a), s = Math.sin(a), k = dot3(dir, p) * (1 - c), x = cross3(dir, p);
+  return [p[0] * c + x[0] * s + dir[0] * k, p[1] * c + x[1] * s + dir[1] * k, p[2] * c + x[2] * s + dir[2] * k];
+}
+const parseVec3 = (s) => (s ?? '0 0 0').trim().split(/\s+/).map(Number);
+
+/**
+ * The map's portals: each misc_portal_surface, the camera it targets (looking at its own target, rolled by
+ * "roll") and the faces whose shader is a portal within 64 units of the surface's plane. { faces: Set,
+ * origin, plane: [n, d] (unoriented), camera: { origin, axis: [fwd, left, up] } }
+ */
+export function findPortals(bsp, look) {
+  const ents = bsp.entities ?? [], out = [];
+  const portalFaces = [];
+  bsp.faces.forEach((f, i) => {
+    if (!f.nverts || !look(bsp.textures[f.texture]?.name ?? '').portal) return;
+    const V = f.verts, T = f.tris ?? [0, 1, 2];
+    const at = (k) => [V[k * 10], V[k * 10 + 1], V[k * 10 + 2]];
+    const a = at(T[0]), b = at(T[1]), c = at(T[2]);
+    const n = norm3(cross3(sub3(c, a), sub3(b, a)));   // PlaneFromPoints
+    portalFaces.push({ i, n, d: dot3(n, a), center: f.center });
+  });
+  for (const s of ents) {
+    if (s.classname !== 'misc_portal_surface' || !s.target) continue;
+    const cam = ents.find((e) => e.classname === 'misc_portal_camera' && e.targetname === s.target);
+    if (!cam) continue;   // a mirror (no camera): not drawn
+    const o = parseVec3(s.origin), co = parseVec3(cam.origin);
+    const tgt = cam.target ? ents.find((e) => e.targetname === cam.target) : null;
+    let dir;
+    if (tgt) dir = norm3(sub3(parseVec3(tgt.origin), co));
+    else { const y = ((Number(cam.angle) || 0) * Math.PI) / 180; dir = [Math.cos(y), Math.sin(y), 0]; }
+    // the camera entity's axis (CG_Misc portal: the direction, its perpendicular negated, their cross), then
+    // R_GetPortalOrientations turns it about the vertical (forward and left negated) and rolls it
+    const e1 = perpendicular(dir).map((v) => -v), e2 = cross3(dir, e1);
+    const fwd = dir.map((v) => -v);
+    let left = e1.map((v) => -v), up = e2;
+    const roll = Number(cam.roll) || 0;
+    if (roll) { left = rotateAround(fwd, left, roll); up = cross3(fwd, left); }
+    const faces = portalFaces.filter((p) => Math.abs(dot3(p.n, o) - p.d) <= 64);
+    if (!faces.length) continue;
+    out.push({ faces: new Set(faces.map((p) => p.i)), origin: o, plane: [faces[0].n, faces[0].d], center: faces[0].center, camera: { origin: co, axis: [fwd, left, up] } });
+  }
+  return out;
+}
+
+/**
+ * R_MirrorViewBySurface for a portal: the viewer's axes carried from the surface's frame to the camera's.
+ * The eye stays at the camera (Quake III moves it behind the camera by the viewer's offset and clips what
+ * is behind the camera's plane; there is no clip plane here). Returns the view as the painters take it.
+ */
+export function portalView(portal, view) {
+  let [n, d] = portal.plane;
+  const eye = [view.x, view.y, view.z];
+  if (dot3(n, eye) - d < 0) { n = n.map((v) => -v); d = -d; }   // the side the viewer is on is the front
+  const s1 = perpendicular(n), s2 = cross3(n, s1), S = [n, s1, s2], C = portal.camera.axis;
+  const carry = (v) => [0, 1, 2].map((k) => dot3(v, S[0]) * C[0][k] + dot3(v, S[1]) * C[1][k] + dot3(v, S[2]) * C[2][k]);
+  const yaw = (view.yaw * Math.PI) / 180, pitch = (view.pitch * Math.PI) / 180;
+  const f = [Math.cos(pitch) * Math.cos(yaw), Math.cos(pitch) * Math.sin(yaw), -Math.sin(pitch)];
+  const left = [-Math.sin(yaw), Math.cos(yaw), 0], up = cross3(f, left);
+  const F = norm3(carry(f)), L = norm3(carry(left)), U = norm3(carry(up));
+  // as yaw, pitch and roll (beginFrame builds right = R0 cos r + U0 sin r from them)
+  const py = Math.atan2(F[1], F[0]), pp = -Math.asin(Math.max(-1, Math.min(1, F[2])));
+  const R0 = [Math.sin(py), -Math.cos(py), 0], U0 = [Math.sin(pp) * Math.cos(py), Math.sin(pp) * Math.sin(py), Math.cos(pp)];
+  const right = L.map((v) => -v);
+  const roll = Math.atan2(dot3(right, U0), dot3(right, R0));
+  const [x, y, z] = portal.camera.origin;
+  return { x, y, z, yaw: (py * 180) / Math.PI, pitch: (pp * 180) / Math.PI, roll: (roll * 180) / Math.PI, fov: view.fov, fwd: F, right, up: U };
+}
+
+/** How much of the portal's view shows through: alphaGen portal 256 fogs it over in 256 units */
+export const PORTAL_RANGE = 256;
+export function portalFade(portal, view) {
+  const c = portal.center ?? portal.origin;
+  return Math.max(0, 1 - Math.hypot(view.x - c[0], view.y - c[1], view.z - c[2]) / PORTAL_RANGE);
+}
+
 // The dynamic lights (trap_R_AddLightToScene): radius and colour. A rocket and a BFG ball in flight (CG_Missile's
 // missileDlight), a rocket's or a grenade's explosion (CG_MissileHitWall: 300, fading in the second half of the
 // explosion), the quad's carrier (CG_PlayerPowerups), the muzzle flash (300 + rand & 31 in the weapon's
@@ -440,6 +531,30 @@ export function drawScene(renderer, hud, res, bsp, last, frame, opts = {}) {
   const time = last.TIME_;
   const state = opts.state ?? (opts.state = new FrameState());
   const view = opts.view ?? firstPersonView(last, state, opts.dt ?? 0.05, opts.fov ?? 90);
+  if (opts.portal && r.beginPortalView) {
+    // the view through the portal first, painted off screen; the portal's faces show it (R_MirrorViewBySurface)
+    const p = opts.portal;
+    r.setDlights([]);
+    r.beginPortalView();
+    if (p.frame) {
+      r.beginFrame({ ...p.view });
+      r.drawFaceList(p.frame.faces, time, p.brushAngles ?? new Map());
+      for (const e of p.frame.ents) {
+        const light = bsp.lightGrid(e.x, e.y, e.z + 24);
+        if (e.pmodel) {
+          const [pm, skin] = e.pmodel.split('/');
+          const [legs, torso, , cls] = e.anims.split(',');
+          r.drawPlayer(pm, skin, +legs, e.legsTime, +torso, e.torsoTime, cls === 'corpse' ? 0 : e.weapon, [e.x, e.y, e.z], e.yaw, time, light);
+          continue;
+        }
+        const m = res.models.get(e.model);
+        if (!m?.mdl) continue;
+        r.drawMd3(m.mdl, e.frame, [e.x, e.y, e.z], e.effects & 1 ? yawAxis((time * 88) % 360) : anglesAxis(-e.pitch, e.yaw, e.roll), null, light);
+      }
+      r.drawAlphaPolys();
+    }
+    r.endPortalView(p.frame ? p.fade : 0, p.faces);
+  } else r.endPortalView?.(0, null);
   r.beginFrame(view);
   const lights = opts.dlights === false ? [] : sceneLights(state, frame, last, view, time);
   r.setDlights(lights);

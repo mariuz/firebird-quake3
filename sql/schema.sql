@@ -54,7 +54,8 @@ CREATE TABLE viewcfg (
   h      INTEGER NOT NULL,
   fov    DOUBLE PRECISION NOT NULL,     -- horizontal, degrees
   near_z DOUBLE PRECISION NOT NULL,
-  vis_cluster INTEGER                  -- the cluster VIS_FACES was marked for
+  vis_cluster INTEGER,                 -- the cluster VIS_FACES was marked for
+  portal_cluster INTEGER               -- ... and PORTAL_FACES, for the portal camera's view
 );
 
 -- ── resources ───────────────────────────────────────────────────────────

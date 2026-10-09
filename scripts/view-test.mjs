@@ -6,7 +6,7 @@
 //   node scripts/view-test.mjs
 
 import fs from 'node:fs';
-import { FrameState, firstPersonView, zoomedFov, fovY, mapTorsoToWeaponFrame, viewTorsoFrame, underwaterFov, sceneLights, litByDlights, MAX_DLIGHTS } from '../src/scene.js';
+import { FrameState, firstPersonView, zoomedFov, fovY, mapTorsoToWeaponFrame, viewTorsoFrame, underwaterFov, sceneLights, litByDlights, MAX_DLIGHTS, findPortals, portalView, portalFade, perpendicular } from '../src/scene.js';
 import { tagTransform, autospriteQuads, fogST, fogFactor } from '../src/renderer.js';
 import { parseDeform, waveValue, deformVertex, envTexCoords, parseShaderScript, surfaceLook } from '../src/shader.js';
 import { Md3, parseAnimationCfg } from '../src/md3.js';
@@ -246,6 +246,33 @@ const markBsp = {
   assert(at([0, 0, -10], [800, 0, -10]) === 1 && at([0, 0, -10], [100, 0, 50]) === 0, 'past opaque it is all fog; above the surface none');
   const half = at([0, 0, 100], [400, 0, -100]);
   assert(Math.abs(half - Math.sqrt(0.5)) < 1e-6, `from above, a point as deep under the surface as the eye is over it gets half the depth's fog (${half.toFixed(3)})`);
+}
+
+// a portal (R_GetPortalOrientations, R_MirrorViewBySurface): a surface in the plane y = 0 seen from y > 0, a camera
+// at (1000, 0, 0) looking at (1000, -100, 0); looking into the surface is looking where the camera looks
+{
+  const v = (k) => Array.from(perpendicular(k)).map((x) => Math.round(x * 1000) / 1000).join();
+  assert(v([0, 1, 0]) === '1,0,0' && v([0, 0, 1]) === '1,0,0' && v([1, 0, 0]) === '0,1,0', 'PerpendicularVector: the axis the vector leans on least');
+  const face = { type: 1, texture: 0, nverts: 4, verts: new Float32Array(40), tris: new Uint16Array([0, 1, 2, 0, 2, 3]), center: [0, 0, 0], radius: 40 };
+  [[-32, 0, -32], [32, 0, -32], [32, 0, 32], [-32, 0, 32]].forEach((p, i) => face.verts.set(p, i * 10));
+  const bsp = {
+    faces: [face], textures: [{ name: 'portal' }],
+    entities: [
+      { classname: 'misc_portal_surface', origin: '0 0 0', target: 'cam' },
+      { classname: 'misc_portal_camera', targetname: 'cam', target: 'aim', origin: '1000 0 0' },
+      { classname: 'target_position', targetname: 'aim', origin: '1000 -100 0' },
+    ],
+  };
+  const portals = findPortals(bsp, (n) => ({ portal: n === 'portal' }));
+  assert(portals.length === 1 && portals[0].faces.has(0), 'the portal surface finds its camera and its face');
+  const pv = portalView(portals[0], { x: 0, y: 100, z: 0, yaw: 270, pitch: 0, fov: 90 });
+  assert(pv.x === 1000 && Math.abs(pv.fwd[1] + 1) < 1e-6 && Math.abs(pv.up[2] - 1) < 1e-6, `looking into the portal looks where the camera does, upright (forward ${pv.fwd.map((x) => x.toFixed(2)).join(' ')})`);
+  const turned = portalView(portals[0], { x: 0, y: 100, z: 0, yaw: 300, pitch: 0, fov: 90 });
+  assert(turned.yaw > pv.yaw + 25 && turned.yaw < pv.yaw + 35, `turning 30 degrees turns the view through the portal 30 (${(turned.yaw - pv.yaw).toFixed(1)})`);
+  assert(Math.abs(portalFade(portals[0], { x: 0, y: 128, z: 0 }) - 0.5) < 1e-6 && portalFade(portals[0], { x: 0, y: 300, z: 0 }) === 0, 'alphaGen portal 256: half the view at 128 units, none past 256');
+  const rolled = findPortals({ ...bsp, entities: bsp.entities.map((e) => (e.classname === 'misc_portal_camera' ? { ...e, roll: '180' } : e)) }, (n) => ({ portal: n === 'portal' }));
+  const upside = portalView(rolled[0], { x: 0, y: 100, z: 0, yaw: 270, pitch: 0, fov: 90 });
+  assert(Math.abs(upside.up[2] + 1) < 1e-6 && Math.abs(Math.abs(upside.roll) - 180) < 1e-6, 'a camera rolled 180 turns the view over');
 }
 
 // and the hand model really carries the gun down on those frames (with the pak, when it is there)

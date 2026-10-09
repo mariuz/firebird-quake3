@@ -81,6 +81,7 @@ export function parseShaderScript(text, into = new Map()) {
         case 'deformvertexes': sh.deform = args.map((x) => x.toLowerCase()); sh.deforms.push(sh.deform); break;
         case 'fogparms': { const n = args.filter((a) => a !== '(' && a !== ')').map(Number); if (n.length >= 4) sh.fog = { color: n.slice(0, 3), opaque: n[3] || 1 }; break; }
         case 'nopicmip': case 'nomipmaps': sh.nopicmip = true; break;
+        case 'portal': sh.portal = true; break;
         default: break;
       }
     }
@@ -163,6 +164,7 @@ export function surfaceLook(shaders, name) {
   const look = { name, image: null, anim: null, animFps: 0, blend: 'opaque', lightmapped: true, scroll: null, scale: null, turb: null, twoSided: false, sky: null, alphaTest: false, nodraw: false, rotate: 0, tcGen: null, vertexColor: false, add: null, env: null, autosprite: false, deforms: null };
   if (!sh) { look.image = name; return look; }
   look.autosprite = sh.deforms.some((d) => d[0] === 'autosprite' || d[0] === 'autosprite2');
+  look.portal = !!sh.portal;
   const deforms = sh.deforms.map(parseDeform).filter(Boolean);
   if (deforms.length) look.deforms = deforms.slice(0, 2);
   look.twoSided = sh.cull === 'none';

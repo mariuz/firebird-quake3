@@ -693,6 +693,21 @@ it per pixel (the groups are split by fog too); the software painter draws each 
 (`fogFace`) with s and t where the lightmap coordinates go and blends the pixels that face left on top.
 A fog surface without stages of its own (`fog_intel`) is not drawn; it was a checkerboard before.
 
+*Portals.* q3dm7's teleporter frame holds a `portal` shader face; a `misc_portal_surface` next to it
+targets a `misc_portal_camera`, which looks at its own target and is rolled by its "roll". The page
+reads them from the map's entities at load (`findPortals`: the face's plane by `PlaneFromPoints`, the
+camera's axes as cgame and `R_GetPortalOrientations` build them, forward and left negated, then
+rolled). Each frame with a portal face on screen and the eye within the 256 units its `alphaGen portal`
+stage needs, `portalView` carries the viewer's axes from the surface's frame to the camera's
+(`R_MirrorVector`) and `main.js` asks `FRAME_PORTAL` (sql/render.sql) for what the camera sees: the
+world faces of the camera's PVS (kept in `PORTAL_FACES`, marked once, apart from the eye's
+`VIS_FACES`) through its frustum and the models in it, rows as `FRAME_ALL`'s (3 to 4 ms). `drawScene`
+paints that view first, off screen (a framebuffer texture in WebGL, a copy of the frame in the software
+painter), then the main view, where the portal's faces show the off-screen pixels at their own screen
+places, darkened by the distance's fog, under the portal's own stages. The eye stays at the camera:
+Quake III mirrors it behind the camera by the viewer's offset and clips what lies behind the camera's
+plane, which neither painter can.
+
 *Dynamic lights* are `trap_R_AddLightToScene`'s, gathered each frame by `sceneLights` from what the
 frame already has: a rocket (effects 16) or a BFG ball (64) in flight at 200, a rocket's or a grenade's
 explosion at 300 (full for the first half of its sprite's life, then fading to nothing), a player

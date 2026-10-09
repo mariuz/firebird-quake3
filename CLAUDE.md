@@ -20,7 +20,7 @@ explosion sprites, beams) and nothing else. The renderers never query the databa
 - `npm test` (q3dm1 smoke), `npm run test:dm17` (jump pads), `npm run test:bots` (bots and the
   waypoint hunt), `npm run test:bots:dm17` (bots on the pads), `npm run test:pmove` (the movement against Quake III's
   `bg_pmove.c`), `npm run test:team` (team deathmatch), `npm run test:tourney` (the tournament), `npm run test:view` (the first-person
-  view, the impact marks' clipping, the trails, the brass, the dynamic lights, the shader features and the fog, seconds, no engine). All run against the real WASM engine in
+  view, the impact marks' clipping, the trails, the brass, the dynamic lights, the shader features, the fog and the portal's view, seconds, no engine). All run against the real WASM engine in
   Node; CI runs all of them before deploying. Each takes one to two minutes.
 - The pak is `public/pak/pak0.pk3`, fetched by `npm run fetch-pak` (gitignored; behind a proxy run it as
   `NODE_USE_ENV_PROXY=1 npm run fetch-pak`, Node's `fetch` ignores `HTTPS_PROXY`; only the gwdg mirror still has it). Four arenas:
@@ -68,6 +68,7 @@ explosion sprites, beams) and nothing else. The renderers never query the databa
 | interpolation between tics, local prediction | `src/main.js`: `viewRow`, `interpolateFrame`, `poseOf`; the eye clamp in `view_setup` |
 | view kicks, landing dips, bob, gun sway, zoom | `src/scene.js` `firstPersonView`, `zoomedFov`; the zoom key and sensitivity in `src/main.js` (tested by `npm run test:view`); the hit's source in `t_damage`, the fall's size in `impact` |
 | shader features (chrome, deforms, autosprite) | `surfaceLook`, `parseDeform`, `deformVertex`, `envTexCoords` in `src/shader.js`; the world shaders in `src/renderer-gl.js`; `chromeFace` and `autospriteQuads` in `src/renderer.js` |
+| portals (q3dm7's teleporter view) | `findPortals`, `portalView`, `portalFade` in `src/scene.js` and its portal pass in `drawScene`; `portalFrame` in `src/main.js`; `FRAME_PORTAL` in `sql/render.sql`; `beginPortalView`/`endPortalView` in both painters |
 | fog volumes | `fogparms` in `src/shader.js`, the fogs lump in `src/bsp.js`; `fogDefs`, `fogST`, `fogFactor`, `fogFace` in `src/renderer.js`, the world shader's fog in `src/renderer-gl.js` |
 | dynamic lights | `sceneLights`, `litByDlights` in `src/scene.js`; `setDlights` and the world shader's `dlights()` in `src/renderer-gl.js`, `dlightFace`/`dlightSpans` in `src/renderer.js` |
 | smoke trails, brass | `missileTrail`, `ejectBrass`, `moveBrass` in `src/scene.js` (brass collides through `Bsp.pointContents`); kind 17 from `fire_weapon` |
@@ -120,6 +121,8 @@ explosion sprites, beams) and nothing else. The renderers never query the databa
 - The jump pad's `target_position` is the apex of the throw, not the landing; the landing is found by
   flying the arc past it.
 - The software painter's scratch buffers can grow mid-frame; take the reference after the growth.
+- WebGL refuses every draw while a texture the program samples is the framebuffer being drawn into: the
+  portal pass unbinds the portal texture's unit first (the symptom was a black portal and no error).
 - The WebGL and 2D contexts need separate canvases (`#screen`, `#glscreen`, `#overlay`); the input
   listens on the wrapper.
 - The smoke test plays in god mode, and god mode returns from `t_damage` before anything is

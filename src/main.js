@@ -19,7 +19,7 @@ import { createSchema, loadResources, loadMap, buildWaypoints, setView } from '.
 import { Renderer } from './renderer.js';
 import { GLRenderer } from './renderer-gl.js';
 import { Hud } from './hud.js';
-import { FrameState, drawScene, firstPersonView, zoomedFov, fovY, ZOOM_FOV, underwaterFov } from './scene.js';
+import { FrameState, drawScene, firstPersonView, zoomedFov, fovY, ZOOM_FOV, underwaterFov, findPortals, portalView, portalFade } from './scene.js';
 import { Q3Audio } from './audio.js';
 
 const $ = (id) => document.getElementById(id);
@@ -32,7 +32,8 @@ const statsEl = $('stats');
 const TIC_MS = 50;
 
 let db, pak, res, renderer, hud;
-let map = null;          // { name, bsp }
+let map = null;          // { name, bsp, unlinked, portals }
+const portalState = new FrameState();   // parses the portal camera's rows (FRAME_PORTAL)
 let last = null;         // last Q3_TIC row
 let prev = null;         // the one before: the frame between two tics is painted between the two states
 let prevPose = null, curPose = null;   // the entities' and brush models' poses at those tics
@@ -175,7 +176,7 @@ async function startMap(name) {
   const t0 = performance.now();
   const bsp = await loadMap(db, pak, res, name, { skill: settings.skill, bots: settings.bots, link: false, fraglimit: settings.fraglimit, timelimit: settings.timelimit, warmup: 4,
     gametype: { team: 3, tourney: 1 }[settings.gametype] ?? 0, team: { red: 1, blue: 2 }[settings.team] ?? 0 });   // "prepare to fight", three, two, one, "fight!"
-  map = { name, bsp, unlinked: 1 };
+  map = { name, bsp, unlinked: 1, portals: findPortals(bsp, res.look) };
   await setPlayerName();
   renderer.setResources(res);
   renderer.particles = [];
@@ -356,7 +357,8 @@ async function frame() {
     t = performance.now();
     // the gun is put away past half-way into the zoom: drawn with the zoomed view it would fill the screen
     const noWeapon = curFov < (settings.fov + ZOOM_FOV) / 2;
-    const tint = drawScene(renderer, hud, res, map.bsp, view, fr, { fov: curFov, sqlProjected: fr.sqlProjected, state, dt, scoreboard, scores, view: fpv, noWeapon });
+    const portal = await portalFrame(fr, fpv);
+    const tint = drawScene(renderer, hud, res, map.bsp, view, fr, { fov: curFov, sqlProjected: fr.sqlProjected, state, dt, scoreboard, scores, view: fpv, noWeapon, portal });
     renderer.present(tint);
     perf.draw = performance.now() - t;
     updateStats(ticked);
@@ -376,6 +378,21 @@ function updateStats(ticked) {
   const now = performance.now();
   if (now - fpsT > 500) { fps = (fpsN * 1000) / (now - fpsT); tps = (ticN * 1000) / (now - fpsT); fpsT = now; fpsN = 0; ticN = 0; }
   statsEl.textContent = `${fps.toFixed(1)} fps · ${tps.toFixed(0)} tics/s · q3_tic ${perf.tic.toFixed(0)} ms · frame query ${perf.faces.toFixed(0)} ms (${perf.rows} faces) · paint ${perf.draw.toFixed(0)} ms · ${renderer.particles.length} particles${map?.unlinked > 0 ? ` · bots mapping the arena (${map.unlinked} to go, ${perf.graph.toFixed(0)} ms)` : ''}`;
+}
+
+/** A portal on screen and near enough to see through: what its camera sees (FRAME_PORTAL), as drawScene takes it */
+async function portalFrame(fr, fpv) {
+  if (!map.portals?.length || settings.renderer === 'sql') return null;
+  for (const p of map.portals) {
+    if (!fr.faces.some((f) => p.faces.has(f[0]))) continue;
+    const fade = portalFade(p, fpv);
+    if (fade <= 0) return { faces: p.faces, fade: 0, frame: null };
+    const v = portalView(p, { ...fpv, fov: curFov });
+    const rows = (await db.query(`SELECT * FROM frame_portal(${v.x}, ${v.y}, ${v.z}, ${v.fwd.join(', ')}, ${v.right.join(', ')}, ${v.up.join(', ')}, ${curFov})`, [], arr)).rows;
+    const frame = portalState.parse(rows);
+    return { faces: p.faces, fade, frame, view: v, brushAngles: portalState.brushAngles };
+  }
+  return null;
 }
 
 // ── SQL console ─────────────────────────────────────────────────────────

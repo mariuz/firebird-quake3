@@ -53,6 +53,8 @@ void main() {
   vSt = aSt; vLm = aLm; vColor = aColor;
 }`;
 
+const PORTAL_VIEW_LOOK = { name: '*portal', blend: 'opaque' };
+
 const WORLD_FS = `#version 300 es
 precision highp float;
 in vec2 vSt;
@@ -61,7 +63,10 @@ in vec3 vColor;
 in vec3 vWorld;
 uniform sampler2D uTex;
 uniform sampler2D uLightmap;
-uniform int uMode;        // 0 texture × lightmap, 1 texture × flat, 2 sky clouds
+uniform int uMode;        // 0 texture × lightmap, 1 texture × flat, 2 sky clouds, 3 the view through a portal
+uniform sampler2D uPortal;
+uniform vec2 uScreen;
+uniform float uPortalK;
 uniform float uFlat;
 uniform vec2 uScroll;
 uniform vec2 uScale;
@@ -107,6 +112,7 @@ vec3 dlights() {
   return sum;
 }
 void main() {
+  if (uMode == 3) { fragColor = vec4(texture(uPortal, gl_FragCoord.xy / uScreen).rgb * uPortalK, 1.0); return; }
   if (uMode == 2) {
     vec3 d = normalize(vWorld - uEye);
     float nz = max(0.12, abs(d.z));
@@ -460,6 +466,12 @@ export class GLRenderer {
       if (!info || info.look.nodraw || !info.idx.length) continue;
       if (info.look.autosprite) { this.autosprites.push(...autospriteQuads(info.f, info.look, row[2], row[3], row[4])); continue; }
       const ent = row[1];
+      if (this.portalFaces?.has(row[0])) {
+        // the view through the portal, drawn opaque under the portal's own stages
+        let pg = groups.get('*portal');
+        if (!pg) { pg = { look: PORTAL_VIEW_LOOK, lm: -1, ent: 0, fog: -1, origin: [0, 0, 0], angles: null, faces: [], count: 0, flat: 0, portalView: true }; groups.set('*portal', pg); }
+        pg.faces.push(info.idx); pg.count += info.idx.length;
+      }
       const fog = info.fog >= 0 && this.fogs?.[info.fog] ? info.fog : -1;
       const key = `${info.look.name}|${info.lm}|${ent}|${fog}`;
       let g = groups.get(key);
@@ -508,7 +520,8 @@ export class GLRenderer {
     const u = this.world.u;
     gl.uniformMatrix4fv(u.uProj, false, this.proj);
     gl.uniformMatrix4fv(u.uView, false, this.viewM);
-    gl.uniform1i(u.uTex, 0); gl.uniform1i(u.uLightmap, 1); gl.uniform1i(u.uSky2, 2); gl.uniform1i(u.uEnv, 3);
+    gl.uniform1i(u.uTex, 0); gl.uniform1i(u.uLightmap, 1); gl.uniform1i(u.uSky2, 2); gl.uniform1i(u.uEnv, 3); gl.uniform1i(u.uPortal, 4);
+    gl.uniform2f(u.uScreen, this.canvas.width, this.canvas.height);
     gl.uniform3f(u.uEye, this.view.x, this.view.y, this.view.z);
     gl.uniform3f(u.uFwd, this.view.fwd[0], this.view.fwd[1], this.view.fwd[2]);
     gl.uniform1f(u.uTime, this.time);
@@ -520,11 +533,52 @@ export class GLRenderer {
     }
   }
 
+  /** The view through a portal is painted into a texture of the canvas's size (R_MirrorViewBySurface's view) */
+  beginPortalView() {
+    const gl = this.gl, w = this.canvas.width, h = this.canvas.height;
+    if (!this.portalFb || this.portalW !== w || this.portalH !== h) {
+      if (this.portalFb) { gl.deleteFramebuffer(this.portalFb); gl.deleteTexture(this.portalTex); gl.deleteRenderbuffer(this.portalDepth); }
+      this.portalTex = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, this.portalTex);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      this.portalDepth = gl.createRenderbuffer();
+      gl.bindRenderbuffer(gl.RENDERBUFFER, this.portalDepth);
+      gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT24, w, h);
+      this.portalFb = gl.createFramebuffer();
+      gl.bindFramebuffer(gl.FRAMEBUFFER, this.portalFb);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.portalTex, 0);
+      gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, this.portalDepth);
+      this.portalW = w; this.portalH = h;
+    }
+    // nothing may read the texture being drawn into (WebGL refuses the draws): the portal's own faces in its
+    // view, and the unit the world shader samples it from, still bound from the last frame
+    gl.activeTexture(gl.TEXTURE4); gl.bindTexture(gl.TEXTURE_2D, null);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.portalFb);
+    this.portalFaces = null;
+  }
+  endPortalView(k, faces) {
+    this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, null);
+    this.portalK = k; this.portalFaces = faces;
+  }
+
   /** The frame's dynamic lights: [{ x, y, z, radius, color: [r, g, b] }], at most 8 */
   setDlights(lights) { this.dlights = (lights ?? []).slice(0, 8); }
 
   drawGroup(g) {
     const gl = this.gl, u = this.world.u, look = g.look;
+    if (g.portalView) {
+      gl.uniformMatrix4fv(u.uModel, false, this.identity);
+      gl.uniform1i(u.uDefN, 0);
+      gl.activeTexture(gl.TEXTURE4); gl.bindTexture(gl.TEXTURE_2D, this.portalTex ?? null);
+      gl.uniform1i(u.uMode, 3);
+      gl.uniform1f(u.uPortalK, this.portalTex ? this.portalK ?? 0 : 0);
+      gl.disable(gl.CULL_FACE);
+      this.setBlend('opaque');
+      gl.drawElements(gl.TRIANGLES, g.count, gl.UNSIGNED_INT, g.first * 4);
+      return;
+    }
     const axis = g.angles ? anglesAxis(g.angles[0], g.angles[1], g.angles[2]) : null;
     gl.uniformMatrix4fv(u.uModel, false, g.ent ? this.modelMatrix(g.origin, axis ?? [1, 0, 0, 0, 1, 0, 0, 0, 1]) : this.identity);
     const defs = look.deforms ?? [];

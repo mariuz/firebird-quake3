@@ -248,7 +248,7 @@ function geometryRows(bsp, res) {
 // columns a frame (the browser, so the arena opens at once)
 export async function loadMap(db, pak, res, name, { skill = 2, newGame = true, bots = 3, link = true, fraglimit = 20, timelimit = 0, warmup = 0, gametype = 0, team = 0 } = {}) {
   const bsp = new Bsp(pak.buffer(`maps/${name}.bsp`), `maps/${name}.bsp`);
-  await db.exec(`DELETE FROM sound_events; DELETE FROM fx_events; DELETE FROM messages; DELETE FROM ents; DELETE FROM map_ents; DELETE FROM vis_faces; UPDATE viewcfg SET vis_cluster = NULL;
+  await db.exec(`DELETE FROM sound_events; DELETE FROM fx_events; DELETE FROM messages; DELETE FROM ents; DELETE FROM map_ents; DELETE FROM vis_faces; DELETE FROM portal_faces; UPDATE viewcfg SET vis_cluster = NULL, portal_cluster = NULL;
     DELETE FROM face_verts; DELETE FROM faces; DELETE FROM textures; DELETE FROM nodes; DELETE FROM leaves; DELETE FROM leaffaces; DELETE FROM leafbrushes;
     DELETE FROM brushes; DELETE FROM brushsides; DELETE FROM models WHERE kind = 'B'`);
   for (const [id, m] of [...res.models]) if (m.kind === 'B') res.models.delete(id);

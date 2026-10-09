@@ -87,6 +87,14 @@ CREATE TABLE vis_faces (
   cx DOUBLE PRECISION NOT NULL, cy DOUBLE PRECISION NOT NULL, cz DOUBLE PRECISION NOT NULL, radius DOUBLE PRECISION NOT NULL
 );
 
+-- the same for the view through a portal (FRAME_PORTAL): the camera does not move, so its cluster's faces
+-- are marked once and kept apart from the eye's
+CREATE TABLE portal_faces (
+  face   INTEGER NOT NULL PRIMARY KEY,
+  nx DOUBLE PRECISION NOT NULL, ny DOUBLE PRECISION NOT NULL, nz DOUBLE PRECISION NOT NULL, dist DOUBLE PRECISION NOT NULL, twosided SMALLINT NOT NULL,
+  cx DOUBLE PRECISION NOT NULL, cy DOUBLE PRECISION NOT NULL, cz DOUBLE PRECISION NOT NULL, radius DOUBLE PRECISION NOT NULL
+);
+
 -- the faces that survive this frame's back-face and frustum tests (FRAME_FACES),
 -- with the entity's origin and rotation (m00..m22: world = o + M · v)
 CREATE GLOBAL TEMPORARY TABLE sel_faces (
@@ -372,6 +380,79 @@ BEGIN
   BEGIN
     kind = 7; i1 = NULL; d1 = NULL; s = NULL;
     SELECT LIST(e.id, ',') FROM ents e WHERE e.classname = 'target_speaker' AND e.count_ = 1 INTO lst;
+    SUSPEND;
+  END
+END^
+
+-- FRAME_PORTAL: what a portal's camera sees (R_MirrorViewBySurface's second view), for the page to paint
+-- behind the portal surface. The eye and its axes come from the page (the camera's, turned as the viewer
+-- turns; roll included, so no trace or clamp as VIEW_SETUP does); the PVS is the camera's, its faces kept
+-- in PORTAL_FACES while the camera stays in its cluster. Rows as FRAME_ALL's: the world faces (kind 1) and
+-- the models in the frustum (kind 2).
+CREATE OR ALTER PROCEDURE frame_portal (ex DOUBLE PRECISION, ey DOUBLE PRECISION, ez DOUBLE PRECISION,
+                                        fx DOUBLE PRECISION, fy DOUBLE PRECISION, fz DOUBLE PRECISION,
+                                        rx DOUBLE PRECISION, ry DOUBLE PRECISION, rz DOUBLE PRECISION,
+                                        ux DOUBLE PRECISION, uy DOUBLE PRECISION, uz DOUBLE PRECISION, vfov DOUBLE PRECISION)
+RETURNS (kind SMALLINT, i1 INTEGER, i2 INTEGER, i3 INTEGER, i4 INTEGER, i5 INTEGER,
+         d1 DOUBLE PRECISION, d2 DOUBLE PRECISION, d3 DOUBLE PRECISION, d4 DOUBLE PRECISION, d5 DOUBLE PRECISION,
+         d6 DOUBLE PRECISION, d7 DOUBLE PRECISION, d8 DOUBLE PRECISION, d9 DOUBLE PRECISION, s VARCHAR(200),
+         lst BLOB SUB_TYPE TEXT CHARACTER SET ASCII)
+AS
+DECLARE w INTEGER; DECLARE h INTEGER; DECLARE nearz DOUBLE PRECISION; DECLARE kx DOUBLE PRECISION; DECLARE ky DOUBLE PRECISION;
+DECLARE qx DOUBLE PRECISION; DECLARE qy DOUBLE PRECISION; DECLARE world INTEGER; DECLARE leaf INTEGER;
+DECLARE pvs VARCHAR(2048) CHARACTER SET ASCII; DECLARE vcl INTEGER; DECLARE cur INTEGER;
+DECLARE pm VARCHAR(16); DECLARE ps VARCHAR(16); DECLARE la INTEGER; DECLARE ta INTEGER; DECLARE hp INTEGER; DECLARE cn VARCHAR(40);
+DECLARE cl INTEGER; DECLARE cls VARCHAR(200) CHARACTER SET ASCII;
+BEGIN
+  SELECT g.world_model FROM game g WHERE g.id = 1 INTO world;
+  SELECT c.w, c.h, c.near_z, c.portal_cluster FROM viewcfg c WHERE c.id = 1 INTO w, h, nearz, cur;
+  kx = TAN(vfov * 0.5e0 * 0.0174532925e0); ky = kx * h / w;
+  qx = SQRT(1 + kx * kx); qy = SQRT(1 + ky * ky);
+  leaf = point_leaf(ex, ey, ez);
+  SELECT l.pvs, l.cluster FROM leaves l WHERE l.id = :leaf INTO pvs, vcl;
+  IF (pvs IS NULL) THEN pvs = '';
+  IF (vcl IS NULL) THEN vcl = -1;
+  IF (cur IS DISTINCT FROM vcl) THEN
+  BEGIN
+    DELETE FROM portal_faces;
+    INSERT INTO portal_faces (face, nx, ny, nz, dist, twosided, cx, cy, cz, radius)
+    SELECT f.id, f.nx, f.ny, f.nz, f.dist, f.twosided, f.cx, f.cy, f.cz, f.radius
+      FROM faces f
+     WHERE f.model_id = :world AND BIN_AND(f.flags, 128) = 0
+       AND f.id IN (SELECT lf.face
+                      FROM leaves l
+                      JOIN leaffaces lf ON lf.id >= l.first_lf AND lf.id < l.first_lf + l.num_lf
+                     WHERE l.cluster >= 0 AND l.num_lf > 0
+                       AND (:pvs = '' OR BIN_AND(POSITION(SUBSTRING(:pvs FROM BIN_SHR(l.cluster, 2) + 1 FOR 1), '0123456789abcdef') - 1, BIN_SHL(1, BIN_AND(l.cluster, 3))) <> 0));
+    UPDATE viewcfg c SET c.portal_cluster = :vcl WHERE c.id = 1;
+  END
+  kind = 1; i2 = 0; d1 = 0; d2 = 0; d3 = 0;
+  SELECT LIST(v.face, ',')
+    FROM portal_faces v
+   WHERE (v.twosided = 1 OR v.nx * :ex + v.ny * :ey + v.nz * :ez - v.dist > 0)
+     AND (v.cx - :ex) * :fx + (v.cy - :ey) * :fy + (v.cz - :ez) * :fz + v.radius >= :nearz
+     AND ABS((v.cx - :ex) * :rx + (v.cy - :ey) * :ry + (v.cz - :ez) * :rz)
+         <= ((v.cx - :ex) * :fx + (v.cy - :ey) * :fy + (v.cz - :ez) * :fz) * :kx + v.radius * :qx
+     AND ABS((v.cx - :ex) * :ux + (v.cy - :ey) * :uy + (v.cz - :ez) * :uz)
+         <= ((v.cx - :ex) * :fx + (v.cy - :ey) * :fy + (v.cz - :ez) * :fz) * :ky + v.radius * :qy
+    INTO lst;
+  IF (lst IS NOT NULL) THEN SUSPEND;
+  lst = NULL; d1 = NULL; d2 = NULL; d3 = NULL; i2 = NULL;
+  -- the models the camera sees (everyone, the player too: it may walk into its own view)
+  kind = 2;
+  FOR SELECT e.id, e.model_id, e.frame, e.weapon, e.effects, e.x, e.y, e.z, e.pitch, e.yaw, e.roll, e.legs_time, e.torso_time,
+             e.pmodel, e.pskin, e.legs_anim, e.torso_anim, e.health, e.classname, e.cluster, e.clusters
+        FROM ents e LEFT JOIN models m ON m.id = e.model_id
+       WHERE (m.kind IN ('M', 'S') OR e.pmodel IS NOT NULL) AND e.alpha = 0
+         AND (e.x - :ex) * :fx + (e.y - :ey) * :fy + (e.z - :ez) * :fz + COALESCE(m.radius, 0) + 64 >= :nearz
+         AND ABS((e.x - :ex) * :rx + (e.y - :ey) * :ry + (e.z - :ez) * :rz)
+             <= ((e.x - :ex) * :fx + (e.y - :ey) * :fy + (e.z - :ez) * :fz + COALESCE(m.radius, 0) + 64) * :kx + COALESCE(m.radius, 0) + 64
+        INTO i1, i2, i3, i4, i5, d1, d2, d3, d4, d5, d6, d7, d8, pm, ps, la, ta, hp, cn, cl, cls
+  DO
+  BEGIN
+    IF (clusters_visible(pvs, cls, COALESCE(cl, (SELECT l.cluster FROM leaves l WHERE l.id = point_leaf(:d1, :d2, :d3)))) = 0) THEN CONTINUE;
+    s = IIF(pm IS NULL, NULL, pm || '/' || COALESCE(ps, 'default'));
+    lst = la || ',' || ta || ',' || hp || ',' || cn;
     SUSPEND;
   END
 END^
