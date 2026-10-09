@@ -59,6 +59,33 @@ for (let i = 0; i < 120; i++) {
 }
 assert(s.DEADFLAG === 0 && s.HEALTH > 0 && s.CLUSTER !== null, `the bot respawned (hp ${s.HEALTH})`);
 
+// the body queue (CopyToBodyQue, BodySink): a corpse waits for its owner to respawn, lies 5 s more, then sinks
+// a unit every 100 ms and is gone 6.5 s after the respawn; 8 bodies at most
+{
+  const released = await q("SELECT id, nextthink - ltime wait FROM ents WHERE classname = 'corpse' AND think = 'body_sink'");
+  const waiting = (await q("SELECT COUNT(*) n FROM ents c JOIN ents o ON o.id = c.body_of WHERE c.classname = 'corpse' AND (c.think IS NOT NULL OR o.deadflag = 0)"))[0].N;
+  assert(released.length >= 1 && released.every((r) => Math.abs(r.WAIT - 5) < 1e-6) && waiting === 0,
+    `a respawn leaves its body 5 s more (${released.length} released); a body whose owner is still dead waits`);
+  const c = released[0].ID;
+  const z0 = (await q(`SELECT z FROM ents WHERE id = ${c}`))[0].Z;
+  await db.exec(`UPDATE ents SET ltime = (SELECT now_() FROM rdb$database) - 5, nextthink = (SELECT now_() FROM rdb$database) WHERE id = ${c}`);
+  for (let i = 0; i < 10; i++) await tic();
+  const sunk = z0 - ((await q(`SELECT z FROM ents WHERE id = ${c}`))[0]?.Z ?? z0);
+  await db.exec(`UPDATE ents SET ltime = (SELECT now_() FROM rdb$database) - 6.6 WHERE id = ${c}`);
+  for (let i = 0; i < 3; i++) await tic();
+  const gone = (await q(`SELECT COUNT(*) n FROM ents WHERE id = ${c}`))[0].N === 0;
+  assert(sunk >= 4 && sunk <= 6 && gone, `half a second into its sinking the body is ${sunk} units down; 6.5 s after the respawn it is gone`);
+  const made = [];
+  for (let i = 0; i < 9; i++) {
+    const id = (await q("SELECT id FROM spawn_ent('corpse', 0, 0, -9000)"))[0].ID;
+    await db.exec(`EXECUTE PROCEDURE body_queue(${id}, ${pe})`);
+    made.push(id);
+  }
+  const left = await q("SELECT id FROM ents WHERE classname = 'corpse' ORDER BY id");
+  assert(left.length === 8 && !left.some((r) => r.ID === made[0]), `the queue holds 8 bodies, the oldest making room (${left.length})`);
+  await db.exec(`DELETE FROM ents WHERE id IN (${made.join(',')})`);
+}
+
 // a bot picks up a weapon: drop it on one
 const item = (await q("SELECT FIRST 1 e.id, e.x, e.y, e.z, d.bit FROM ents e JOIN item_defs d ON d.cls = e.item WHERE d.kind = 'W' AND e.solid = 1 ORDER BY e.id"))[0];
 if (item) {

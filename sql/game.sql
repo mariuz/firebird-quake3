@@ -918,6 +918,40 @@ BEGIN
 END^
 
 -- GibEntity: the body bursts into the gib models
+-- The body queue (g_client.c): a corpse lies where its owner died until the owner respawns
+-- (CopyToBodyQue, from ClientRespawn), then 5 seconds more; then it sinks a unit every 100 ms (BodySink)
+-- and is gone 6.5 seconds after the respawn. The queue holds 8 bodies: a ninth takes the oldest's place.
+CREATE OR ALTER PROCEDURE body_queue (c INTEGER, owner INTEGER)
+AS
+BEGIN
+  UPDATE ents e SET e.body_of = :owner, e.think = NULL, e.nextthink = NULL WHERE e.id = :c;
+  DELETE FROM ents e WHERE e.classname = 'corpse' AND e.id NOT IN (SELECT FIRST 8 b.id FROM ents b WHERE b.classname = 'corpse' ORDER BY b.id DESC);
+END^
+
+-- CopyToBodyQue: the owner respawns (or leaves), its body starts its last 6.5 seconds
+CREATE OR ALTER PROCEDURE body_release (owner INTEGER)
+AS
+DECLARE t DOUBLE PRECISION;
+BEGIN
+  t = now_();
+  UPDATE ents e SET e.body_of = NULL, e.ltime = :t, e.think = 'body_sink', e.nextthink = :t + 5 WHERE e.classname = 'corpse' AND e.body_of = :owner;
+END^
+
+-- BodySink: down a unit every 100 ms (no longer a physics object), unlinked 6.5 s after the respawn
+CREATE OR ALTER PROCEDURE body_sink (eid INTEGER)
+AS
+DECLARE t DOUBLE PRECISION;
+BEGIN
+  t = now_();
+  IF (EXISTS (SELECT 1 FROM ents e WHERE e.id = :eid AND :t - e.ltime > 6.5e0 - 1e-6)) THEN
+  BEGIN
+    DELETE FROM ents e WHERE e.id = :eid;
+    EXIT;
+  END
+  UPDATE ents e SET e.z = e.z - 1, e.movetype = 0, e.vx = 0, e.vy = 0, e.vz = 0, e.nextthink = :t + 0.1e0 WHERE e.id = :eid;
+  EXECUTE PROCEDURE link_ent(eid);
+END^
+
 CREATE OR ALTER PROCEDURE gib_ent (eid INTEGER, dmg INTEGER)
 AS
 DECLARE m VARCHAR(64); DECLARE i INTEGER = 0;

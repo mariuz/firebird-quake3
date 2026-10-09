@@ -330,6 +330,7 @@ CREATE TABLE ents (
   waterlevel SMALLINT DEFAULT 0 NOT NULL,
   watertype  INTEGER DEFAULT 0 NOT NULL,
   ltime      DOUBLE PRECISION DEFAULT 0 NOT NULL,
+  body_of    INTEGER,                      -- a corpse: whose body it is, until it respawns (CopyToBodyQue)
   teleport_time DOUBLE PRECISION DEFAULT 0 NOT NULL,
   spawn_x DOUBLE PRECISION DEFAULT 0 NOT NULL, spawn_y DOUBLE PRECISION DEFAULT 0 NOT NULL, spawn_z DOUBLE PRECISION DEFAULT 0 NOT NULL,
   alpha      SMALLINT DEFAULT 0 NOT NULL,  -- 1 = not drawn (a picked-up item waiting to respawn)

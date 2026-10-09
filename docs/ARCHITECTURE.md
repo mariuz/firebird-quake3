@@ -355,7 +355,9 @@ Damage (`game.sql`) is `g_combat.c`: `t_damage(target, inflictor, attacker, dama
 mod)` with the knockback velocity, godmode, the battle suit, half the damage when hurting yourself
 (after the knock is worked out from the whole of it, "so rocket jumping works"), armour absorbing 66 percent, quad ×3,
 pain sounds by health, `killed` → `player_die`/`bot_die` into a corpse (`CONTENTS_CORPSE`, the death
-animation chosen at random) or `gib_ent` under −40 health with a shower of `throw_gib`; the
+animation chosen at random; the body queue, `body_queue`: it lies until its owner respawns, `body_release`
+as `CopyToBodyQue`, then 5 s more, then sinks a unit every 100 ms, `body_sink` as `BodySink`, gone 6.5 s
+after the respawn; 8 bodies at most, a ninth replacing the oldest) or `gib_ent` under −40 health with a shower of `throw_gib`; the
 `obituary` function knows the 20-odd means of death and their sentences ("was railed by", "almost
 dodged … rocket", "does a back flip into the lava"). `t_radius_damage` is the splash: damage falls off
 linearly with distance, a trace checks that the target is not behind a wall.

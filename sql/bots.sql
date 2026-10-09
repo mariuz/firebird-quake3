@@ -696,8 +696,8 @@ BEGIN
   EXECUTE PROCEDURE snd(eid, 2, 'sound/player/' || pm || '/death' || CAST(1 + FLOOR(RAND() * 3) AS INTEGER) || '.wav', 1, 1);
   EXECUTE PROCEDURE spawn_ent('corpse', (SELECT e.x FROM ents e WHERE e.id = :eid), (SELECT e.y FROM ents e WHERE e.id = :eid), (SELECT e.z FROM ents e WHERE e.id = :eid)) RETURNING_VALUES c;
   UPDATE ents e SET e.pmodel = :pm, e.pskin = :ps, e.yaw = (SELECT o.yaw FROM ents o WHERE o.id = :eid), e.solid = 2, e.movetype = 6, e.clipmask = 65537, e.takedamage = 1, e.health = 0, e.deadflag = 1,
-         e.minx = -15, e.miny = -15, e.minz = -24, e.maxx = 15, e.maxy = 15, e.maxz = -8, e.legs_anim = CAST(FLOOR(RAND() * 3) AS INTEGER) * 2, e.legs_time = :t, e.torso_anim = -1, e.weapon = 0,
-         e.think = 'remove', e.nextthink = :t + 8 WHERE e.id = :c;
+         e.minx = -15, e.miny = -15, e.minz = -24, e.maxx = 15, e.maxy = 15, e.maxz = -8, e.legs_anim = CAST(FLOOR(RAND() * 3) AS INTEGER) * 2, e.legs_time = :t, e.torso_anim = -1, e.weapon = 0 WHERE e.id = :c;
+  EXECUTE PROCEDURE body_queue(c, eid);
   EXECUTE PROCEDURE link_ent(c);
 END^
 
@@ -706,6 +706,7 @@ AS
 DECLARE x DOUBLE PRECISION; DECLARE y DOUBLE PRECISION; DECLARE z DOUBLE PRECISION; DECLARE yaw DOUBLE PRECISION; DECLARE t DOUBLE PRECISION;
 BEGIN
   t = now_();
+  EXECUTE PROCEDURE body_release(eid);
   EXECUTE PROCEDURE select_spawn(eid) RETURNING_VALUES x, y, z, yaw;
   UPDATE ents e SET e.x = :x, e.y = :y, e.z = :z + 9, e.yaw = COALESCE(:yaw, 0), e.ideal_yaw = COALESCE(:yaw, 0), e.pitch = 0, e.vx = 0, e.vy = 0, e.vz = 0,
          e.solid = 3, e.movetype = 4, e.takedamage = 2, e.alpha = 0, e.deadflag = 0, e.health = 125, e.armor = 0, e.weapons = 3, e.weapon = 2,
@@ -1090,6 +1091,7 @@ BEGIN
   END
   EXECUTE PROCEDURE bot_chat_event(eid, 'game_exit', NULL, 0);
   EXECUTE PROCEDURE say(bname || ' was kicked.');
+  EXECUTE PROCEDURE body_release(eid);
   DELETE FROM ents e WHERE e.owner_id = :eid AND e.classname IN ('rocket', 'grenade', 'plasma', 'bfg');
   UPDATE ents e SET e.enemy_id = NULL WHERE e.enemy_id = :eid;
   UPDATE player p SET p.follow_id = NULL WHERE p.follow_id = :eid;
@@ -1585,6 +1587,7 @@ BEGIN
   ELSE IF (think = 'missile_explode') THEN EXECUTE PROCEDURE missile_explode(eid, 0, 0, 1);
   ELSE IF (think = 'item_respawn') THEN EXECUTE PROCEDURE item_respawn(eid);
   ELSE IF (think = 'remove') THEN DELETE FROM ents e WHERE e.id = :eid;
+  ELSE IF (think = 'body_sink') THEN EXECUTE PROCEDURE body_sink(eid);
   ELSE IF (think = 'bot_think') THEN EXECUTE PROCEDURE bot_think(eid);
 END^
 

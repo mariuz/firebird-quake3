@@ -60,6 +60,7 @@ explosion sprites, beams) and nothing else. The renderers never query the databa
 | the player's movement (substeps, gravity, `PM_CmdScale`) | `player_think` in `sql/player.sql`; `scripts/pmove-test.mjs` holds it against `bg_pmove.c` |
 | movers, triggers, targets, items, damage, projectiles, map spawning | `sql/game.sql` |
 | weapons, the player's think, respawn | `sql/player.sql` |
+| corpses (the body queue, sinking) | `body_queue`, `body_release`, `body_sink` in `sql/game.sql`; made in `player_die`/`bot_die`, released by the respawns |
 | bot behaviour, skill characteristics (`bot_char`) | `sql/bots.sql` |
 | retreat or chase, grenade avoidance | `bot_aggression`, `bot_retreat_goal`, `bot_avoid_grenade` in `sql/bots.sql`, used in `bot_think` |
 | bot chat | `src/botchat.js` (the pak's botfiles into rows), `bot_say` and `bot_chat_event` at the top of `sql/bots.sql` |

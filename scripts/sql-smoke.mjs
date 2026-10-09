@@ -169,6 +169,8 @@ if (s.DEAD || s.HEALTH <= 0) {
   await db.exec("UPDATE ents SET flags = BIN_OR(flags, 16) WHERE classname = 'player'");
 }
 await db.exec("UPDATE ents SET nextthink = 1e9 WHERE classname = 'bot'");
+// (and what they already fired goes: a rocket still in flight could knock us off q3dm17's platforms)
+await db.exec("DELETE FROM ents WHERE classname IN ('rocket', 'grenade', 'plasma', 'bfg')");
 s = await tic([1, 0, 0, 0, 0, 0, 0, 1, 99]);
 assert(s.ROCKETS === 200, 'impulse 99 gave ammo');
 const oldWeapon = s.WEAPON;

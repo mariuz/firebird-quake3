@@ -383,6 +383,7 @@ DECLARE pe INTEGER; DECLARE x DOUBLE PRECISION; DECLARE y DOUBLE PRECISION; DECL
 BEGIN
   pe = player_ent();
   t = now_();
+  EXECUTE PROCEDURE body_release(pe);
   EXECUTE PROCEDURE select_spawn(pe) RETURNING_VALUES x, y, z, yaw;
   UPDATE ents e SET e.x = :x, e.y = :y, e.z = :z + 9, e.yaw = COALESCE(:yaw, 0), e.pitch = 0, e.vx = 0, e.vy = 0, e.vz = 0,
          e.minx = -15, e.miny = -15, e.minz = -24, e.maxx = 15, e.maxy = 15, e.maxz = 32, e.viewheight = 26,
@@ -420,8 +421,8 @@ BEGIN
   EXECUTE PROCEDURE spawn_ent('corpse', (SELECT e.x FROM ents e WHERE e.id = :pe), (SELECT e.y FROM ents e WHERE e.id = :pe), (SELECT e.z FROM ents e WHERE e.id = :pe)) RETURNING_VALUES c;
   UPDATE ents e SET e.pmodel = :pm, e.pskin = :ps, e.yaw = (SELECT o.yaw FROM ents o WHERE o.id = :pe), e.solid = 2, e.movetype = 6, e.clipmask = 65537, e.takedamage = 1, e.health = 0, e.deadflag = 1,
          e.minx = -15, e.miny = -15, e.minz = -24, e.maxx = 15, e.maxy = 15, e.maxz = -8, e.legs_anim = CAST(FLOOR(RAND() * 3) AS INTEGER) * 2, e.legs_time = :t, e.torso_anim = -1,
-         e.vx = (SELECT o.vx FROM ents o WHERE o.id = :pe), e.vy = (SELECT o.vy FROM ents o WHERE o.id = :pe), e.weapon = 0,
-         e.think = 'remove', e.nextthink = :t + 8 WHERE e.id = :c;
+         e.vx = (SELECT o.vx FROM ents o WHERE o.id = :pe), e.vy = (SELECT o.vy FROM ents o WHERE o.id = :pe), e.weapon = 0 WHERE e.id = :c;
+  EXECUTE PROCEDURE body_queue(c, pe);
   EXECUTE PROCEDURE link_ent(c);
 END^
 
