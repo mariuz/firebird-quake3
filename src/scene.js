@@ -159,6 +159,9 @@ export function litByDlights(light, x, y, z, lights) {
   return { ...light, directed, dir: [dir[0] / n, dir[1] / n, dir[2] / n] };
 }
 
+// CG_PlayerShadow: the trace down is 128 units, against what stops a player
+const SHADOW_DISTANCE = 128, SHADOW_MASK = 1 | 0x10000;
+
 // cg_marks.c: at most 256 pieces, each 10 s, the last second fading out
 const MAX_MARK_POLYS = 256, MARK_TOTAL_TIME = 10, MARK_FADE_TIME = 1;
 const SURF_SKY = 0x4, SURF_NOMARKS = 0x20, SURF_NODRAW = 0x80;
@@ -175,6 +178,40 @@ function clipPoly(poly, dist) {
     }
   }
   return out;
+}
+
+/** The floor under a point, within `reach` (CG_PlayerShadow's trace down, a point stepped through the brushes
+ *  rather than its 30-unit box): its height, or null when nothing solid is that close */
+export function floorBelow(bsp, x, y, z, reach = SHADOW_DISTANCE) {
+  if (!bsp?.pointContents || bsp.pointContents(x, y, z) & SHADOW_MASK) return null;   // startsolid: no shadow
+  let lo = 0;
+  for (let d = 8; d <= reach; d += 8) {
+    if (bsp.pointContents(x, y, z - d) & SHADOW_MASK) {
+      let hi = d;   // the floor is between lo (open) and hi (solid): halve it down to a unit
+      while (hi - lo > 1) { const m = (lo + hi) / 2; if (bsp.pointContents(x, y, z - m) & SHADOW_MASK) hi = m; else lo = m; }
+      return z - lo;
+    }
+    lo = d;
+  }
+  return null;
+}
+
+/** CG_PlayerShadow (cg_shadows 1): a 24-unit markShadow under each player model, and under the player, turned
+ *  with the legs and darker the nearer the floor (1 - the trace's fraction); a mark of this frame only */
+export function drawShadows(r, state, bsp, frame, last, time) {
+  const list = [];
+  const shadow = (x, y, z, yaw) => {
+    const floor = floorBelow(bsp, x, y, z);
+    if (floor === null) return;
+    const k = 1 - (z - floor) / SHADOW_DISTANCE;
+    const from = list.length;
+    state.impactMark(bsp, 'gfx/damage/shadow', [x, y, floor], [0, 0, 1], 24, time, 'subtract', [k, k, k], false, list, yaw);
+    for (let i = from; i < list.length; i++) list[i].k = k;
+  };
+  for (const e of frame.ents) if (e.pmodel && !(e.effects & 256)) shadow(e.x, e.y, e.z, e.yaw);
+  if (!last.DEAD && !last.SPECTATOR && !last.MATCH_OVER && !(last.INVIS > 0)) shadow(last.PX, last.PY, last.PZ, last.YAW);
+  for (const m of list) r.drawMark(m.pts, m.st, m.n, m.img, m.blend, [m.k, m.k, m.k, 1]);
+  return list.length;
 }
 
 /** CG_AddMarks: the marks still on, faded by age; energy marks glow and go dark in their first 3 s */
@@ -267,7 +304,7 @@ export class FrameState {
    *  normal `dir` onto the world faces in reach and clipped to them (R_MarkFragments); each piece is
    *  a mark polygon for MARK_TOTAL_TIME. blend 'subtract' darkens (GL_ZERO GL_ONE_MINUS_SRC_COLOR), 'blend'
    *  is alpha-blended; energy marks glow and darken in their first three seconds */
-  impactMark(bsp, img, o, dir, radius, time, blend = 'subtract', color = [1, 1, 1], energy = false) {
+  impactMark(bsp, img, o, dir, radius, time, blend = 'subtract', color = [1, 1, 1], energy = false, list = null, angle = null) {
     const dl = Math.hypot(dir[0], dir[1], dir[2]);
     if (!bsp || !(dl > 0) || !(radius > 0)) return;
     const n = [dir[0] / dl, dir[1] / dl, dir[2] / dl];
@@ -278,7 +315,7 @@ export class FrameState {
     const l1 = Math.hypot(a1[0], a1[1], a1[2]);
     a1 = [a1[0] / l1, a1[1] / l1, a1[2] / l1];
     let a2 = [n[1] * a1[2] - n[2] * a1[1], n[2] * a1[0] - n[0] * a1[2], n[0] * a1[1] - n[1] * a1[0]];
-    const ang = Math.random() * 2 * Math.PI, c = Math.cos(ang), s = Math.sin(ang);
+    const ang = angle === null ? Math.random() * 2 * Math.PI : (angle * Math.PI) / 180, c = Math.cos(ang), s = Math.sin(ang);
     [a1, a2] = [[a1[0] * c + a2[0] * s, a1[1] * c + a2[1] * s, a1[2] * c + a2[2] * s], [a2[0] * c - a1[0] * s, a2[1] * c - a1[1] * s, a2[2] * c - a1[2] * s]];
     // the box the mark covers: the square's four sides, 32 units either side of its plane plus the
     // projection's 20 behind (R_MarkFragments' near and far planes)
@@ -292,7 +329,7 @@ export class FrameState {
         poly = clipPoly(poly, (q) => (q[0] - o[0]) * pn[0] + (q[1] - o[1]) * pn[1] + (q[2] - o[2]) * pn[2] - pd);
         if (poly.length < 3) return;
       }
-      if (this.marks.length >= MAX_MARK_POLYS) this.marks.shift();
+      if (!list && this.marks.length >= MAX_MARK_POLYS) this.marks.shift();
       const pts = new Float32Array(poly.length * 3), st = new Float32Array(poly.length * 2);
       poly.forEach((q, k) => {
         // lifted off the surface a little along its normal (the shader's polygonOffset)
@@ -301,7 +338,7 @@ export class FrameState {
         st[k * 2] = 0.5 + (dx * a1[0] + dy * a1[1] + dz * a1[2]) * scale;
         st[k * 2 + 1] = 0.5 + (dx * a2[0] + dy * a2[1] + dz * a2[2]) * scale;
       });
-      this.marks.push({ pts, st, n: poly.length, img, blend, color, t0: time, energy });
+      (list ?? this.marks).push({ pts, st, n: poly.length, img, blend, color, t0: time, energy });
     };
     for (const f of this.markSurfaces(bsp)) {
       const ce = f.center;
@@ -564,6 +601,7 @@ export function drawScene(renderer, hud, res, bsp, last, frame, opts = {}) {
     else r.drawFaceList(frame.faces, time, state.brushAngles);
   }
   if (state.marks.length) drawMarks(r, state, time);
+  if (opts.shadows !== false) drawShadows(r, state, bsp, frame, last, time);
 
   // the models
   for (const e of frame.ents) {

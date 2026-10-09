@@ -693,6 +693,12 @@ it per pixel (the groups are split by fog too); the software painter draws each 
 (`fogFace`) with s and t where the lightmap coordinates go and blends the pixels that face left on top.
 A fog surface without stages of its own (`fog_intel`) is not drawn; it was a checkerboard before.
 
+*Shadows* are `CG_PlayerShadow`'s blobs (`cg_shadows 1`): for every player model in the frame and for
+the player itself, `floorBelow` steps a point down through the brushes (`Bsp.pointContents`, solid and
+player clip) for the floor within 128 units, and `drawShadows` lays the 24-unit `markShadow` there
+through `impactMark`, turned with the legs, subtracted with 1 - the height's fraction (darker the
+nearer), into a list of this frame only rather than the 10-second marks.
+
 *Portals.* q3dm7's teleporter frame holds a `portal` shader face; a `misc_portal_surface` next to it
 targets a `misc_portal_camera`, which looks at its own target and is rolled by its "roll". The page
 reads them from the map's entities at load (`findPortals`: the face's plane by `PlaneFromPoints`, the

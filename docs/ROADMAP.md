@@ -46,8 +46,8 @@ the order a player notices them on the demo maps:
 | **Shader features** | `deformVertexes` bulge, normal and autosprite2's axis, `tcGen vector`, more than the main stage plus one glow and one chrome, `alphaFunc` beyond a test, `rgbGen` wave variants, `alphaGen portal`, `fogparms`, `sort` keys, `polygonOffset`, `entityMergable`, multiple lightmap styles; the chrome reflects by the face's normal, not the vertices' (patches' normals are not kept) | `shader.js` and the painters |
 | **Fog, the rest** | models, brass and sprites inside a fog are not fogged (`R_FogFactor` on entities); the software painter fogs the opaque faces only, and a surface's own translucent stages are drawn unfogged | `scene.js` and the painters |
 | **Portals and mirrors, the rest** | mirrors (a portal surface without a camera) are not drawn; the view through a portal is seen from the camera itself, not from the viewer's offset behind it (that needs the clip plane at the camera Quake III uses); rotating and bobbing cameras; a portal inside a portal's view | `scene.js` `portalView`, the painters' portal pass |
-| **Flares** | `flare` shaders on lights | small |
-| **Entity shadows** | the blob shadow under players (`cg_shadows 1`) and the stencil shadows (3) | a decal under each player model |
+| **Flares** | `flare` shaders on lights (the BSP's type 4 surfaces) | off by default in Quake III 1.32 (`r_flares 0`), so not drawn here either |
+| **Entity shadows, the rest** | the stencil shadows (`cg_shadows 2`) and the projected ones (3); the blob is traced down by a point, not the 30-unit box | `scene.js` `drawShadows` |
 | **MD3 LOD** | `_1.md3`, `_2.md3` picked by screen size | `md3.js`/`loader.js`; the demo models have them |
 | **Curved surface LOD** | `r_lodCurveError` | the patches are tessellated once at level 4 |
 | **Lightning bolt and rail rings** | the LG's beam shader, the rail's spiral and core | the port draws a textured beam for both |
@@ -148,7 +148,8 @@ q3dm17 and q3tourney2, under the pewter picture, and the lamps), `deformVertexes
 and `deformVertexes wave` and `move` (the lava, the banners, the bobbing lamps); the fog volumes (the `fogs` lump
 and `fogparms`: q3dm7's red pit and orange ground fog, q3tourney2's hell fogs) as `RB_CalcFogTexCoords` and
 `R_FogFactor` have them; the portal (q3dm7's teleporter shows its camera's view, `R_MirrorViewBySurface`, fogged
-over in 256 units by `alphaGen portal`);
+over in 256 units by `alphaGen portal`); the blob shadow under every player and under the player itself
+(`CG_PlayerShadow`, `cg_shadows 1`);
 lightmaps with the overbright
 shift, the light grid for models, sky cloud layers, blend/add/filter surfaces, scroll/scale/turb
 tcMods, animMap, two-sided surfaces; the software and WebGL painters; positional sound, loops,

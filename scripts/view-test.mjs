@@ -6,7 +6,7 @@
 //   node scripts/view-test.mjs
 
 import fs from 'node:fs';
-import { FrameState, firstPersonView, zoomedFov, fovY, mapTorsoToWeaponFrame, viewTorsoFrame, underwaterFov, sceneLights, litByDlights, MAX_DLIGHTS, findPortals, portalView, portalFade, perpendicular } from '../src/scene.js';
+import { FrameState, firstPersonView, zoomedFov, fovY, mapTorsoToWeaponFrame, viewTorsoFrame, underwaterFov, sceneLights, litByDlights, MAX_DLIGHTS, findPortals, portalView, portalFade, perpendicular, floorBelow, drawShadows } from '../src/scene.js';
 import { tagTransform, autospriteQuads, fogST, fogFactor } from '../src/renderer.js';
 import { parseDeform, waveValue, deformVertex, envTexCoords, parseShaderScript, surfaceLook } from '../src/shader.js';
 import { Md3, parseAnimationCfg } from '../src/md3.js';
@@ -273,6 +273,23 @@ const markBsp = {
   const rolled = findPortals({ ...bsp, entities: bsp.entities.map((e) => (e.classname === 'misc_portal_camera' ? { ...e, roll: '180' } : e)) }, (n) => ({ portal: n === 'portal' }));
   const upside = portalView(rolled[0], { x: 0, y: 100, z: 0, yaw: 270, pitch: 0, fov: 90 });
   assert(Math.abs(upside.up[2] + 1) < 1e-6 && Math.abs(Math.abs(upside.roll) - 180) < 1e-6, 'a camera rolled 180 turns the view over');
+}
+
+// the blob shadows (CG_PlayerShadow): the floor found within 128 units, the shadow darker the nearer it is
+{
+  const floor = { pointContents: (x, y, z) => (z < 0 ? 1 : 0) };
+  assert(Math.abs(floorBelow(floor, 0, 0, 24) - 0) <= 1 && floorBelow(floor, 0, 0, 200) === null && floorBelow(floor, 0, 0, -5) === null,
+    'the floor 24 units down is found to the unit; none past 128, none from inside a brush');
+  const st = new FrameState();
+  const drawn = [];
+  const r = { drawMark: (pts, stc, n, img, blend, color) => drawn.push({ img, blend, k: color[0] }) };
+  st.markBsp = { models: [] }; st.markFaces = [{ type: 1, nverts: 4, verts: Float32Array.from([-64, -64, 0, 0, 0, 0, 0, 0, 0, 0, 64, -64, 0, 0, 0, 0, 0, 0, 0, 0, 64, 64, 0, 0, 0, 0, 0, 0, 0, 0, -64, 64, 0, 0, 0, 0, 0, 0, 0, 0]), normal: [0, 0, 1], center: [0, 0, 0], radius: 91 }];
+  const bsp = { ...floor, ...st.markBsp };
+  st.markBsp = bsp;
+  drawShadows(r, st, bsp, { ents: [{ pmodel: 'sarge/default', x: 0, y: 0, z: 24, yaw: 0, effects: 0 }, { pmodel: 'sarge/default', x: 20, y: 0, z: 88, yaw: 0, effects: 0 }] }, { DEAD: 1 }, 10);
+  assert(drawn.length === 2 && drawn.every((d) => d.img === 'gfx/damage/shadow' && d.blend === 'subtract') && drawn[0].k > drawn[1].k && Math.abs(drawn[0].k - (1 - 24 / 128)) < 0.02,
+    `a shadow under each player, darker for the one on the ground (${drawn.map((d) => d.k.toFixed(2)).join(', ')})`);
+  assert(st.marks.length === 0, 'and they are not kept as marks');
 }
 
 // and the hand model really carries the gun down on those frames (with the pak, when it is there)
