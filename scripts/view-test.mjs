@@ -167,6 +167,24 @@ const markBsp = {
   assert(st.marks.length === 256 && st.marks[0].t0 > 10.4, `at most 256 pieces, the oldest go first (${st.marks.length})`);
 }
 
+// the rocket's trail: a puff every 50 ms of flight wherever the frames fall, none twice or skipped
+{
+  const st = new FrameState();
+  let t = 0;
+  for (const dt of [0.016, 0.017, 0.033, 0.05, 0.004, 0.08, 0.016, 0.034, 0.1]) { t += dt; st.missileTrail(7, [t * 900, 0, 0], t, 2, 64); }
+  const times = st.puffs.map((p) => Math.round(p.t0 * 1000));
+  assert(times.join(',') === '50,100,150,200,250,300,350', `a rocket's puffs fall every 50 ms (${times.join(',')})`);
+  assert(st.puffs.every((p) => Math.abs(p.p[0] - p.t0 * 900) < 1e-6), 'each puff is where the rocket was at its time');
+}
+// the shells fall on a floor at z = 0 and lie there, never through it
+{
+  const st = new FrameState();
+  const floor = { pointContents: (x, y, z) => (z < 0 ? 1 : 0) };
+  for (let i = 0; i < 20; i++) st.ejectBrass(0, 0, 0, i * 18, i % 2 ? 2 : 4, 10);
+  for (let i = 0; i < 120; i++) st.moveBrass(floor, 0.016);
+  assert(st.brass.length === 30 && st.brass.every((b) => b.rest && b.p[2] >= 0 && b.p[2] < 4), `30 shells from 10 bullets and 10 shotgun blasts all lie on the floor (${st.brass.filter((b) => b.rest).length} at rest)`);
+}
+
 // and the hand model really carries the gun down on those frames (with the pak, when it is there)
 if (fs.existsSync('public/pak/pak0.pk3')) {
   const pak = new Pk3(fs.readFileSync('public/pak/pak0.pk3').buffer);

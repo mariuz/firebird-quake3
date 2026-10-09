@@ -11,6 +11,10 @@ const WEAPON_DIR = { 1: 'gauntlet', 2: 'machinegun', 4: 'shotgun', 8: 'grenadel'
 const RLBOOM = [1, 2, 3, 4, 5, 6, 7, 8].map((i) => `models/weaphits/rlboom/rlboom_${i}.jpg`);
 const BLOOD = [201, 202, 203, 204, 205].map((i) => `models/weaphits/blood${i}.tga`);
 
+// CG_RocketTrail's step, cg_brassTime, the trajectory's gravity, the shells' bounce (LEBS_BRASS)
+const TRAIL_STEP = 0.05, MAX_PUFFS = 400, BRASS_TIME = 2.5, BRASS_GRAVITY = 800, BRASS_BOUNCE = 0.4, MAX_BRASS = 64;
+const ROCKET_TRAIL = { dur: 2, radius: 64 }, GRENADE_TRAIL = { dur: 0.7, radius: 32 };
+
 // cg_marks.c: at most 256 pieces, each 10 s, the last second fading out
 const MAX_MARK_POLYS = 256, MARK_TOTAL_TIME = 10, MARK_FADE_TIME = 1;
 const SURF_SKY = 0x4, SURF_NOMARKS = 0x20, SURF_NODRAW = 0x80;
@@ -50,7 +54,9 @@ export class FrameState {
     this.messages = [];       // [{ id, time, text }]
     this.kick = { dmgSeen: null, at: -1e9, pitch: 0, roll: 0, bob: 0 };   // the first-person view's state
     this.bubbles = [];        // { p: [x, y, z], v: [vx, vy, vz], t0, dur } (CG_BubbleTrail's local entities)
-    this.lastPos = new Map(); // a missile's position at the last frame: its trail starts there
+    this.lastPos = new Map(); // a missile's position and time at the last frame: its trail starts there
+    this.puffs = [];          // { p: [x, y, z], t0, dur, radius } (CG_SmokePuff's LE_SCALE_FADE)
+    this.brass = [];          // { p, v, angles, t0, end, model, rest } (the shells' LE_FRAGMENT)
     this.marks = [];          // { pts, st, n, img, blend, color, t0, energy } (cg_marks.c's mark polys)
     this.markFaces = null;    // the world faces a mark can land on, for this.markBsp
     this.markBsp = null;
@@ -184,6 +190,61 @@ export class FrameState {
     }
   }
 
+  /** CG_RocketTrail (the grenade's too): a puff of smoke every 50 ms of the missile's flight, at where it
+   *  was then, from where the last frame left it to where it is now */
+  missileTrail(id, p, time, dur, radius) {
+    const last = this.lastPos.get(id);
+    this.lastPos.set(id, [p[0], p[1], p[2], time]);
+    if (!last || !(time > last[3])) return;
+    // whole steps by index, so rounding neither skips a boundary nor puts one in twice
+    for (let i = Math.floor(last[3] / TRAIL_STEP + 1e-6) + 1, end = Math.floor(time / TRAIL_STEP + 1e-6); i <= end; i++) {
+      const t = i * TRAIL_STEP, k = Math.max(0, Math.min(1, (t - last[3]) / (time - last[3])));
+      this.puffs.push({ p: [last[0] + (p[0] - last[0]) * k, last[1] + (p[1] - last[1]) * k, last[2] + (p[2] - last[2]) * k], t0: t, dur, radius });
+    }
+    if (this.puffs.length > MAX_PUFFS) this.puffs.splice(0, this.puffs.length - MAX_PUFFS);
+  }
+
+  /** CG_MachineGunEjectBrass and CG_ShotgunEjectBrass: shells thrown out of the shooter's right side
+   *  (one for the machinegun, two for the shotgun), tumbling, bouncing, gone after cg_brassTime */
+  ejectBrass(x, y, z, yaw, weapon, time) {
+    const a = (yaw * Math.PI) / 180, f = [Math.cos(a), Math.sin(a)], l = [-Math.sin(a), Math.cos(a)];
+    const crand = () => Math.random() * 2 - 1;
+    const local = (o, dx, dy, dz) => [o[0] + f[0] * dx + l[0] * dy, o[1] + f[1] * dx + l[1] * dy, (o[2] ?? 0) + dz];
+    const shell = (off, vel, model, life) => this.brass.push({
+      p: local([x, y, z], off[0], off[1], off[2]), v: local([0, 0], vel[0], vel[1], vel[2]),
+      angles: [Math.random() * 32, Math.random() * 32, Math.random() * 32], t0: time, end: time + life, model, rest: false,
+    });
+    if (weapon === 2) shell([8, -4, 24], [0, -50 + 40 * crand(), 100 + 50 * crand()], 'm', BRASS_TIME + (BRASS_TIME / 4) * Math.random());
+    else for (let i = 0; i < 2; i++) shell([8, 0, 24], [60 + 60 * crand(), (i === 0 ? 40 : -40) + 10 * crand(), 100 + 50 * crand()], 's', BRASS_TIME * 3 + BRASS_TIME * Math.random());
+    if (this.brass.length > MAX_BRASS) this.brass.splice(0, this.brass.length - MAX_BRASS);
+  }
+
+  /** The shells fly under gravity; one that would enter a solid bounces off the side it hit (the axis
+   *  whose step alone goes in), at 0.4 of its speed, and lies still once a floor holds it (CG_AddFragment,
+   *  CG_ReflectVelocity) */
+  moveBrass(bsp, dt) {
+    for (const b of this.brass) {
+      if (b.rest) continue;
+      b.v[2] -= BRASS_GRAVITY * dt;
+      b.angles[0] += 2 * dt; b.angles[1] += dt;
+      // in steps of at most 4 units, so a thin floor is not jumped over
+      const steps = Math.max(1, Math.ceil((Math.hypot(b.v[0], b.v[1], b.v[2]) * dt) / 4)), h = dt / steps;
+      for (let s = 0; s < steps && !b.rest; s++) {
+        const n = [b.p[0] + b.v[0] * h, b.p[1] + b.v[1] * h, b.p[2] + b.v[2] * h];
+        if (!bsp || !(bsp.pointContents(n[0], n[1], n[2]) & 1)) { b.p = n; continue; }
+        let hitFloor = false, hit = false;
+        for (let i = 0; i < 3; i++) {
+          const q = [b.p[0], b.p[1], b.p[2]];
+          q[i] = n[i];
+          if (bsp.pointContents(q[0], q[1], q[2]) & 1) { hit = true; if (i === 2 && b.v[2] < 0) hitFloor = true; b.v[i] = -b.v[i]; }
+        }
+        if (!hit) b.v = b.v.map((v) => -v);   // an edge only the diagonal step meets: straight back
+        b.v = b.v.map((v) => v * BRASS_BOUNCE);
+        if (hitFloor && b.v[2] < 40) b.rest = true;
+      }
+    }
+  }
+
   /** The temp entities of a tic become sprites, beams, particles and marks. */
   handleFx(renderer, rows, time, bsp = null) {
     for (const [, kind, x, y, z, x2, y2, z2, n] of rows) {
@@ -203,6 +264,7 @@ export class FrameState {
         case 12: this.beams.push({ a: [x, y, z], b: [x2, y2, z2], until: time + 0.07, img: 'gfx/misc/lightning3', width: 10, scroll: -time * 5, owner: n }); break;
         case 13: renderer.spawnParticles('blood', x, y, z, 40, [0, 0, 1], 0xff1010c0); break;
         case 15: this.bubbleTrail([x, y, z], [x2, y2, z2], 32, time); break;
+        case 17: this.ejectBrass(x, y, z, x2, n, time); break;
         case 14: renderer.spawnParticles('gunshot', x, y, z, 12, [0, 0, 3], 0xff80ffd0); break;
         default: break;
       }
@@ -370,8 +432,11 @@ export function drawScene(renderer, hud, res, bsp, last, frame, opts = {}) {
       // in water a rocket or a grenade leaves bubbles, not smoke (CG_RocketTrail, CG_GrenadeTrail)
       const from = state.lastPos.get(e.id) ?? [e.x, e.y, e.z];
       state.bubbleTrail(from, [e.x, e.y, e.z], 8, time);
-    } else if (e.effects & 16) r.spawnParticles('gunshot', e.x, e.y, e.z, 2, [0, 0, 0], 0xff808080);   // rocket smoke
-    if (e.effects & (16 | 32)) state.lastPos.set(e.id, [e.x, e.y, e.z]);
+      state.lastPos.set(e.id, [e.x, e.y, e.z, time]);
+    } else if (e.effects & (16 | 32)) {
+      const trail = e.effects & 16 ? ROCKET_TRAIL : GRENADE_TRAIL;
+      state.missileTrail(e.id, [e.x, e.y, e.z], time, trail.dur, trail.radius);
+    }
   }
 
   // the bubbles: radius 3, rising, gone after their second (LE_MOVE_SCALE_FADE, LEF_PUFF_DONT_SCALE)
@@ -383,6 +448,29 @@ export function drawScene(renderer, hud, res, bsp, last, frame, opts = {}) {
     }
   }
   if (state.lastPos.size > 64) state.lastPos.clear();
+
+  // the shells (LE_FRAGMENT): lit by the grid where they are
+  if (state.brass.length) {
+    state.moveBrass(bsp, Math.min(0.1, opts.dt ?? 0.05));
+    state.brass = state.brass.filter((b) => time < b.end && time >= b.t0 - 0.1);
+    for (const b of state.brass) {
+      const id = res.byName.get(`models/weapons2/shells/${b.model}_shell.md3`);
+      if (id) r.drawMd3(res.models.get(id).mdl, 0, b.p, anglesAxis(b.angles[0], b.angles[1], b.angles[2]), null, bsp.lightGrid(b.p[0], b.p[1], b.p[2]));
+    }
+  }
+
+  // the smoke: each puff grows from 8 to its radius + 8 as it fades from a third (LE_SCALE_FADE), and
+  // goes when the eye is inside it
+  if (state.puffs.length) {
+    state.puffs = state.puffs.filter((p) => time - p.t0 < p.dur && time >= p.t0 - 0.1);
+    for (const p of state.puffs) {
+      const c = 1 - Math.max(0, time - p.t0) / p.dur;
+      const radius = p.radius * (1 - c) + 8;
+      const d = (p.p[0] - view.x) * r.view.fwd[0] + (p.p[1] - view.y) * r.view.fwd[1] + (p.p[2] - view.z) * r.view.fwd[2];
+      if (d < radius) continue;
+      r.drawSprite('gfx/misc/smokepuff3', p.p, radius * 2, 'blend', 255, 0.33 * c);   // the smokePuff shader
+    }
+  }
   // effects in flight
   state.explosions = state.explosions.filter((x) => time - x.t0 < x.dur);
   for (const x of state.explosions) {

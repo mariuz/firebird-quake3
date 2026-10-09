@@ -332,6 +332,23 @@ export class Bsp {
     return -1 - n;
   }
 
+  /** The contents of the world's brushes at a point (CM_PointContents against model 0). */
+  pointContents(x, y, z) {
+    const lf = this.leaves[this.pointLeaf(x, y, z)];
+    let c = 0;
+    for (let k = 0; k < lf.numLeafBrushes; k++) {
+      const b = this.brushes[this.leafbrushes[lf.firstLeafBrush + k]];
+      if (!b.contents || (c & b.contents) === b.contents) continue;
+      let inside = b.numSides > 0;
+      for (let s = 0; s < b.numSides && inside; s++) {
+        const pl = this.planes[this.brushsides[b.firstSide + s].plane];
+        if (x * pl.nx + y * pl.ny + z * pl.nz - pl.dist > 0) inside = false;
+      }
+      if (inside) c |= b.contents;
+    }
+    return c;
+  }
+
   /** The light grid sample at a point: { ambient: [r,g,b], directed: [r,g,b], dir: [x,y,z] } (R_SetupEntityLightingGrid, nearest cell). */
   lightGrid(x, y, z) {
     const d = this.gridDims, gs = this.gridSize, gm = this.gridMins;

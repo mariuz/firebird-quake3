@@ -677,8 +677,8 @@ export class Renderer {
   }
 
   // ── sprites, beams, particles ──────────────────────────────────────────
-  /** A camera-facing square of `size` units with a picture, added or blended. */
-  drawSprite(img, origin, size, blend = 'add', light = 255) {
+  /** A camera-facing square of `size` units with a picture, added or blended (by `alpha` on top of the picture's). */
+  drawSprite(img, origin, size, blend = 'add', light = 255, alpha = 1) {
     const view = this.view;
     const wx = origin[0] - view.x, wy = origin[1] - view.y, wz = origin[2] - view.z;
     const f = wx * view.fwd[0] + wy * view.fwd[1] + wz * view.fwd[2];
@@ -688,9 +688,9 @@ export class Renderer {
     const iz = 1 / f, k = view.scale * iz;
     const hs = size / 2;
     const x0 = view.cx + (r - hs) * k, x1 = view.cx + (r + hs) * k, y0 = view.cy - (u + hs) * k, y1 = view.cy - (u - hs) * k;
-    const tex = this.texture(img);
-    this.triangle(x0, y0, iz, 0, 0, light, x1, y0, iz, tex.w, 0, light, x1, y1, iz, tex.w, tex.h, light, tex, blend, null);
-    this.triangle(x0, y0, iz, 0, 0, light, x1, y1, iz, tex.w, tex.h, light, x0, y1, iz, 0, tex.h, light, tex, blend, null);
+    const tex = this.texture(img), tint = alpha < 1 ? [1, 1, 1, alpha] : null;
+    this.triangle(x0, y0, iz, 0, 0, light, x1, y0, iz, tex.w, 0, light, x1, y1, iz, tex.w, tex.h, light, tex, blend, tint);
+    this.triangle(x0, y0, iz, 0, 0, light, x1, y1, iz, tex.w, tex.h, light, x0, y1, iz, 0, tex.h, light, tex, blend, tint);
   }
 
   /** A mark on the world: a polygon of n points (xyz) with texture coordinates in 0..1, blended or

@@ -591,7 +591,7 @@ export class GLRenderer {
     return q;
   }
 
-  drawSprite(img, origin, size, blend = 'add', light = 255) {
+  drawSprite(img, origin, size, blend = 'add', light = 255, alpha = 1) {
     const gl = this.gl, v = this.view;
     const hs = size / 2, r = v.right, up = v.up;
     const p = (a, b) => [origin[0] + r[0] * a + up[0] * b, origin[1] + r[1] * a + up[1] * b, origin[2] + r[2] * a + up[2] * b];
@@ -601,7 +601,7 @@ export class GLRenderer {
     gl.uniform1i(this.sprite.u.uUseTex, 1);
     this.setBlend(blend);
     const l = light / 255;
-    gl.bufferData(gl.ARRAY_BUFFER, this.quad(p(-hs, hs), p(hs, hs), p(hs, -hs), p(-hs, -hs), [0, 0], [1, 1], [l, l, l, 1]), gl.DYNAMIC_DRAW);
+    gl.bufferData(gl.ARRAY_BUFFER, this.quad(p(-hs, hs), p(hs, hs), p(hs, -hs), p(-hs, -hs), [0, 0], [1, 1], [l, l, l, alpha]), gl.DYNAMIC_DRAW);
     gl.drawArrays(gl.TRIANGLES, 0, 6);
     gl.disable(gl.BLEND); gl.depthMask(true);
   }

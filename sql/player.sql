@@ -207,7 +207,15 @@ CREATE OR ALTER PROCEDURE fire_weapon (shooter INTEGER, w INTEGER, ox DOUBLE PRE
   dx DOUBLE PRECISION, dy DOUBLE PRECISION, dz DOUBLE PRECISION, vol DOUBLE PRECISION)
 AS
 DECLARE h SMALLINT;
+DECLARE sx DOUBLE PRECISION; DECLARE sy DOUBLE PRECISION; DECLARE sz DOUBLE PRECISION; DECLARE syaw DOUBLE PRECISION;
 BEGIN
+  -- the machinegun and the shotgun throw their brass out of the shooter's side (CG_MachineGunEjectBrass,
+  -- CG_ShotgunEjectBrass): the browser gets where the shooter stands and which way it faces
+  IF (w IN (2, 4)) THEN
+  BEGIN
+    SELECT e.x, e.y, e.z, e.yaw FROM ents e WHERE e.id = :shooter INTO sx, sy, sz, syaw;
+    IF (sx IS NOT NULL) THEN EXECUTE PROCEDURE fx(17, sx, sy, sz, syaw, 0, 0, w);
+  END
   IF (w = 1) THEN
   BEGIN
     h = fire_gauntlet(shooter, ox, oy, oz, dx, dy, dz);

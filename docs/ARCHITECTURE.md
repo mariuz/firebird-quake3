@@ -650,6 +650,21 @@ world and before the models, with the shaders' blends: `bullet_mrk`, `hole_lg_mr
 The WebGL painter adds the shaders' `polygonOffset`. The marks are cosmetic, so they live in the
 browser; doors and plats are brush models and take none, as in Quake III.
 
+*Smoke and brass* are cgame's local entities too. A rocket or a grenade in flight (effects 16 and 32)
+leaves `CG_RocketTrail`'s puffs: `FrameState.missileTrail` keeps where and when the last frame saw it
+and drops a puff at every whole 50 ms of game time in between, at the position of that moment
+(rockets 2 s and radius 64, grenades 0.7 s and 32). A puff is the `smokePuff` shader's
+`gfx/misc/smokepuff3` sprite, growing from 8 to its radius + 8 while its alpha falls from a third
+(`LE_SCALE_FADE`), and dropped when the eye is inside it; `drawSprite` takes an alpha for it in both
+painters. The brass needs to know who fired: `fire_weapon` emits an effect of kind 17 for the machinegun
+and the shotgun with the shooter's origin, its yaw in `x2` and the weapon in `n`, and
+`FrameState.ejectBrass` throws `m_shell.md3` (one) or `s_shell.md3` (two) with Quake III's offsets and
+velocities out of the shooter's side, for `cg_brassTime` (2.5 s; the shotgun's 7.5 to 10). They fall
+at 800 and collide with the world through `Bsp.pointContents` (a point against the leaf's brushes, as
+`CM_PointContents`): in steps of at most 4 units, a step that would enter a solid reverses the axis that
+does and keeps 0.4 of the speed, and a shell that a floor stops below 40 units a second lies still.
+That is cosmetic collision in the browser, like cgame's `CG_Trace`; nothing in the game depends on it.
+
 *The zoom* is the client's too (`CG_CalcFov`): Z or the right mouse button holds it, `zoomedFov`
 eases the field of view to 22.5 degrees in 150 ms and back as fast on release, the mouse slows to
 `fov_y / 75` of its speed while zoomed (`cg.zoomSensitivity`), and the gun is put away past half-way

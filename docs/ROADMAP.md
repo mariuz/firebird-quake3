@@ -42,7 +42,6 @@ the order a player notices them on the demo maps:
 
 | Gap | Quake III | Where |
 | --- | --- | --- |
-| **Smoke and brass** | rocket and grenade smoke trails, machinegun and shotgun shells | `scene.js` local entities |
 | **Dynamic lights** | rockets, plasma, the quad and the muzzle flash light the world (`R_AddLightToScene`) | the WebGL program: a few point lights; the software painter: a per-polygon tint |
 | **Shader features** | `deformVertexes` (autosprite, wave, bulge), `tcGen environment`, `alphaFunc`, `rgbGen` wave variants, `alphaGen portal`, `fogparms`, `sort` keys, `polygonOffset`, `entityMergable`, multiple lightmap styles | `shader.js` and the painters; the demo maps use autosprite for flames and `tcGen environment` on a few metals |
 | **Fog volumes** | `fogs` lump, per-vertex fog | not drawn; q3dm7's fog pit is clear |
@@ -140,7 +139,8 @@ and teleporter edges; the PVS, frustum and back-face culling in SQL for the view
 between tics with live mouse look and the local player predicted (extrapolated, clamped by a trace);
 the impact marks (`CG_ImpactMark`, `R_MarkFragments`: bullet holes, the
 lightning gun's holes, burns, the plasma's and the rail's energy marks, gibs' blood, clipped to the world's faces and
-fading after 10 s); lightmaps with the overbright
+fading after 10 s); the rockets' and grenades' smoke trails (`CG_RocketTrail`) and the machinegun's and shotgun's
+brass (`CG_MachineGunEjectBrass`, `CG_ShotgunEjectBrass`) bouncing on the floor; lightmaps with the overbright
 shift, the light grid for models, sky cloud layers, blend/add/filter surfaces, scroll/scale/turb
 tcMods, animMap, two-sided surfaces; the software and WebGL painters; positional sound, loops,
 speakers, music; touch controls; the SQL console.
