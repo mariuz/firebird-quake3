@@ -290,6 +290,9 @@ CREATE TABLE ents (
   n_excellent  SMALLINT DEFAULT 0 NOT NULL,
   n_impressive SMALLINT DEFAULT 0 NOT NULL,
   n_gauntlet   SMALLINT DEFAULT 0 NOT NULL,
+  -- accuracy (accuracy_shots, accuracy_hits): every shot but the gauntlet's, and the shots that hit someone
+  acc_shots    INTEGER DEFAULT 0 NOT NULL,
+  acc_hits     INTEGER DEFAULT 0 NOT NULL,
   pteam        SMALLINT DEFAULT 0 NOT NULL,             -- sessionTeam: 0 free, 1 red, 2 blue
   queued       SMALLINT DEFAULT 0 NOT NULL,             -- a tournament's bot waiting its turn (TEAM_SPECTATOR); the player's is player.spectator
   spec_time    DOUBLE PRECISION DEFAULT 0 NOT NULL,     -- since when it waits (sess.spectatorTime): the longest waiting plays next

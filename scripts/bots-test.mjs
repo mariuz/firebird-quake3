@@ -220,6 +220,33 @@ if (item) {
   assert(hidden !== b2 && shooting === b2, `an invisible bot goes unnoticed (${hidden}) until it shoots (${shooting})`);
   await bset(b2, 'invis_finished = 0, attack_finished = 0');
 
+  // accuracy (FireWeapon's accuracy_shots, LogAccuracyHit's accuracy_hits): the bot shoots the other, both
+  // holding still; a bullet that hits, one that misses, a shotgun blast (one hit for the pattern), a gauntlet
+  // swing at nothing (no shot), a rocket in the face (its splash not counted again)
+  {
+    const pos = (await q(`SELECT e.x, e.y, e.z, o.x ox, o.y oy, o.z oz FROM ents e CROSS JOIN ents o WHERE e.id = ${b} AND o.id = ${b2}`))[0];
+    await db.exec(`UPDATE ents SET nextthink = 1e9, health = 1000 WHERE id IN (${b}, ${b2})`);
+    await bset(b, 'acc_shots = 0, acc_hits = 0');
+    // (the target put back each time: the shots knock it away)
+    const fire = async (w, sign = 1) => {
+      await db.exec(`UPDATE ents SET x = ${pos.OX}, y = ${pos.OY}, z = ${pos.OZ}, vx = 0, vy = 0, vz = 0 WHERE id = ${b2}`);
+      await db.exec(`EXECUTE PROCEDURE link_ent(${b2})`);
+      return fireAt(w, sign);
+    };
+    const fireAt = (w, sign = 1) => db.exec(`EXECUTE PROCEDURE fire_weapon(${b}, ${w}, ${pos.X}, ${pos.Y}, ${pos.Z + 10}, ${sign * (pos.OX - pos.X)}, ${sign * (pos.OY - pos.Y)}, 0, 1)`);
+    const acc = async () => { const r = (await q(`SELECT acc_shots s, acc_hits h FROM ents WHERE id = ${b}`))[0]; return `${r.S}/${r.H}`; };
+    const seen = [];
+    await fire(2); seen.push(await acc());
+    await fire(2, -1); seen.push(await acc());
+    await fire(4); seen.push(await acc());
+    await fire(1, -1); seen.push(await acc());
+    await fire(16);
+    for (let i = 0; i < 10 && (await q("SELECT COUNT(*) n FROM ents WHERE classname = 'rocket'"))[0].N > 0; i++) await tic();
+    seen.push(await acc());
+    assert(seen.join(' ') === '1/1 2/1 3/2 3/2 4/3', `accuracy shots/hits: a hit, a miss, a shotgun blast, a gauntlet swing, a rocket (${seen.join(' ')})`);
+    await db.exec(`UPDATE ents SET nextthink = (SELECT now_() FROM rdb$database), health = 100 WHERE id IN (${b}, ${b2})`);
+  }
+
   // Touch_Item: a haste is taken, a flight is not
   const touch = async (cls) => {
     const g = (await q(`SELECT id FROM spawn_ent('item', ${spot.X}, ${spot.Y}, ${spot.Z})`))[0].ID;

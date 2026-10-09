@@ -296,7 +296,15 @@ sound, the lead state. Each tic:
    Each counts on the entity, sets `award` and `award_time`, plays the announcer for the player; the
    HUD shows the medal for 3 s, as many times as it was earned (`CG_DrawReward`), the frame query sets
    an `EF_AWARD_*` bit for 2 s so the painter floats the medal over the earner's head, and the
-   intermission's scoreboard shows the player's medals of the match. Then `score_frag` keeps the
+   intermission's scoreboard shows the player's medals of the match. Accuracy is counted as
+   Quake III counts it: `fire_weapon` adds a shot for every weapon but the gauntlet (`FireWeapon`'s
+   `accuracy_shots`), and a hit (`log_accuracy_hit`: a living player or bot, not the shooter, not a
+   teammate) adds one for a bullet, one for a shotgun blast however many pellets hit, one for a rail
+   however many it goes through, one for a lightning tic or a gauntlet blow, and one for a missile,
+   its direct hit and its splash together (the missile's own `acc_hits` marks it). The intermission
+   draws `UI_SPPostgameMenu`'s medals in a row under the scores (`postgameMedals` in `src/hud.js`):
+   the accuracy in percent, impressive, excellent and gauntlet when earned, the frags, and perfect
+   for a win without dying. A tournament's warmup end clears them with the scores. Then `score_frag` keeps the
    scoreboard (through `add_score`, Quake III's `AddScore`), announces the lead changes and the frags left, and
    ends the match at the frag limit. *Team deathmatch* (`game.gametype` 3, `GT_TEAM`, from the page's
    Game setting through `init_map`) puts everyone on a team (`ents.pteam` 1 red, 2 blue): the player on

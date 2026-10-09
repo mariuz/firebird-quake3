@@ -80,6 +80,7 @@ explosion sprites, beams) and nothing else. The renderers never query the databa
 | impact marks (bullet holes, burns, blood) | `FrameState.impactMark` and `drawMarks` in `src/scene.js`, `drawMark` in both painters; the hit's normal comes in the fx row (`x2..z2`), kind 16 is a mark alone |
 | what gets drawn and how | `src/scene.js` (what), `src/renderer.js` and `src/renderer-gl.js` (how) |
 | HUD, icons, scoreboard | `src/hud.js` |
+| accuracy, the postgame medals | `acc_shots`/`acc_hits` counted in `fire_weapon` and at each weapon's hit (`log_accuracy_hit` in `sql/game.sql`); `postgameMedals` in `src/hud.js` |
 | sounds, music | `src/audio.js`; events are rows in `sound_events` written by `snd`/`snd_at` |
 | the page, settings, input, the loop, the console | `src/main.js`, `public/index.html`, `public/style.css` |
 | items, weapons, bot roster, player model | `src/gamedata.js` |

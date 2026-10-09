@@ -1020,6 +1020,7 @@ BEGIN
     UPDATE game g SET g.warmup_end = :t + 4, g.warmup_said = 4, g.time_warnings = 0 WHERE g.id = 1;
     UPDATE player p SET p.frags = 0, p.deaths = 0, p.lead_state = 1 WHERE p.id = 1;
     UPDATE ents e SET e.frags = 0, e.deaths = 0 WHERE e.classname = 'bot';
+    UPDATE ents e SET e.acc_shots = 0, e.acc_hits = 0, e.n_excellent = 0, e.n_impressive = 0, e.n_gauntlet = 0 WHERE e.classname IN ('player', 'bot');
     EXECUTE PROCEDURE snd_local('sound/feedback/prepare.wav');
     EXECUTE PROCEDURE cprint((SELECT LIST(TRIM(IIF(d.eid = player_ent(), (SELECT COALESCE(p.name, 'You') FROM player p WHERE p.id = 1), (SELECT e.bot FROM ents e WHERE e.id = d.eid))), ' vs ') FROM duel_ranked d));
   END
@@ -1662,7 +1663,7 @@ RETURNS (
   dmg_z DOUBLE PRECISION, dmg_world SMALLINT, land_change DOUBLE PRECISION, vx DOUBLE PRECISION, vy DOUBLE PRECISION,
   warmup_end DOUBLE PRECISION, award SMALLINT, award_time DOUBLE PRECISION, n_excellent SMALLINT, n_impressive SMALLINT, n_gauntlet SMALLINT,
   spectator SMALLINT, follow_name VARCHAR(32), mover_yaw DOUBLE PRECISION,
-  gametype SMALLINT, red_score INTEGER, blue_score INTEGER, team SMALLINT)
+  gametype SMALLINT, red_score INTEGER, blue_score INTEGER, team SMALLINT, acc_shots INTEGER, acc_hits INTEGER)
 AS
 DECLARE i INTEGER = 0;
 BEGIN
@@ -1689,13 +1690,13 @@ BEGIN
          e.leaf, e.cluster, g.match_over, g.winner, p.land_time, IIF(p.follow_id IS NULL, p.onground, IIF(BIN_AND(e.flags, 512) <> 0, 1, 0)), p.move_speed, p.weapon_sound,
          (SELECT COALESCE(MAX(b.frags), 0) FROM ents b WHERE b.classname = 'bot' AND b.queued = 0), p.ducked, g.fraglimit, g.timelimit, g.over_time, g.next_map,
          p.dmg_z, p.dmg_world, p.land_change, e.vx, e.vy, g.warmup_end, e.award, e.award_time, e.n_excellent, e.n_impressive, e.n_gauntlet, p.spectator, IIF(p.follow_id IS NULL, NULL, e.bot),
-         p.mover_yaw / :tics, g.gametype, g.red_score, g.blue_score, (SELECT o.pteam FROM ents o WHERE o.id = p.ent_id)
+         p.mover_yaw / :tics, g.gametype, g.red_score, g.blue_score, (SELECT o.pteam FROM ents o WHERE o.id = p.ent_id), e.acc_shots, e.acc_hits
     FROM game g CROSS JOIN player p JOIN ents e ON e.id = COALESCE(p.follow_id, p.ent_id)   -- following: the one followed
    WHERE g.id = 1 AND p.id = 1
     INTO tic, time_, health, max_health, armor, bullets, shells, grenades, rockets, lightning, slugs, cells, bfg,
          weapons, weapon, pending_weapon, weaponstate, weapon_time, attack_start, attack_finished,
          px, py, pz, yaw, pitch, view_z, punch, msg, cprint, dmg_take, dmg_save, dmg_time, dmg_x, dmg_y, bonus_time, dead, exit_kind, frags, deaths, waterlevel, watertype, map_name, level_msg,
-         quad, haste, invis, regen, enviro, flight, holdable, leaf, cluster, match_over, winner, land_time, onground, move_speed, weapon_sound, lead, ducked, fraglimit, timelimit, over_time, next_map, dmg_z, dmg_world, land_change, vx, vy, warmup_end, award, award_time, n_excellent, n_impressive, n_gauntlet, spectator, follow_name, mover_yaw, gametype, red_score, blue_score, team;
+         quad, haste, invis, regen, enviro, flight, holdable, leaf, cluster, match_over, winner, land_time, onground, move_speed, weapon_sound, lead, ducked, fraglimit, timelimit, over_time, next_map, dmg_z, dmg_world, land_change, vx, vy, warmup_end, award, award_time, n_excellent, n_impressive, n_gauntlet, spectator, follow_name, mover_yaw, gametype, red_score, blue_score, team, acc_shots, acc_hits;
   UPDATE player p SET p.dmg_take = 0, p.dmg_save = 0 WHERE p.id = 1 AND p.dmg_time < :time_ - 0.05e0;
   SUSPEND;
 END^

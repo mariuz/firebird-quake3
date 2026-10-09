@@ -46,7 +46,7 @@ DECLARE f DOUBLE PRECISION; DECLARE hx DOUBLE PRECISION; DECLARE hy DOUBLE PRECI
 DECLARE nx DOUBLE PRECISION; DECLARE ny DOUBLE PRECISION; DECLARE nz DOUBLE PRECISION;
 DECLARE sf INTEGER; DECLARE ct INTEGER; DECLARE als SMALLINT; DECLARE sts SMALLINT; DECLARE hit INTEGER;
 DECLARE i INTEGER = 0; DECLARE r DOUBLE PRECISION; DECLARE u DOUBLE PRECISION; DECLARE a DOUBLE PRECISION;
-DECLARE td SMALLINT; DECLARE hp INTEGER; DECLARE hits INTEGER = 0;
+DECLARE td SMALLINT; DECLARE hp INTEGER; DECLARE hits INTEGER = 0; DECLARE hitc SMALLINT = 0;
 DECLARE water SMALLINT; DECLARE sw INTEGER; DECLARE dw INTEGER;
 DECLARE wx DOUBLE PRECISION; DECLARE wy DOUBLE PRECISION; DECLARE wz DOUBLE PRECISION; DECLARE wf DOUBLE PRECISION;
 BEGIN
@@ -75,6 +75,7 @@ BEGIN
       BEGIN
         IF (hits = 0) THEN EXECUTE PROCEDURE fx(3, hx, hy, hz, 0, 0, 0, dmg);
         hits = hits + 1;
+        IF (log_accuracy_hit(hit, shooter) = 1) THEN hitc = 1;
         EXECUTE PROCEDURE t_damage(hit, shooter, shooter, dmg, dmg, 0, mod_);
       END
       ELSE IF (BIN_AND(sf, 4) = 0 AND (cnt = 1 OR MOD(i, 3) = 0)) THEN
@@ -96,6 +97,7 @@ BEGIN
     END
     i = i + 1;
   END
+  IF (hitc = 1) THEN UPDATE ents e SET e.acc_hits = e.acc_hits + 1 WHERE e.id = :shooter;
 END^
 
 -- Weapon_RailgunFire: a slug through everything in its path
@@ -121,7 +123,7 @@ BEGIN
     IF (hit > 0 AND EXISTS (SELECT 1 FROM ents e WHERE e.id = :hit AND e.takedamage > 0)) THEN
     BEGIN
       -- LogAccuracyHit: a player or a bot, alive
-      IF (EXISTS (SELECT 1 FROM ents e WHERE e.id = :hit AND e.classname IN ('player', 'bot') AND e.health > 0 AND e.id <> :shooter)) THEN hits = hits + 1;
+      IF (log_accuracy_hit(hit, shooter) = 1) THEN hits = hits + 1;
       EXECUTE PROCEDURE t_damage(hit, shooter, shooter, dmg, dmg, 0, 17);
       -- continue from just past the hit, ignoring what we just shot
       ignore = hit;
@@ -134,6 +136,8 @@ BEGIN
   EXECUTE PROCEDURE fx(4, ox, oy, oz, hx, hy, hz, 0);
   -- the slug's mark where it stopped in the world (CG_MissileHitWall for WP_RAILGUN: the energy mark)
   IF (f < 1 AND BIN_AND(sf, 4) = 0) THEN EXECUTE PROCEDURE fx(16, hx, hy, hz, nx, ny, nz, 64);
+  -- one hit for the accuracy however many it went through
+  IF (hits > 0) THEN UPDATE ents e SET e.acc_hits = e.acc_hits + 1 WHERE e.id = :shooter;
   -- two hits in a row, impressive (a miss starts the count again)
   IF (hits = 0) THEN UPDATE ents e SET e.rail_hits = 0 WHERE e.id = :shooter;
   ELSE
@@ -162,6 +166,7 @@ BEGIN
   EXECUTE PROCEDURE fx(12, ox, oy, oz, hx, hy, hz, shooter);
   IF (f < 1 AND hit > 0 AND EXISTS (SELECT 1 FROM ents e WHERE e.id = :hit AND e.takedamage > 0)) THEN
   BEGIN
+    IF (log_accuracy_hit(hit, shooter) = 1) THEN UPDATE ents e SET e.acc_hits = e.acc_hits + 1 WHERE e.id = :shooter;
     EXECUTE PROCEDURE t_damage(hit, shooter, shooter, dmg, dmg, 0, 16);
     EXECUTE PROCEDURE snd_at(hx, hy, hz, 'sound/weapons/lightning/lg_hit' || TRIM(CASE CAST(FLOOR(RAND() * 3) AS INTEGER) WHEN 0 THEN '' WHEN 1 THEN '2' ELSE '3' END) || '.wav', 1, 1);
   END
@@ -183,6 +188,8 @@ BEGIN
   IF (f < 1 AND hit > 0 AND EXISTS (SELECT 1 FROM ents e WHERE e.id = :hit AND e.takedamage > 0 AND e.health > 0)) THEN
   BEGIN
     EXECUTE PROCEDURE fx(3, hx, hy, hz, 0, 0, 0, 50);
+    -- (a hit counts though the gauntlet's swings are not counted as shots: CheckGauntletAttack, FireWeapon)
+    IF (log_accuracy_hit(hit, shooter) = 1) THEN UPDATE ents e SET e.acc_hits = e.acc_hits + 1 WHERE e.id = :shooter;
     EXECUTE PROCEDURE t_damage(hit, shooter, shooter, 50, 50, 0, 1);
     RETURN 1;
   END
@@ -209,6 +216,8 @@ AS
 DECLARE h SMALLINT;
 DECLARE sx DOUBLE PRECISION; DECLARE sy DOUBLE PRECISION; DECLARE sz DOUBLE PRECISION; DECLARE syaw DOUBLE PRECISION;
 BEGIN
+  -- FireWeapon: a shot for the accuracy, but the gauntlet's
+  IF (w <> 1) THEN UPDATE ents e SET e.acc_shots = e.acc_shots + 1 WHERE e.id = :shooter;
   -- the machinegun and the shotgun throw their brass out of the shooter's side (CG_MachineGunEjectBrass,
   -- CG_ShotgunEjectBrass): the browser gets where the shooter stands and which way it faces
   IF (w IN (2, 4)) THEN

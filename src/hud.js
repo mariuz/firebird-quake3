@@ -208,19 +208,34 @@ export class Hud {
       r.drawString(this.font, sd, bx + bw - 8 - sd.length * cs, y, cs, [0.7, 0.7, 0.7]);
       y += cs + 4;
     }
-    // at the end, the player's medals of the match (the single-player postgame's)
+    // at the end, the player's stats of the match as the single-player postgame shows them
     if (hud.MATCH_OVER) {
-      const medals = [['excellent', hud.N_EXCELLENT], ['impressive', hud.N_IMPRESSIVE], ['gauntlet', hud.N_GAUNTLET]].filter(([, n]) => n > 0);
+      const medals = postgameMedals(hud);
       const ms = Math.round(32 * k);
-      let mx = (r.w - medals.length * (ms + 3 * cs)) >> 1;
-      for (const [kind, n] of medals) {
+      const room = (text) => ms + 2 + (text.length + 1) * cs;
+      let mx = (r.w - medals.reduce((a, [, text]) => a + room(text), 0)) >> 1;
+      for (const [kind, text] of medals) {
         const pic = this.pic(`menu/medals/medal_${kind}`);
         if (pic) r.drawPic(pic, mx, by + bh + 6, ms, ms);
-        r.drawString(this.font, `${n}`, mx + ms + 2, by + bh + 6 + ((ms - cs) >> 1), cs, [1, 1, 1]);
-        mx += ms + 3 * cs;
+        r.drawString(this.font, text, mx + ms + 2, by + bh + 6 + ((ms - cs) >> 1), cs, [1, 1, 1]);
+        mx += room(text);
       }
     }
   }
+}
+
+/**
+ * UI_SPPostgameMenu's awards for the player: the accuracy (hits over shots, the gauntlet's swings not
+ * counted, as G_Damage's callers count them), impressive, excellent and gauntlet when earned, the frags,
+ * and perfect (medal_victory) for a win without dying. [medal, text] pairs.
+ */
+export function postgameMedals(hud) {
+  const out = [];
+  if (hud.ACC_SHOTS > 0) out.push(['accuracy', `${Math.min(100, Math.floor((hud.ACC_HITS * 100) / hud.ACC_SHOTS))}%`]);
+  for (const [kind, n] of [['impressive', hud.N_IMPRESSIVE], ['excellent', hud.N_EXCELLENT], ['gauntlet', hud.N_GAUNTLET]]) if (n > 0) out.push([kind, `${n}`]);
+  if (hud.FRAGS > 0) out.push(['frags', `${hud.FRAGS}`]);
+  if (hud.WINNER === 'You' && hud.DEATHS === 0) out.push(['victory', 'Perfect']);
+  return out;
 }
 
 export { AMMO_ICONS };

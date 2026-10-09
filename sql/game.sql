@@ -170,6 +170,17 @@ BEGIN
   RETURN IIF(ta > 0 AND ta = tb, 1, 0);
 END^
 
+-- LogAccuracyHit: a shot at `targ` counts as a hit for `attacker`'s accuracy when the target is a living
+-- player or bot that can be hurt, not the attacker itself and not a teammate
+CREATE OR ALTER FUNCTION log_accuracy_hit (targ INTEGER, attacker INTEGER) RETURNS SMALLINT
+AS
+BEGIN
+  IF (targ IS NULL OR attacker IS NULL OR targ = attacker) THEN RETURN 0;
+  IF (NOT EXISTS (SELECT 1 FROM ents t WHERE t.id = :targ AND t.classname IN ('player', 'bot') AND t.takedamage > 0 AND t.health > 0)) THEN RETURN 0;
+  IF (NOT EXISTS (SELECT 1 FROM ents a WHERE a.id = :attacker AND a.classname IN ('player', 'bot'))) THEN RETURN 0;
+  RETURN 1 - on_same_team(targ, attacker);
+END^
+
 CREATE OR ALTER FUNCTION ent_name (eid INTEGER) RETURNS VARCHAR(32)
 AS
 DECLARE n VARCHAR(32);
@@ -1180,7 +1191,15 @@ BEGIN
     -- CanDamage: a clear line to the centre
     EXECUTE PROCEDURE trace_move(NULL, 0, 0, 0, 0, 0, 0, ix, iy, iz, cx, cy, cz, 1)
       RETURNING_VALUES f, ex, ey, ez, nx, ny, nz, sf, ct, als, sts, hit;
-    IF (f = 1 OR als = 1 OR hit = eid) THEN EXECUTE PROCEDURE t_damage(eid, inflictor, attacker, CAST(pts AS INTEGER), CAST(pts AS INTEGER), 1, mod_);
+    IF (f = 1 OR als = 1 OR hit = eid) THEN
+    BEGIN
+      IF (log_accuracy_hit(eid, attacker) = 1 AND EXISTS (SELECT 1 FROM ents m WHERE m.id = :inflictor AND m.acc_hits = 0)) THEN
+      BEGIN
+        UPDATE ents m SET m.acc_hits = 1 WHERE m.id = :inflictor;
+        UPDATE ents a SET a.acc_hits = a.acc_hits + 1 WHERE a.id = :attacker;
+      END
+      EXECUTE PROCEDURE t_damage(eid, inflictor, attacker, CAST(pts AS INTEGER), CAST(pts AS INTEGER), 1, mod_);
+    END
   END
 END^
 
@@ -1331,6 +1350,11 @@ BEGIN
     IF (td2 > 0 AND hp2 > 0) THEN
     BEGIN
       EXECUTE PROCEDURE fx(3, x, y, z, 0, 0, 0, dmg);
+      IF (log_accuracy_hit(e2, own) = 1) THEN
+      BEGIN
+        UPDATE ents m SET m.acc_hits = 1 WHERE m.id = :e1;
+        UPDATE ents a SET a.acc_hits = a.acc_hits + 1 WHERE a.id = :own;
+      END
       EXECUTE PROCEDURE t_damage(e2, e1, own, dmg, dmg, 0, m);
       -- the direct hit is not also splashed
       UPDATE ents e SET e.count_ = IIF(:c1 = 'plasma', 0, e.count_) WHERE e.id = :e1;
@@ -1348,6 +1372,11 @@ BEGIN
     IF (BIN_AND(sflags, 4) <> 0) THEN BEGIN DELETE FROM ents e WHERE e.id = :e1; EXIT; END
     IF (td2 > 0 AND hp2 > 0 AND c2 IN ('player', 'bot')) THEN
     BEGIN
+      IF (log_accuracy_hit(e2, own) = 1) THEN
+      BEGIN
+        UPDATE ents m SET m.acc_hits = 1 WHERE m.id = :e1;
+        UPDATE ents a SET a.acc_hits = a.acc_hits + 1 WHERE a.id = :own;
+      END
       EXECUTE PROCEDURE t_damage(e2, e1, own, dmg, dmg, 0, 4);
       EXECUTE PROCEDURE missile_explode(e1, nx, ny, nz);
     END

@@ -10,6 +10,7 @@ import { FrameState, firstPersonView, zoomedFov, fovY, mapTorsoToWeaponFrame, vi
 import { Renderer, tagTransform, autospriteQuads, fogST, fogFactor } from '../src/renderer.js';
 import { parseDeform, waveValue, deformVertex, envTexCoords, parseShaderScript, surfaceLook, shellMesh, eyeInModel } from '../src/shader.js';
 import { Md3, parseAnimationCfg } from '../src/md3.js';
+import { postgameMedals } from '../src/hud.js';
 import { Pk3 } from '../src/pk3.js';
 
 let failed = 0;
@@ -349,6 +350,15 @@ const markBsp = {
   // (CG_HasteTrail's trailTime starts at the first frame's time, so the second frame puffs too)
   const at = st.puffs.map((p) => p.t0).join(',');
   assert(at === '10,10.05,10.1,10.2' && st.puffs.every((p) => p.p[2] === 8 && p.dur === 0.5 && p.alpha === 1), `the haste: a puff every 100 ms, 16 under the origin (at ${at})`);
+}
+
+// the end of the match (UI_SPPostgameMenu): the accuracy, the awards earned, the frags, perfect for a win
+// without dying
+{
+  const m = postgameMedals({ ACC_SHOTS: 30, ACC_HITS: 11, N_IMPRESSIVE: 2, N_EXCELLENT: 0, N_GAUNTLET: 1, FRAGS: 20, WINNER: 'You', DEATHS: 0 });
+  assert(m.map((x) => x.join(' ')).join(', ') === 'accuracy 36%, impressive 2, gauntlet 1, frags 20, victory Perfect', `the postgame medals (${m.map((x) => x.join(' ')).join(', ')})`);
+  const lost = postgameMedals({ ACC_SHOTS: 0, ACC_HITS: 0, N_IMPRESSIVE: 0, N_EXCELLENT: 0, N_GAUNTLET: 0, FRAGS: 3, WINNER: 'Sarge', DEATHS: 0 });
+  assert(lost.length === 1 && lost[0][0] === 'frags', 'no shots, no accuracy; no win, no perfect');
 }
 
 // and the hand model really carries the gun down on those frames (with the pak, when it is there)

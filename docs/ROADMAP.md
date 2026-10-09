@@ -32,7 +32,7 @@ has no ladders.
 | **Holdables** | medkit and the personal teleporter are picked up and used; the teleporter's destination is a random spawn, as in the game |
 | **Powerups** | quad, haste, invisibility, regeneration, battle suit, flight are here, for the bots too but flight (they would float off); the red team's quad shell in team play (`redQuadShader`) and the powerups' sounds (the regeneration's pulse is played, the flight's loop and the battle suit's hum are not); a dead player does not drop its powerups (`TossClientItems`) |
 | **Corpses** | the body is a separate entity from the moment of death (Quake III keeps the dead player itself until the respawn copies it into the queue), so it does not slide with the dead player's view. Gibs leave blood on the walls; a bleeding player does not (`CG_Bleed` leaves no mark either) |
-| **Persistent stats** | accuracy, per-weapon kills, the end-of-match stats screen |
+| **Persistent stats** | the match's stats are kept and shown at the intermission (see §8); across matches nothing is kept (Quake III's single player logs its awards to the config, `UI_LogAwardData`, and the frags medal is for each hundred frags of a career); kills per weapon are a later games' screen, not Quake III's |
 
 ## 4. The renderer
 
@@ -130,7 +130,8 @@ bobbing, pendulum, rotating, static, timers, speakers; jump pads (`AimAtTarget`)
 and multiple triggers, `G_UseTargets` with delays and relays, `target_give/kill/print/teleporter/
 remove_powerups/score`; every item of `bg_itemlist` with its respawn, armour at 66 percent, the five
 powerups and two holdables; the nine weapons with Quake III's spreads, speeds, damages and fire
-times; damage, knockback, gibs, obituaries; the body queue (8 corpses, each lying until its owner respawns,
+times; accuracy as `FireWeapon` and `LogAccuracyHit` count it and the postgame medals at the intermission (accuracy,
+impressive, excellent, gauntlet, frags, perfect); damage, knockback, gibs, obituaries; the body queue (8 corpses, each lying until its owner respawns,
 5 s more, then sinking into the floor); the player model animation system with
 `animation.cfg`, tags and skins; the HUD, scoreboard, announcer, lead state; the frag and time
 limits with the time warnings and sudden death, the intermission at the map's intermission point,
