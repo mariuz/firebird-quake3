@@ -53,7 +53,31 @@ uniform sampler2D uSky2;
 uniform int uSkyLayers;
 uniform vec4 uSkyScroll;  // layer 1 xy, layer 2 zw
 uniform vec2 uSkyScale;
+uniform int uDlCount;     // the dynamic lights on this surface (0 for the translucent ones)
+uniform vec4 uDlPos[8];   // xyz, radius
+uniform vec3 uDlColor[8];
 out vec4 fragColor;
+// ProjectDlightTexture: dst × (1 + light), the light the dlight image (4000 / d² of 255 for d texels from the
+// middle of 16 spread over the radius, nothing under 75) by the offset in the surface's plane, times full up to
+// half the radius off the plane and down to nothing at the radius
+vec3 dlights() {
+  vec3 n = normalize(cross(dFdx(vWorld), dFdy(vWorld)));
+  vec3 sum = vec3(0.0);
+  for (int i = 0; i < 8; i++) {
+    if (i >= uDlCount) break;
+    vec3 d = vWorld - uDlPos[i].xyz;
+    float r = uDlPos[i].w, dn = abs(dot(d, n));
+    if (dn >= r) continue;
+    float m = dn < r * 0.5 ? 1.0 : 2.0 * (r - dn) / r;
+    vec3 p = d - n * dot(d, n);
+    float t = length(p) * 16.0 / r;
+    if (t >= 7.8) continue;
+    float b = t < 3.96 ? 1.0 : 15.686 / (t * t);
+    if (t > 6.8) b *= 7.8 - t;
+    sum += uDlColor[i] * b * m;
+  }
+  return sum;
+}
 void main() {
   if (uMode == 2) {
     vec3 d = normalize(vWorld - uEye);
@@ -68,12 +92,9 @@ void main() {
   if (uTurb > 0.0) st += vec2(sin(vSt.y * 12.0 + uTime * 2.0), sin(vSt.x * 12.0 + uTime * 2.0)) * 0.015;
   vec4 c = texture(uTex, st);
   if (uAlphaTest == 1 && c.a < 0.5) discard;
-  if (uMode == 0) {
-    vec3 lm = texture(uLightmap, vLm).rgb;
-    fragColor = vec4(c.rgb * lm, c.a);
-  } else {
-    fragColor = vec4(c.rgb * uFlat, c.a);
-  }
+  vec3 lit = uMode == 0 ? c.rgb * texture(uLightmap, vLm).rgb : c.rgb * uFlat;
+  if (uDlCount > 0) lit *= 1.0 + dlights();
+  fragColor = vec4(min(lit, 1.0), c.a);
 }`;
 
 const MODEL_VS = `#version 300 es
@@ -427,7 +448,16 @@ export class GLRenderer {
     gl.uniform1i(u.uTex, 0); gl.uniform1i(u.uLightmap, 1); gl.uniform1i(u.uSky2, 2);
     gl.uniform3f(u.uEye, this.view.x, this.view.y, this.view.z);
     gl.uniform1f(u.uTime, this.time);
+    const dl = this.dlights ?? [];
+    if (dl.length) {
+      const pos = new Float32Array(32), col = new Float32Array(24);
+      dl.forEach((l, i) => { pos.set([l.x, l.y, l.z, l.radius], i * 4); col.set(l.color, i * 3); });
+      gl.uniform4fv(u['uDlPos[0]'], pos); gl.uniform3fv(u['uDlColor[0]'], col);
+    }
   }
+
+  /** The frame's dynamic lights: [{ x, y, z, radius, color: [r, g, b] }], at most 8 */
+  setDlights(lights) { this.dlights = (lights ?? []).slice(0, 8); }
 
   drawGroup(g) {
     const gl = this.gl, u = this.world.u, look = g.look;
@@ -464,6 +494,7 @@ export class GLRenderer {
     gl.uniform2f(u.uScale, look.scale ? look.scale[0] : 1, look.scale ? look.scale[1] : 1);
     gl.uniform1f(u.uTurb, look.turb ? 1 : 0);
     gl.uniform1i(u.uAlphaTest, look.alphaTest ? 1 : 0);
+    gl.uniform1i(u.uDlCount, look.blend === 'opaque' ? (this.dlights?.length ?? 0) : 0);
     this.setBlend(look.blend);
     gl.drawElements(gl.TRIANGLES, g.count, gl.UNSIGNED_INT, g.first * 4);
     if (look.add && look.blend === 'opaque') {
@@ -474,6 +505,7 @@ export class GLRenderer {
       gl.uniform2f(u.uScroll, look.add.scroll ? look.add.scroll[0] * this.time : 0, look.add.scroll ? look.add.scroll[1] * this.time : 0);
       gl.uniform2f(u.uScale, look.add.scale ? look.add.scale[0] : 1, look.add.scale ? look.add.scale[1] : 1);
       gl.uniform1i(u.uAlphaTest, 0);
+      gl.uniform1i(u.uDlCount, 0);
       this.setBlend('add');
       gl.drawElements(gl.TRIANGLES, g.count, gl.UNSIGNED_INT, g.first * 4);
     }

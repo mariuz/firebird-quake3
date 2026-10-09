@@ -13,6 +13,7 @@ import { loadImage, powerOfTwo, halve } from './image.js';
 import { SURF } from './bsp.js';
 
 const LIGHTMAP_SIZE = 128;
+const DLIGHT_LOOK = { blend: 'opaque' };   // a dlight pass is drawn at once, never kept for the translucent pass
 
 export class Renderer {
   constructor(canvas, res, opts = {}) {
@@ -44,6 +45,7 @@ export class Renderer {
     this.image = this.ctx.createImageData(w, h);
     this.fb = new Uint32Array(this.image.data.buffer);
     this.zb = new Float32Array(w * h);
+    this.dlights = [];
     this.edgeL = new Float32Array(h * 7);   // x, iz, s/z, t/z, u/z, v/z, light per scanline
     this.edgeR = new Float32Array(h * 7);
   }
@@ -145,6 +147,87 @@ export class Renderer {
     this.alphaPolys = [];
   }
 
+  /** The frame's dynamic lights: [{ x, y, z, radius, color: [r, g, b] }] */
+  setDlights(lights) { this.dlights = lights ?? []; }
+
+  /**
+   * ProjectDlightTexture for a planar face just drawn (its vertices in this.vv): for each light within
+   * reach of its plane, the face again with the light's in-plane offset in dlight-image texels where the
+   * lightmap coordinates go, brightening what is there by dst × (1 + light) (GLS_SRCBLEND_DST_COLOR,
+   * GLS_DSTBLEND_ONE). The image: 4000 / d² of 255 for d texels from the middle of 16, nothing under 75;
+   * along the normal full up to half the radius, then down to nothing at the radius.
+   */
+  dlightFace(m, behind) {
+    const vv = this.vv, view = this.view, F = view.fwd, Rt = view.right, U = view.up;
+    const P = [];
+    for (let k = 0; k < m; k++) {
+      const o = k * 9, f = vv[o], r = vv[o + 1], u = vv[o + 2];
+      P.push([view.x + f * F[0] + r * Rt[0] + u * U[0], view.y + f * F[1] + r * Rt[1] + u * U[1], view.z + f * F[2] + r * Rt[2] + u * U[2]]);
+    }
+    // the plane's normal (Newell)
+    let nx = 0, ny = 0, nz = 0;
+    for (let k = 0; k < m; k++) {
+      const a = P[k], b = P[(k + 1) % m];
+      nx += (a[1] - b[1]) * (a[2] + b[2]); ny += (a[2] - b[2]) * (a[0] + b[0]); nz += (a[0] - b[0]) * (a[1] + b[1]);
+    }
+    const nl = Math.hypot(nx, ny, nz);
+    if (!(nl > 0)) return;
+    nx /= nl; ny /= nl; nz /= nl;
+    const p = Math.abs(nz) < 0.9 ? [0, 0, 1] : [1, 0, 0];
+    const pd = p[0] * nx + p[1] * ny + p[2] * nz;
+    let a1 = [p[0] - pd * nx, p[1] - pd * ny, p[2] - pd * nz];
+    const al = Math.hypot(a1[0], a1[1], a1[2]);
+    a1 = [a1[0] / al, a1[1] / al, a1[2] / al];
+    const a2 = [ny * a1[2] - nz * a1[1], nz * a1[0] - nx * a1[2], nx * a1[1] - ny * a1[0]];
+    for (const l of this.dlights) {
+      const r = l.radius;
+      const dn = Math.abs((l.x - P[0][0]) * nx + (l.y - P[0][1]) * ny + (l.z - P[0][2]) * nz);
+      if (dn >= r) continue;
+      const mod = dn < r * 0.5 ? 1 : (2 * (r - dn)) / r;
+      // the light's offset in the plane, in texels of the 16-texel image spread over the radius (over the
+      // lightmap's scale, which the span loop multiplies back)
+      const k = 16 / r / LIGHTMAP_SIZE;
+      let minU = Infinity, maxU = -Infinity, minV = Infinity, maxV = -Infinity;
+      for (let i = 0; i < m; i++) {
+        const dx = P[i][0] - l.x, dy = P[i][1] - l.y, dz = P[i][2] - l.z;
+        const u = (dx * a1[0] + dy * a1[1] + dz * a1[2]) * k, v = (dx * a2[0] + dy * a2[1] + dz * a2[2]) * k;
+        vv[i * 9 + 7] = u; vv[i * 9 + 8] = v;
+        if (u < minU) minU = u; if (u > maxU) maxU = u; if (v < minV) minV = v; if (v > maxV) maxV = v;
+      }
+      const reach = 8 / LIGHTMAP_SIZE;
+      if (minU > reach || maxU < -reach || minV > reach || maxV < -reach) continue;
+      this.emitPoly(0, 1, 2, m, behind, { dlight: { mod, color: l.color }, look: DLIGHT_LOOK }, true);
+    }
+  }
+
+  /** One light's pass over a polygon: the pixels this polygon left on top brightened by the dlight image. */
+  dlightSpans(y0, y1, mod, color) {
+    const { w, edgeL, edgeR, fb, zb } = this;
+    const cr = color[0] * mod, cg = color[1] * mod, cb = color[2] * mod;
+    for (let y = y0; y <= y1; y++) {
+      const o = y * 7, xl = edgeL[o], xr = edgeR[o];
+      if (xl === Infinity || xr === -Infinity) continue;
+      const xs = Math.max(0, Math.ceil(xl - 0.5)), xe = Math.min(w - 1, Math.ceil(xr - 0.5) - 1);
+      if (xs > xe) continue;
+      const span = xr - xl || 1;
+      const diz = (edgeR[o + 1] - edgeL[o + 1]) / span, duz = (edgeR[o + 4] - edgeL[o + 4]) / span, dvz = (edgeR[o + 5] - edgeL[o + 5]) / span;
+      const t0 = xs + 0.5 - xl;
+      let iz = edgeL[o + 1] + diz * t0, uz = edgeL[o + 4] + duz * t0, vz = edgeL[o + 5] + dvz * t0;
+      for (let x = xs, idx = y * w + xs; x <= xe; x++, idx++, iz += diz, uz += duz, vz += dvz) {
+        if (iz < zb[idx]) continue;
+        const u = uz / iz, v = vz / iz, d2 = u * u + v * v;
+        if (d2 >= 60.84) continue;   // 7.8 texels: past the image's last lit texel
+        // 4000 / d² of 255, full within 4 texels, the edge at 75 softened over the last texel
+        let b = d2 < 15.69 ? 1 : 15.686 / d2;
+        if (d2 > 46.24) b *= (7.8 - Math.sqrt(d2)) / 1.0;
+        const d = fb[idx];
+        let r = (d & 255) * (1 + cr * b), g = ((d >> 8) & 255) * (1 + cg * b), bl = ((d >> 16) & 255) * (1 + cb * b);
+        if (r > 255) r = 255; if (g > 255) g = 255; if (bl > 255) bl = 255;
+        fb[idx] = (0xff000000 | (bl << 16) | (g << 8) | r) >>> 0;
+      }
+    }
+  }
+
   polyRoom(n) {
     if (this.vv.length < n * 9) { this.vv = new Float64Array(n * 9 * 2); this.pp = new Float64Array(n * 7 * 4); }
   }
@@ -184,8 +267,10 @@ export class Renderer {
         if (vf >= near) { vv[o + 3] = cx + (vr * sc) / vf; vv[o + 4] = cy - (vu * sc) / vf; } else behind = true;
         vv[o + 5] = verts[vi + 3]; vv[o + 6] = verts[vi + 4]; vv[o + 7] = verts[vi + 5]; vv[o + 8] = verts[vi + 6];
       }
-      if (f.fan) this.emitPoly(0, 1, 2, m, behind, info, true);
-      else {
+      if (f.fan) {
+        this.emitPoly(0, 1, 2, m, behind, info, true);
+        if (this.dlights.length && look.blend === 'opaque' && !look.sky) this.dlightFace(m, behind);
+      } else {
         const tris = f.tris;
         // all vertices behind: nothing to draw
         let any = false;
@@ -273,6 +358,7 @@ export class Renderer {
   }
 
   drawSurfacePoly(poly, n, info) {
+    if (info.dlight) { this.fillPolygon(poly, n, null, null, 'dlight', 0, 0, 0, 0, null, info.dlight); return; }
     const { f, look, bsp } = info;
     if (look.sky) { this.fillPolygon(poly, n, null, null, 'sky', 0, 0, 0, 0); return; }
     const tex = this.texture(this.animImage(look, look.image, look.anim, look.animFps));
@@ -311,7 +397,7 @@ export class Renderer {
    * stepped linearly between (D_DrawSpans16). The depth test runs on every pixel.
    * mode: opaque | alphatest | add | blend | filter | sky
    */
-  fillPolygon(poly, n, tex, page, mode, flat, ds, dt, turb, scale) {
+  fillPolygon(poly, n, tex, page, mode, flat, ds, dt, turb, scale, dl = null) {
     const { w, h, edgeL, edgeR, fb, zb } = this;
     let ymin = Infinity, ymax = -Infinity;
     for (let k = 0; k < n; k++) { const py = poly[k * 7 + 1]; if (py < ymin) ymin = py; if (py > ymax) ymax = py; }
@@ -360,6 +446,7 @@ export class Renderer {
       }
     }
     if (mode === 'sky') { this.skySpans(y0, y1); return; }
+    if (mode === 'dlight') { this.dlightSpans(y0, y1, dl.mod, dl.color); return; }
     const td = tex.data, wm = tex.wm, hm = tex.hm;
     const lm = page;
     const tphase = this.time * 2;

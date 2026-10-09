@@ -20,7 +20,7 @@ explosion sprites, beams) and nothing else. The renderers never query the databa
 - `npm test` (q3dm1 smoke), `npm run test:dm17` (jump pads), `npm run test:bots` (bots and the
   waypoint hunt), `npm run test:bots:dm17` (bots on the pads), `npm run test:pmove` (the movement against Quake III's
   `bg_pmove.c`), `npm run test:team` (team deathmatch), `npm run test:tourney` (the tournament), `npm run test:view` (the first-person
-  view, the impact marks' clipping, the trails and the brass, seconds, no engine). All run against the real WASM engine in
+  view, the impact marks' clipping, the trails, the brass and the dynamic lights, seconds, no engine). All run against the real WASM engine in
   Node; CI runs all of them before deploying. Each takes one to two minutes.
 - The pak is `public/pak/pak0.pk3`, fetched by `npm run fetch-pak` (gitignored; behind a proxy run it as
   `NODE_USE_ENV_PROXY=1 npm run fetch-pak`, Node's `fetch` ignores `HTTPS_PROXY`; only the gwdg mirror still has it). Four arenas:
@@ -67,6 +67,7 @@ explosion sprites, beams) and nothing else. The renderers never query the databa
 | what a frame returns | `sql/render.sql` (`frame_all`), read in `src/scene.js` `FrameState.parse` |
 | interpolation between tics, local prediction | `src/main.js`: `viewRow`, `interpolateFrame`, `poseOf`; the eye clamp in `view_setup` |
 | view kicks, landing dips, bob, gun sway, zoom | `src/scene.js` `firstPersonView`, `zoomedFov`; the zoom key and sensitivity in `src/main.js` (tested by `npm run test:view`); the hit's source in `t_damage`, the fall's size in `impact` |
+| dynamic lights | `sceneLights`, `litByDlights` in `src/scene.js`; `setDlights` and the world shader's `dlights()` in `src/renderer-gl.js`, `dlightFace`/`dlightSpans` in `src/renderer.js` |
 | smoke trails, brass | `missileTrail`, `ejectBrass`, `moveBrass` in `src/scene.js` (brass collides through `Bsp.pointContents`); kind 17 from `fire_weapon` |
 | impact marks (bullet holes, burns, blood) | `FrameState.impactMark` and `drawMarks` in `src/scene.js`, `drawMark` in both painters; the hit's normal comes in the fx row (`x2..z2`), kind 16 is a mark alone |
 | what gets drawn and how | `src/scene.js` (what), `src/renderer.js` and `src/renderer-gl.js` (how) |

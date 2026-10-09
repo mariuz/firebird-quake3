@@ -665,6 +665,24 @@ at 800 and collide with the world through `Bsp.pointContents` (a point against t
 does and keeps 0.4 of the speed, and a shell that a floor stops below 40 units a second lies still.
 That is cosmetic collision in the browser, like cgame's `CG_Trace`; nothing in the game depends on it.
 
+*Dynamic lights* are `trap_R_AddLightToScene`'s, gathered each frame by `sceneLights` from what the
+frame already has: a rocket (effects 16) or a BFG ball (64) in flight at 200, a rocket's or a grenade's
+explosion at 300 (full for the first half of its sprite's life, then fading to nothing), a player
+model carrying the quad (`frame_all` sets `EF_QUAD`, 512, from `quad_finished`) and the player with it
+at 200 to 231 in blue, and the player's muzzle flash for its tenth of a second at 300 to 331 in the
+weapon's `flashDlightColor`; the 8 nearest the eye are kept. The world is lit as
+`ProjectDlightTexture` lights it: the light's offset in the surface's plane looks up the 16-texel
+dlight image (4000 / d² of 255 for d texels from the middle, nothing under 75; the image spans half the
+radius each way, so it is full within a quarter of the radius and out past 0.46 of it), times full up
+to half the radius off the plane and down to nothing at the radius, and the surface becomes
+`dst × (1 + light)` (`GLS_SRCBLEND_DST_COLOR GLS_DSTBLEND_ONE`): it brightens what the lightmap left
+and does not light black. The WebGL world shader does it per pixel for the opaque surfaces, with the
+normal from the derivatives of the world position; the software painter draws each lit planar face
+again after it (`dlightFace`), the light's in-plane offset in the lightmap coordinates' place so the
+span loop interpolates it with the perspective, and brightens the pixels the face left on top. Models,
+brass and the view weapon get `R_SetupEntityLighting`'s share in `litByDlights`: 16 r² / d² of the
+light's colour more directed light, from the light's side.
+
 *The zoom* is the client's too (`CG_CalcFov`): Z or the right mouse button holds it, `zoomedFov`
 eases the field of view to 22.5 degrees in 150 ms and back as fast on release, the mouse slows to
 `fov_y / 75` of its speed while zoomed (`cg.zoomSensitivity`), and the gun is put away past half-way

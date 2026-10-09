@@ -6,7 +6,7 @@
 //   node scripts/view-test.mjs
 
 import fs from 'node:fs';
-import { FrameState, firstPersonView, zoomedFov, fovY, mapTorsoToWeaponFrame, viewTorsoFrame, underwaterFov } from '../src/scene.js';
+import { FrameState, firstPersonView, zoomedFov, fovY, mapTorsoToWeaponFrame, viewTorsoFrame, underwaterFov, sceneLights, litByDlights, MAX_DLIGHTS } from '../src/scene.js';
 import { tagTransform } from '../src/renderer.js';
 import { Md3, parseAnimationCfg } from '../src/md3.js';
 import { Pk3 } from '../src/pk3.js';
@@ -183,6 +183,26 @@ const markBsp = {
   for (let i = 0; i < 20; i++) st.ejectBrass(0, 0, 0, i * 18, i % 2 ? 2 : 4, 10);
   for (let i = 0; i < 120; i++) st.moveBrass(floor, 0.016);
   assert(st.brass.length === 30 && st.brass.every((b) => b.rest && b.p[2] >= 0 && b.p[2] < 4), `30 shells from 10 bullets and 10 shotgun blasts all lie on the floor (${st.brass.filter((b) => b.rest).length} at rest)`);
+}
+
+// the dynamic lights: a rocket's explosion at 300 for the first half of the explosion, fading to nothing by its
+// end; a rocket in flight at 200; the muzzle flash while firing; the nearest 8 when there are more
+{
+  const st = new FrameState();
+  st.handleFx({ spawnParticles() {} }, [[0, 2, 100, 0, 0, -1, 0, 0, 0]], 10);
+  const quiet = row({ WEAPON: 2, ATTACK_START: 0, QUAD: 0, SPECTATOR: 0 });
+  const view = { x: 0, y: 0, z: 26, yaw: 0, pitch: 0 };
+  const at = (t, ents = []) => sceneLights(st, { ents }, quiet, view, t);
+  assert(at(10.1).length === 1 && at(10.1)[0].radius === 300 && at(10.1)[0].color.join() === '1,0.75,0', 'an explosion lights at 300, orange');
+  assert(Math.abs(at(10.45)[0].radius - 150) < 1e-6 && at(10.59)[0].radius < 12, `it fades in the second half (${at(10.45)[0].radius.toFixed(0)} at three quarters)`);
+  const rockets = Array.from({ length: 12 }, (_, i) => ({ x: 1000 - i * 50, y: 0, z: 0, effects: 16 }));
+  const many = at(20, rockets);
+  assert(many.length === MAX_DLIGHTS && many[0].x === 450 && many.every((l) => l.radius === 200), `twelve rockets: the ${MAX_DLIGHTS} nearest, at 200`);
+  const firing = sceneLights(st, { ents: [] }, row({ WEAPON: 64, ATTACK_START: 19.95, TIME_: 20 }), view, 20);
+  assert(firing.length === 1 && firing[0].radius >= 300 && firing[0].color.join() === '1,0.5,0', 'the railgun\'s muzzle flash lights orange at 300 and more');
+  const grid = { ambient: [20, 20, 20], directed: [10, 10, 10], dir: [0, 0, 1] };
+  const lit = litByDlights(grid, 0, 0, 0, [{ x: 100, y: 0, z: 0, radius: 200, color: [1, 0.75, 0] }]);
+  assert(Math.abs(lit.directed[0] - 10 - 64) < 1e-6 && Math.abs(lit.directed[1] - 10 - 48) < 1e-6 && lit.dir[0] > 0.9, `a model 100 units from a 200 light: 16 r² / d² = 64 more directed light, from its side (${lit.directed.map((v) => v.toFixed(0)).join(' ')})`);
 }
 
 // and the hand model really carries the gun down on those frames (with the pak, when it is there)

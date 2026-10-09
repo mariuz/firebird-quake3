@@ -15,6 +15,59 @@ const BLOOD = [201, 202, 203, 204, 205].map((i) => `models/weaphits/blood${i}.tg
 const TRAIL_STEP = 0.05, MAX_PUFFS = 400, BRASS_TIME = 2.5, BRASS_GRAVITY = 800, BRASS_BOUNCE = 0.4, MAX_BRASS = 64;
 const ROCKET_TRAIL = { dur: 2, radius: 64 }, GRENADE_TRAIL = { dur: 0.7, radius: 32 };
 
+// The dynamic lights (trap_R_AddLightToScene): radius and colour. A rocket and a BFG ball in flight (CG_Missile's
+// missileDlight), a rocket's or a grenade's explosion (CG_MissileHitWall: 300, fading in the second half of the
+// explosion), the quad's carrier (CG_PlayerPowerups), the muzzle flash (300 + rand & 31 in the weapon's
+// flashDlightColor). The renderer keeps 8 (Quake III 32), the nearest the eye.
+const DL_ROCKET = [200, 1, 0.75, 0], DL_BFG = [200, 1, 0.7, 1], DL_QUAD = [200, 0.2, 0.2, 1], DL_BOOM = [300, 1, 0.75, 0];
+const FLASH_DLIGHT = { 1: [0.6, 0.6, 1], 2: [1, 1, 0], 4: [1, 1, 0], 8: [1, 0.7, 0], 16: [1, 0.75, 0], 32: [0.6, 0.6, 1], 64: [1, 0.5, 0], 128: [0.6, 0.6, 1], 256: [1, 0.7, 1] };
+export const MAX_DLIGHTS = 8;
+
+/** The frame's dynamic lights, nearest the eye first: [{ x, y, z, radius, color }] */
+export function sceneLights(state, frame, last, view, time) {
+  const out = [];
+  const add = (x, y, z, d, k = 1) => { if (d[0] * k > 0) out.push({ x, y, z, radius: d[0] * k, color: [d[1], d[2], d[3]] }); };
+  for (const e of frame.ents) {
+    if (e.effects & 16) add(e.x, e.y, e.z, DL_ROCKET);
+    else if (e.effects & 64) add(e.x, e.y, e.z, DL_BFG);
+    if (e.effects & 512 && e.pmodel) add(e.x, e.y, e.z, [200 + Math.random() * 32, 0.2, 0.2, 1]);
+  }
+  for (const x of state.explosions) {
+    if (!x.light) continue;
+    const f = (time - x.t0) / x.dur;
+    add(x.x, x.y, x.z, x.light, f < 0.5 ? 1 : Math.max(0, 1 - (f - 0.5) * 2));
+  }
+  if (!last.DEAD && !last.SPECTATOR) {
+    if (last.QUAD > 0) add(last.PX, last.PY, last.PZ, [DL_QUAD[0] + Math.random() * 32, DL_QUAD[1], DL_QUAD[2], DL_QUAD[3]]);
+    const c = FLASH_DLIGHT[last.WEAPON];
+    if (c && last.ATTACK_START > 0 && time - last.ATTACK_START < 0.1) {
+      const yaw = (view.yaw * Math.PI) / 180, pitch = (view.pitch * Math.PI) / 180;
+      add(view.x + Math.cos(yaw) * Math.cos(pitch) * 24, view.y + Math.sin(yaw) * Math.cos(pitch) * 24, view.z - Math.sin(pitch) * 24 - 4, [300 + Math.random() * 32, ...c]);
+    }
+  }
+  const d2 = (l) => (l.x - view.x) ** 2 + (l.y - view.y) ** 2 + (l.z - view.z) ** 2;
+  return out.sort((a, b) => d2(a) - d2(b)).slice(0, MAX_DLIGHTS);
+}
+
+/** R_SetupEntityLighting's dynamic lights on a model: each adds 16 r² / d² (d at least 16) of its colour to the
+ *  directed light, from its direction */
+export function litByDlights(light, x, y, z, lights) {
+  if (!lights.length) return light;
+  const dir = light.dir.map((v) => v * (light.directed[0] + light.directed[1] + light.directed[2]) / 3);
+  const directed = light.directed.slice();
+  for (const l of lights) {
+    let dx = l.x - x, dy = l.y - y, dz = l.z - z;
+    let d = Math.hypot(dx, dy, dz);
+    if (d > 0) { dx /= d; dy /= d; dz /= d; }
+    d = Math.max(d, 16);
+    const power = (16 * l.radius * l.radius) / (d * d);
+    for (let i = 0; i < 3; i++) directed[i] += power * l.color[i];
+    dir[0] += power * dx; dir[1] += power * dy; dir[2] += power * dz;
+  }
+  const n = Math.hypot(dir[0], dir[1], dir[2]) || 1;
+  return { ...light, directed, dir: [dir[0] / n, dir[1] / n, dir[2] / n] };
+}
+
 // cg_marks.c: at most 256 pieces, each 10 s, the last second fading out
 const MAX_MARK_POLYS = 256, MARK_TOTAL_TIME = 10, MARK_FADE_TIME = 1;
 const SURF_SKY = 0x4, SURF_NOMARKS = 0x20, SURF_NODRAW = 0x80;
@@ -253,7 +306,7 @@ export class FrameState {
         case 1: renderer.spawnParticles('gunshot', x, y, z, 6, [x2, y2, z2], 0xff60c0ff); mark('gfx/damage/bullet_mrk', 8); break;
         case 11: renderer.spawnParticles('gunshot', x, y, z, 3, [x2, y2, z2], 0xff60c0ff); mark('gfx/damage/bullet_mrk', 4); break;
         case 7: renderer.spawnParticles('gunshot', x, y, z, 10, [x2, y2, z2], 0xffffe0a0); mark('gfx/damage/hole_lg_mrk', 12); break;
-        case 2: case 9: renderer.spawnParticles('explosion', x, y, z, 0); this.explosions.push({ x, y, z, t0: time, frames: RLBOOM, size: kind === 2 ? 72 : 56, dur: 0.6, blend: 'add' }); mark('gfx/damage/burn_med_mrk', 64); break;
+        case 2: case 9: renderer.spawnParticles('explosion', x, y, z, 0); this.explosions.push({ x, y, z, t0: time, frames: RLBOOM, size: kind === 2 ? 72 : 56, dur: 0.6, blend: 'add', light: DL_BOOM }); mark('gfx/damage/burn_med_mrk', 64); break;
         case 8: renderer.spawnParticles('explosion', x, y, z, 0); this.explosions.push({ x, y, z, t0: time, frames: RLBOOM, size: 120, dur: 0.8, blend: 'add' }); mark('gfx/damage/burn_med_mrk', 32); break;
         case 3: renderer.spawnParticles('blood', x, y, z, Math.min(n, 30), [0, 0, 0], 0xff1010c0); this.explosions.push({ x, y, z, t0: time, frames: BLOOD, size: 24, dur: 0.4, blend: 'blend' }); break;
         case 4: renderer.spawnParticles('rail', x, y, z, 0, [x2, y2, z2]); this.beams.push({ a: [x, y, z], b: [x2, y2, z2], until: time + 0.8, img: 'gfx/misc/railcorethin_mono', width: 4, scroll: 0 }); break;
@@ -388,6 +441,9 @@ export function drawScene(renderer, hud, res, bsp, last, frame, opts = {}) {
   const state = opts.state ?? (opts.state = new FrameState());
   const view = opts.view ?? firstPersonView(last, state, opts.dt ?? 0.05, opts.fov ?? 90);
   r.beginFrame(view);
+  const lights = opts.dlights === false ? [] : sceneLights(state, frame, last, view, time);
+  r.setDlights(lights);
+  const lightAt = (x, y, z) => litByDlights(bsp.lightGrid(x, y, z), x, y, z, lights);
   if (frame.faces.length) {
     if (opts.sqlProjected) r.drawFaces(frame.faces, time);
     else r.drawFaceList(frame.faces, time, state.brushAngles);
@@ -396,7 +452,7 @@ export function drawScene(renderer, hud, res, bsp, last, frame, opts = {}) {
 
   // the models
   for (const e of frame.ents) {
-    const light = bsp.lightGrid(e.x, e.y, e.z + 24);
+    const light = lightAt(e.x, e.y, e.z + 24);
     if (e.pmodel) {
       const [pm, skin] = e.pmodel.split('/');
       const [legs, torso, hp, cls] = e.anims.split(',');
@@ -455,7 +511,7 @@ export function drawScene(renderer, hud, res, bsp, last, frame, opts = {}) {
     state.brass = state.brass.filter((b) => time < b.end && time >= b.t0 - 0.1);
     for (const b of state.brass) {
       const id = res.byName.get(`models/weapons2/shells/${b.model}_shell.md3`);
-      if (id) r.drawMd3(res.models.get(id).mdl, 0, b.p, anglesAxis(b.angles[0], b.angles[1], b.angles[2]), null, bsp.lightGrid(b.p[0], b.p[1], b.p[2]));
+      if (id) r.drawMd3(res.models.get(id).mdl, 0, b.p, anglesAxis(b.angles[0], b.angles[1], b.angles[2]), null, lightAt(b.p[0], b.p[1], b.p[2]));
     }
   }
 
@@ -484,14 +540,14 @@ export function drawScene(renderer, hud, res, bsp, last, frame, opts = {}) {
   r.drawAlphaPolys();
 
   // the weapon in hand: the hand model at the eye, the gun on its tag (CG_AddViewWeapon)
-  if (!last.DEAD && !last.MATCH_OVER && !(last.SPECTATOR && !last.FOLLOW_NAME) && last.WEAPON && !opts.noWeapon) drawViewWeapon(r, res, bsp, last, time, view);
+  if (!last.DEAD && !last.MATCH_OVER && !(last.SPECTATOR && !last.FOLLOW_NAME) && last.WEAPON && !opts.noWeapon) drawViewWeapon(r, res, bsp, last, time, view, lights);
 
   // 2D
   if (hud) hud.draw(r, last, time, state.messages, opts);
   return screenTint(last, time);
 }
 
-function drawViewWeapon(r, res, bsp, last, time, view) {
+function drawViewWeapon(r, res, bsp, last, time, view, lights = []) {
   const dir = WEAPON_DIR[last.WEAPON];
   if (!dir) return;
   const handId = res.byName.get(`models/weapons2/${dir}/${dir}_hand.md3`);
@@ -507,7 +563,7 @@ function drawViewWeapon(r, res, bsp, last, time, view) {
   const axis = anglesAxis(view.pitch + g.pitch, view.yaw + g.yaw, view.roll + g.roll);
   const gx = 4, gz = hand ? 0 : -sw * 20;   // cg_gun_x: a little forward
   const org = [view.x + axis[0] * gx + axis[6] * gz, view.y + axis[1] * gx + axis[7] * gz, view.z + g.z + axis[2] * gx + axis[8] * gz + last.PUNCH * 0.5];
-  const light = bsp.lightGrid(last.PX, last.PY, last.PZ);
+  const light = litByDlights(bsp.lightGrid(last.PX, last.PY, last.PZ), last.PX, last.PY, last.PZ, lights);
   light.ambient = light.ambient.map((v) => Math.max(v, 96));   // RF_MINLIGHT: the gun is never black
   let gunOrigin = org, gunAxis = axis;
   if (hand) {

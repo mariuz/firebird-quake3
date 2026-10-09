@@ -128,7 +128,9 @@ assert(s.BULLETS === 99, `firing used a bullet (${s.BULLETS})`);
 const fired = (await db.query("SELECT COUNT(*) n FROM sound_events WHERE snd LIKE 'sound/weapons/machinegun/machgf%'")).rows[0].N;
 assert(fired > 0, 'firing queued the machinegun sound');
 // and told the browser to throw a shell out of the player's side (CG_MachineGunEjectBrass)
-const brass = (await db.query(`SELECT FIRST 1 f.x, f.y, f.z, f.x2, f.n, e.x ex, e.yaw FROM fx_events f, ents e WHERE f.kind = 17 AND e.id = (SELECT ent_id FROM player) ORDER BY f.id DESC`)).rows[0];
+// (the bots may be firing too: the player's is this tic's nearest the player)
+const brass = (await db.query(`SELECT FIRST 1 f.x, f.y, f.z, f.x2, f.n, e.x ex, e.yaw FROM fx_events f, ents e, game g
+  WHERE f.kind = 17 AND f.tic = g.tic AND e.id = (SELECT ent_id FROM player) ORDER BY (f.x - e.x) * (f.x - e.x) + (f.y - e.y) * (f.y - e.y)`)).rows[0];
 assert(brass && brass.N === 2 && Math.abs(brass.X2 - brass.YAW) < 1e-6, `a machinegun shot ejects brass, with the shooter's yaw (${brass ? brass.X2.toFixed(0) : 'none'})`);
 
 // the frame
