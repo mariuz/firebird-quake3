@@ -75,17 +75,24 @@ if (item) {
 {
   const wp = (await q('SELECT COUNT(*) n, (SELECT COUNT(*) FROM wp_edges) e FROM waypoints'))[0];
   assert(wp.N > 20 && wp.E > wp.N, `the waypoint graph has ${wp.N} nodes and ${wp.E} edges`);
-  // we stand on a spawn point (the earlier play may have knocked us into q3dm17's void, god mode or not)
+  // we stand on a spawn point (the earlier play may have knocked us into q3dm17's void, god mode or not: the
+  // trigger_hurt goes through it, and a dead player is no enemy to hunt)
+  if ((await q(`SELECT deadflag FROM ents WHERE id = ${pe}`))[0].DEADFLAG || (await q(`SELECT health FROM ents WHERE id = ${pe}`))[0].HEALTH <= 0) await db.exec('EXECUTE PROCEDURE player_respawn');
   const home = (await q("SELECT FIRST 1 e.x, e.y, e.z FROM ents e WHERE e.classname = 'info_player_deathmatch' ORDER BY e.id"))[0];
   await db.exec(`UPDATE ents SET x = ${home.X}, y = ${home.Y}, z = ${home.Z + 9}, vx = 0, vy = 0, vz = 0 WHERE id = ${pe}`);
   await db.exec(`EXECUTE PROCEDURE link_ent(${pe})`);
   await tic(2);
   const me = (await q(`SELECT x, y, z FROM ents WHERE id = ${pe}`))[0];
   const far = (await q(`SELECT FIRST 1 e.id, e.x, e.y, e.z FROM ents e WHERE e.classname = 'info_player_deathmatch' ORDER BY (e.x - ${me.X}) * (e.x - ${me.X}) + (e.y - ${me.Y}) * (e.y - ${me.Y}) DESC`))[0];
-  // the other bots sit this one out
+  // the other bots sit this one out, and what they fired goes (a grenade lying about moves the hunter off its spot)
+  await db.exec("DELETE FROM ents WHERE classname IN ('rocket', 'grenade', 'plasma', 'bfg')");
   await db.exec(`UPDATE ents SET st = 'dead', deadflag = 1, health = 0, solid = 0, respawn_time = 1e9, enemy_id = NULL WHERE classname = 'bot' AND id <> ${b}`);
-  // the hunter holds its fire (a rocket would knock us off the ledge)
-  await db.exec(`UPDATE ents SET x = ${far.X}, y = ${far.Y}, z = ${far.Z}, vx = 0, vy = 0, vz = 0, enemy_id = ${pe}, search_time = 1e9, goal_id = NULL, health = 100, st = 'run', attack_finished = 1e9 WHERE id = ${b}`);
+  // the hunter alive (it may have died in the fighting before: a dead one would respawn under us, its enemy forgotten)
+  if ((await q(`SELECT deadflag FROM ents WHERE id = ${b}`))[0].DEADFLAG) await db.exec(`EXECUTE PROCEDURE bot_respawn(${b})`);
+  // the hunter holds its fire (a rocket would knock us off the ledge). It carries the quad: BotWantsToChase
+  // would not have it chase with the machinegun alone, hurt, or after an enemy 200 above (q3dm17's
+  // spawns), and the quad outweighs all of them (BotAggression 70)
+  await db.exec(`UPDATE ents SET x = ${far.X}, y = ${far.Y}, z = ${far.Z}, vx = 0, vy = 0, vz = 0, enemy_id = ${pe}, search_time = 1e9, goal_id = NULL, health = 100, st = 'run', attack_finished = 1e9, quad_finished = 1e9 WHERE id = ${b}`);
   await db.exec(`EXECUTE PROCEDURE link_ent(${b})`);
   const d0 = Math.hypot(far.X - me.X, far.Y - me.Y, far.Z - me.Z);
   let best = d0, n = 0, died = null;
@@ -100,7 +107,48 @@ if (item) {
   const st = (await q(`SELECT e.st, e.health, e.enemy_id, CAST(e.x AS INTEGER) x, CAST(e.y AS INTEGER) y, CAST(e.z AS INTEGER) z, r.path, (SELECT CAST(p.x AS INTEGER) || ',' || CAST(p.y AS INTEGER) || ',' || CAST(p.z AS INTEGER) FROM ents p WHERE p.id = ${pe}) me FROM ents e LEFT JOIN bot_routes r ON r.ent_id = e.id WHERE e.id = ${b}`))[0];
   const last = (await q('SELECT FIRST 2 msg FROM messages ORDER BY id DESC')).map((m) => m.MSG).join(' / ');
   assert(best < Math.max(350, d0 * 0.5), `the bot hunted us from ${d0.toFixed(0)} away down to ${best.toFixed(0)} in ${n} tics (route ${st.PATH ?? 'none'}; now ${st.ST.trim()} hp ${st.HEALTH} enemy ${st.ENEMY_ID} at ${st.X},${st.Y},${st.Z}, we at ${st.ME}${died !== null ? `; died at tic ${died}: ${last}` : ''})`);
-  await db.exec(`UPDATE ents SET respawn_time = 0, health = 1 WHERE classname = 'bot' AND id <> ${b}`);
+  await db.exec(`UPDATE ents SET respawn_time = 0, health = 1, quad_finished = 0 WHERE classname = 'bot' AND id <> ${b}`);
+  await db.exec(`UPDATE ents SET quad_finished = 0 WHERE id = ${b}`);
+}
+
+// BotAggression: keen with a good gun and its health, not with the machinegun alone, hurt, or the enemy far above;
+// the quad makes up for a poor gun. And a bot keeps 160 units off a grenade (BotCheckSnapshot's avoid spot)
+{
+  const set = (sql) => db.exec(`UPDATE ents SET ${sql} WHERE id = ${b}`);
+  const aggr = async () => (await q(`SELECT bot_aggression(${b}, ${pe}) a FROM rdb$database`))[0].A;
+  const me = (await q(`SELECT z FROM ents WHERE id = ${pe}`))[0];
+  await set(`health = 100, armor = 0, weapons = 3, quad_finished = 0, z = ${me.Z}`);
+  const mg = await aggr();
+  await set('weapons = 3 + 64'); const rail = await aggr();
+  await set('health = 70'); const hurt = await aggr();
+  await set('armor = 50'); const armoured = await aggr();
+  await set('health = 50'); const low = await aggr();
+  await set(`weapons = 3, health = 100, quad_finished = 1e9, weapon = 2`); const quad = await aggr();
+  assert(mg === 0 && rail === 95 && hurt === 0 && armoured === 95 && low === 0 && quad === 70,
+    `aggression: machinegun ${mg}, railgun ${rail}, at 70 health ${hurt} (with 50 armour ${armoured}), at 50 ${low}, quad ${quad}`);
+  await set('quad_finished = 0, health = 100, armor = 0');
+  // the retreat's goal is an item in sight; a health item first when hurt (the bot stands on one)
+  const hi = (await q("SELECT FIRST 1 e.x, e.y, e.z FROM ents e JOIN item_defs d ON d.cls = e.item WHERE d.kind = 'H' AND e.solid = 1 ORDER BY e.id"))[0];
+  await set(`health = 30, x = ${hi.X}, y = ${hi.Y}, z = ${hi.Z}`);
+  const goal = (await q(`SELECT i.kind FROM ents g JOIN item_defs i ON i.cls = g.item WHERE g.id = bot_retreat_goal(${b})`))[0];
+  assert(goal?.KIND.trim() === 'H', `hurt, a retreating bot runs for the health item it sees (${goal?.KIND})`);
+  await set('health = 100');
+  // a grenade lying 60 units off: the bot steps away from it (on a spawn point with room on the far side: the
+  // bots never step off a ledge)
+  let away = null, none = null;
+  for (const sp of await q("SELECT FIRST 6 x, y, z FROM ents WHERE classname = 'info_player_deathmatch' ORDER BY id")) {
+    for (const [gx, gy] of [[60, 0], [-60, 0], [0, 60], [0, -60]]) {
+      await set(`x = ${sp.X}, y = ${sp.Y}, z = ${sp.Z + 1}, vx = 0, vy = 0, vz = 0, flags = BIN_OR(flags, 512)`);
+      await db.exec(`EXECUTE PROCEDURE link_ent(${b})`);
+      const g = (await q(`SELECT id FROM spawn_ent('grenade', ${sp.X + gx}, ${sp.Y + gy}, ${sp.Z + 1})`))[0].ID;
+      const stepped = (await q(`SELECT bot_avoid_grenade(${b}, 20) s FROM rdb$database`))[0].S;
+      const p = (await q(`SELECT x, y FROM ents WHERE id = ${b}`))[0];
+      await db.exec(`DELETE FROM ents WHERE id = ${g}`);
+      if (stepped === 1) { away = Math.hypot(p.X - sp.X - gx, p.Y - sp.Y - gy) - 60; none = (await q(`SELECT bot_avoid_grenade(${b}, 20) s FROM rdb$database`))[0].S; break; }
+    }
+    if (away !== null) break;
+  }
+  assert(away > 5 && none === 0, `a grenade 60 units off: the bot steps ${away?.toFixed(0)} further from it; without it, nothing`);
 }
 
 // a rocket jump (BotTravel_RocketJump): up to a ledge the walk does not reach, from a rocket-jump edge's

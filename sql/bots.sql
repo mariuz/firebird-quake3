@@ -514,6 +514,68 @@ BEGIN
 END^
 
 -- aim at the enemy (leading projectiles when skilled enough), scattered by the aim accuracy, and fire
+-- BotAggression (ai_dmq3.c): how keen on a fight the bot is, 0 to 100. With the quad 70 (unless it holds the
+-- gauntlet far from the enemy); none with the enemy 200 above, under 60 health, or under 80 without 40 armour;
+-- else by the best gun it holds: BFG 100, railgun 95, lightning and rockets 90, plasma 85, grenades 80,
+-- shotgun 50, nothing better 0. The port's bots count no ammunition: a gun held is a gun loaded.
+-- BotWantsToRetreat is under 50, BotWantsToChase over 50.
+CREATE OR ALTER FUNCTION bot_aggression (eid INTEGER, enemy INTEGER) RETURNS INTEGER
+AS
+DECLARE hp INTEGER; DECLARE av INTEGER; DECLARE w INTEGER; DECLARE wn INTEGER; DECLARE qf DOUBLE PRECISION;
+DECLARE x DOUBLE PRECISION; DECLARE y DOUBLE PRECISION; DECLARE z DOUBLE PRECISION;
+DECLARE ex DOUBLE PRECISION; DECLARE ey DOUBLE PRECISION; DECLARE ez DOUBLE PRECISION;
+BEGIN
+  SELECT e.health, e.armor, e.weapons, e.weapon, COALESCE(e.quad_finished, 0), e.x, e.y, e.z FROM ents e WHERE e.id = :eid INTO hp, av, w, wn, qf, x, y, z;
+  SELECT o.x, o.y, o.z FROM ents o WHERE o.id = :enemy INTO ex, ey, ez;
+  IF (qf > now_() AND (wn <> 1 OR vlen(ex - x, ey - y, 0) < 80)) THEN RETURN 70;
+  IF (ez - z > 200) THEN RETURN 0;
+  IF (hp < 60) THEN RETURN 0;
+  IF (hp < 80 AND COALESCE(av, 0) < 40) THEN RETURN 0;
+  IF (BIN_AND(w, 256) <> 0) THEN RETURN 100;
+  IF (BIN_AND(w, 64) <> 0) THEN RETURN 95;
+  IF (BIN_AND(w, 32 + 16) <> 0) THEN RETURN 90;
+  IF (BIN_AND(w, 128) <> 0) THEN RETURN 85;
+  IF (BIN_AND(w, 8) <> 0) THEN RETURN 80;
+  IF (BIN_AND(w, 4) <> 0) THEN RETURN 50;
+  RETURN 0;
+END^
+
+-- AINode_Battle_Retreat's goal: an item to run for while keeping the enemy under fire, the nearest that is
+-- worth it the most (health the more the lower the bot's, armour, a gun it lacks, a powerup). botlib takes the
+-- long-term goal anywhere through the AAS; here it is one in sight on about the same level, as the waypoint
+-- routes over q3dm17's void lose too many bots to falls
+CREATE OR ALTER FUNCTION bot_retreat_goal (eid INTEGER) RETURNS INTEGER
+AS
+DECLARE hp INTEGER; DECLARE w INTEGER; DECLARE x DOUBLE PRECISION; DECLARE y DOUBLE PRECISION; DECLARE z DOUBLE PRECISION; DECLARE g INTEGER;
+BEGIN
+  SELECT e.health, e.weapons, e.x, e.y, e.z FROM ents e WHERE e.id = :eid INTO hp, w, x, y, z;
+  SELECT FIRST 1 g.id FROM ents g JOIN item_defs i ON i.cls = g.item
+   WHERE g.classname = 'item' AND g.solid = 1 AND ABS(g.x - :x) < 1200 AND ABS(g.y - :y) < 1200 AND ABS(g.z - :z) < 150
+     AND (i.kind <> 'W' OR BIN_AND(:w, i.bit) = 0) AND i.kind IN ('H', 'A', 'W', 'P') AND (i.kind <> 'H' OR :hp < 100)
+   ORDER BY ABS(g.x - :x) + ABS(g.y - :y) + ABS(g.z - :z) * 2
+            - CASE i.kind WHEN 'H' THEN (125 - :hp) * 8 WHEN 'A' THEN 300 WHEN 'W' THEN 500 ELSE 800 END
+    INTO g;
+  IF (g IS NOT NULL AND visible(eid, g) = 0) THEN g = NULL;
+  RETURN g;
+END^
+
+-- BotCheckSnapshot's avoid spots: a grenade in flight or lying about keeps a bot 160 units off
+-- (trap_BotAddAvoidSpot, AVOID_ALWAYS); here the bot steps straight away from the nearest. 1 when it did
+CREATE OR ALTER FUNCTION bot_avoid_grenade (eid INTEGER, spd DOUBLE PRECISION) RETURNS SMALLINT
+AS
+DECLARE x DOUBLE PRECISION; DECLARE y DOUBLE PRECISION; DECLARE z DOUBLE PRECISION;
+DECLARE gx DOUBLE PRECISION; DECLARE gy DOUBLE PRECISION;
+BEGIN
+  SELECT e.x, e.y, e.z FROM ents e WHERE e.id = :eid INTO x, y, z;
+  SELECT FIRST 1 g.x, g.y FROM ents g WHERE g.classname = 'grenade' AND ABS(g.x - :x) < 160 AND ABS(g.y - :y) < 160 AND ABS(g.z - :z) < 160
+     AND vlen(g.x - :x, g.y - :y, g.z - :z) < 160 ORDER BY vlen(g.x - :x, g.y - :y, g.z - :z) INTO gx, gy;
+  IF (gx IS NULL) THEN RETURN 0;
+  IF (step_direction(eid, vectoyaw(x - gx + 0.01e0, y - gy), spd) = 1) THEN RETURN 1;
+  -- straight away is blocked: either side of it
+  IF (step_direction(eid, anglemod(vectoyaw(x - gx + 0.01e0, y - gy) + 60), spd) = 1) THEN RETURN 1;
+  RETURN step_direction(eid, anglemod(vectoyaw(x - gx + 0.01e0, y - gy) - 60), spd);
+END^
+
 CREATE OR ALTER PROCEDURE bot_fire (eid INTEGER)
 AS
 DECLARE enemy INTEGER; DECLARE w INTEGER; DECLARE skill SMALLINT;
@@ -655,6 +717,7 @@ DECLARE rt DOUBLE PRECISION; DECLARE srch DOUBLE PRECISION; DECLARE af DOUBLE PR
 DECLARE x DOUBLE PRECISION; DECLARE y DOUBLE PRECISION; DECLARE z DOUBLE PRECISION; DECLARE ex DOUBLE PRECISION; DECLARE ey DOUBLE PRECISION; DECLARE ez DOUBLE PRECISION; DECLARE ehp INTEGER;
 DECLARE d DOUBLE PRECISION; DECLARE vis SMALLINT; DECLARE yaw DOUBLE PRECISION; DECLARE moved SMALLINT = 0; DECLARE w INTEGER; DECLARE diff DOUBLE PRECISION; DECLARE spd DOUBLE PRECISION;
 DECLARE ox DOUBLE PRECISION; DECLARE oy DOUBLE PRECISION; DECLARE match_done SMALLINT; DECLARE waiting SMALLINT; DECLARE hp INTEGER; DECLARE hesitate SMALLINT = 0; DECLARE fresh SMALLINT = 0;
+DECLARE aggr INTEGER;
 BEGIN
   t = now_();
   nt = t + 0.1e0;
@@ -719,28 +782,28 @@ BEGIN
       UPDATE ents e SET e.weapon = :w WHERE e.id = :eid;
       EXECUTE PROCEDURE set_anims(eid, NULL, 10);   -- TORSO_RAISE: the new gun comes up (it ends standing)
     END
-    -- hurt and a health item in sight: go for it (BotWantsToRetreat, roughly)
+    -- BotWantsToRetreat (aggression under 50): run for an item and keep shooting (AINode_Battle_Retreat);
+    -- a keen one fights, and goes after the enemy out of sight only when it wants to chase (over 50)
+    aggr = bot_aggression(eid, enemy);
     SELECT e.goal_id FROM ents e WHERE e.id = :eid INTO goal;
-    IF (hp < 40 AND goal IS NULL AND RAND() < 0.5e0) THEN
-    BEGIN
-      SELECT FIRST 1 g.id FROM ents g JOIN item_defs i ON i.cls = g.item WHERE g.classname = 'item' AND g.solid = 1 AND i.kind = 'H'
-         AND ABS(g.x - :x) < 800 AND ABS(g.y - :y) < 800 AND ABS(g.z - :z) < 200 ORDER BY ABS(g.x - :x) + ABS(g.y - :y) INTO goal;
-      IF (goal IS NOT NULL AND visible(eid, goal) = 0) THEN goal = NULL;
-      UPDATE ents e SET e.goal_id = :goal WHERE e.id = :eid;
-    END
-    IF (goal IS NOT NULL AND NOT EXISTS (SELECT 1 FROM ents g WHERE g.id = :goal AND g.solid = 1)) THEN BEGIN goal = NULL; UPDATE ents e SET e.goal_id = NULL WHERE e.id = :eid; END
-    IF (hesitate = 1) THEN BEGIN END
+    IF (goal IS NOT NULL AND NOT EXISTS (SELECT 1 FROM ents g WHERE g.id = :goal AND g.solid = 1)) THEN goal = NULL;
+    IF (aggr >= 50) THEN goal = NULL;
+    ELSE IF (goal IS NULL) THEN goal = bot_retreat_goal(eid);
+    UPDATE ents e SET e.goal_id = :goal WHERE e.id = :eid;
+    IF (bot_avoid_grenade(eid, spd) = 1) THEN BEGIN END
+    ELSE IF (hesitate = 1) THEN BEGIN END
     ELSE IF (goal IS NOT NULL) THEN
     BEGIN
       EXECUTE PROCEDURE bot_follow_route(eid, goal, spd) RETURNING_VALUES moved;
       IF (moved <= 0) THEN EXECUTE PROCEDURE move_to_goal(eid, goal, spd);
     END
-    ELSE IF (vis = 0 OR ABS(ez - z) > 48 OR d > 900) THEN
+    ELSE IF ((vis = 0 OR ABS(ez - z) > 48 OR d > 900) AND aggr > 50) THEN
     BEGIN
       -- out of sight, or on another floor: hunt it along the waypoints (and over the jump pads)
       EXECUTE PROCEDURE bot_follow_route(eid, enemy, spd) RETURNING_VALUES moved;
       IF (moved <= 0) THEN EXECUTE PROCEDURE move_to_goal(eid, enemy, spd);
     END
+    ELSE IF (vis = 0) THEN BEGIN END   -- no chase in it and nothing to run for: it waits where it is
     ELSE IF (d > 350 OR w = 1) THEN EXECUTE PROCEDURE move_to_goal(eid, enemy, spd);
     ELSE IF (RAND() < bot_char(skill, 'strafe')) THEN
     BEGIN
@@ -782,7 +845,7 @@ BEGIN
     END
     -- nothing to do but roam: now and then a word (BotChat_Random, a chance in a hundred a think, then the character's)
     IF (RAND() < 0.005e0) THEN EXECUTE PROCEDURE bot_chat_event(eid, 'random', NULL, 0);
-    IF (BIN_AND(flags, 512) <> 0 AND tt < t AND hesitate = 0) THEN
+    IF (BIN_AND(flags, 512) <> 0 AND tt < t AND hesitate = 0 AND bot_avoid_grenade(eid, spd) = 0) THEN
     BEGIN
       IF (goal IS NOT NULL) THEN
       BEGIN

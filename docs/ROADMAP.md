@@ -66,7 +66,7 @@ fuzzy logic from the botfiles. What that leaves out:
 | **Jumping gaps, rocket jumps, air control** | the graph has drop edges (jumping *down* up to 400 units) but no jump edges across gaps; `wp_walkable` could add an edge for a gap under 200 units that a 270 jump at run speed clears, and `bot_follow_route` would press jump at the edge |
 | **Vertical boost pads** | a pad that lands on itself (q3dm17's centre) is only useful with air control; the bots do not take it, so the railgun platform is theirs only by chance |
 | **Item weights and timing** | botlib weighs items by the bot's needs and times the big ones (the "long-term goal"); here a roaming goal is the nearest item with a bonus for weapons, armour and powerups |
-| **Dodging** | no reaction to incoming rockets, no retreat when losing except the health run |
+| **Dodging** | grenades are avoided (160 units, `bot_avoid_grenade`) and `BotAggression` decides retreat and chase (`bot_aggression`, `bot_retreat_goal`); no reaction to incoming rockets (botlib has none either, beyond the attack move's strafing), and the retreat's goal is an item in sight rather than the AAS long-term goal; ammunition is not counted, so a gun held is a gun loaded |
 | **Weapon preferences per bot** | all bots use `bot_best_weapon`; the botfiles give each character its favourites |
 | **Fuzzy characteristics** | `bot_char` is five fixed skill levels; the botfiles have per-character values and the `w_*` weights |
 | **Team play, CTF roles** | no teams |

@@ -393,12 +393,19 @@ A think:
    a newly noticed enemy is not shot at before the skill's reaction time has passed;
 3. with an enemy: faces it (`change_yaw`, the yaw speed per skill), picks a weapon for the distance
    (`bot_best_weapon`: gauntlet when touching, shotgun and lightning close, rockets and rail far),
-   goes for a health item when hurt, hunts the enemy along the waypoint graph when it is out of sight
+   weighs the fight (`bot_aggression`, `BotAggression`: 70 with the quad; 0 with the enemy 200 units
+   above, under 60 health, or under 80 without 40 armour; else by the best gun held, BFG 100, railgun 95,
+   lightning and rockets 90, plasma 85, grenades 80, shotgun 50, the machinegun alone 0). Under 50 it
+   retreats (`BotWantsToRetreat`, `AINode_Battle_Retreat`): runs for an item in sight within reach
+   (`bot_retreat_goal`: health first the lower its own, then powerups, guns it lacks, armour) and keeps
+   shooting, or holds its ground when the enemy is out of sight. Over 50 it chases (`BotWantsToChase`):
+   hunts the enemy along the waypoint graph when it is out of sight
    or on another floor (`bot_follow_route`, §7) or chases it straight when visible and far
    (`move_to_goal`, Quake 2's `M_MoveToGoal` with `new_chase_dir` trying the sides), circle-strafes
    when close (switching sides when blocked or at random), hesitates and pauses by skill, and fires
    when facing within 25 degrees (`bot_fire` with the skill's aim scatter, leading rockets only from
-   skill 3);
+   skill 3). Before all of it a grenade within 160 units (`BotCheckSnapshot`'s avoid spot) makes it step
+   straight away, or 60 degrees to either side (`bot_avoid_grenade`); roaming too;
 4. with nothing in sight: roams to an item chosen within 1800 units (weapons, armour and powerups
    weigh more), along the graph, or wanders with random turns when there is no route;
 5. sets the legs animation from what happened (jump in the air, run when it moved, idle otherwise).

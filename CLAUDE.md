@@ -61,6 +61,7 @@ explosion sprites, beams) and nothing else. The renderers never query the databa
 | movers, triggers, targets, items, damage, projectiles, map spawning | `sql/game.sql` |
 | weapons, the player's think, respawn | `sql/player.sql` |
 | bot behaviour, skill characteristics (`bot_char`) | `sql/bots.sql` |
+| retreat or chase, grenade avoidance | `bot_aggression`, `bot_retreat_goal`, `bot_avoid_grenade` in `sql/bots.sql`, used in `bot_think` |
 | bot chat | `src/botchat.js` (the pak's botfiles into rows), `bot_say` and `bot_chat_event` at the top of `sql/bots.sql` |
 | bot navigation (nodes, edges, routing, incremental build) | `sql/waypoints.sql`, `bot_follow_route` in `sql/bots.sql` |
 | the tic entry point, think/physics dispatch, scoring, `init_map` | the end of `sql/bots.sql` |
