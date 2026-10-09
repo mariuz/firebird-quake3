@@ -26,7 +26,7 @@ CREATE TABLE wp_edges (
   a INTEGER NOT NULL,
   b INTEGER NOT NULL,
   len DOUBLE PRECISION NOT NULL,
-  kind SMALLINT DEFAULT 0 NOT NULL,     -- 0 walk 1 jump pad 2 teleporter 3 drop (one way) 4 rocket jump (one way) 5 jump (one way)
+  kind SMALLINT DEFAULT 0 NOT NULL,     -- 0 walk 1 jump pad 2 teleporter 3 drop (one way) 4 rocket jump (one way) 5 jump (one way) 6 jump pad steered in the air (one way)
   PRIMARY KEY (a, b)
 );
 CREATE INDEX wp_edges_a ON wp_edges (a);
@@ -43,7 +43,8 @@ CREATE TABLE bot_routes (
   prog_t DOUBLE PRECISION,               -- no progress for a while means it is stuck, whatever the steps say
   last_node INTEGER,                     -- the node it last reached: the start of the edge it is on
   rj_x DOUBLE PRECISION, rj_y DOUBLE PRECISION, rj_z DOUBLE PRECISION,   -- a rocket jump's landing, steered for in the air
-  rj_until DOUBLE PRECISION DEFAULT 0 NOT NULL
+  rj_until DOUBLE PRECISION DEFAULT 0 NOT NULL,
+  rj_hold DOUBLE PRECISION                -- a pad's throw: no steering while rising under this height (the ledge's)
 );
 
 -- where the build of the graph has got to: the next grid column to scan, and the phase
@@ -336,6 +337,63 @@ BEGIN
   RETURN 1;
 END^
 
+-- A jump pad that throws nearly straight up (q3dm17's centre one lands where it took off) is worth
+-- something only with air control: the AAS's jump-pad reachabilities include the places a player reaches
+-- by steering during the throw (AAS_Reachability_JumpPad). First a bound: b's floor under the apex by 30
+-- or more, and within the reach of the air acceleration (16 a tic up to 320) in the time the throw is over
+-- b's height. Then the throw is flown in tenths of a second as a bot flies it: up at the pad's speed, down
+-- under gravity 800, steered as bot_air_steer steers once over b's height (rj_hold) or coming down, the box
+-- traced each step; it must come down on b's floor, within 48 of it, not into lava or slime.
+CREATE OR ALTER FUNCTION wp_pad_steer (ax DOUBLE PRECISION, ay DOUBLE PRECISION, az DOUBLE PRECISION, vx DOUBLE PRECISION, vy DOUBLE PRECISION, vz DOUBLE PRECISION,
+  bx DOUBLE PRECISION, by_ DOUBLE PRECISION, bz DOUBLE PRECISION) RETURNS SMALLINT
+AS
+DECLARE top DOUBLE PRECISION; DECLARE t DOUBLE PRECISION; DECLARE reach DOUBLE PRECISION; DECLARE d DOUBLE PRECISION;
+DECLARE x DOUBLE PRECISION; DECLARE y DOUBLE PRECISION; DECLARE z DOUBLE PRECISION; DECLARE nvz DOUBLE PRECISION;
+DECLARE wx DOUBLE PRECISION; DECLARE wy DOUBLE PRECISION; DECLARE l DOUBLE PRECISION; DECLARE tl DOUBLE PRECISION; DECLARE dt DOUBLE PRECISION = 0.1e0;
+DECLARE f DOUBLE PRECISION; DECLARE ex DOUBLE PRECISION; DECLARE ey DOUBLE PRECISION; DECLARE ez DOUBLE PRECISION;
+DECLARE nx DOUBLE PRECISION; DECLARE ny DOUBLE PRECISION; DECLARE nz DOUBLE PRECISION;
+DECLARE sf INTEGER; DECLARE ct INTEGER; DECLARE als SMALLINT; DECLARE sts SMALLINT; DECLARE hit INTEGER;
+BEGIN
+  top = az + vz * vz / 1600;
+  IF (bz > top - 30) THEN RETURN 0;
+  t = (vz + SQRT(vz * vz - 1600 * (bz + 30 - az))) / 800 - IIF(bz + 8 > az, (vz - SQRT(MAXVALUE(0, vz * vz - 1600 * (bz + 8 - az)))) / 800, 0);
+  reach = IIF(t <= 1, 160 * t * t, 160 + 320 * (t - 1));
+  t = (vz + SQRT(vz * vz - 1600 * (bz + 30 - az))) / 800;
+  d = vlen(bx - (ax + vx * t), by_ - (ay + vy * t), 0);
+  IF (d > reach OR d < 48) THEN RETURN 0;
+  IF (BIN_AND(point_contents(bx, by_, bz - 24), 24) <> 0) THEN RETURN 0;
+  -- the flight
+  x = ax; y = ay; z = az - 1; t = 0;
+  WHILE (t < 4) DO
+  BEGIN
+    IF (z > bz + 8 OR vz < 0) THEN
+    BEGIN
+      d = vz * vz + 1600 * (z - bz);
+      tl = MAXVALUE(dt, IIF(d > 0, (vz + SQRT(d)) / 800, dt));
+      wx = (bx - x) / tl; wy = (by_ - y) / tl;
+      l = vlen(wx, wy, 0);
+      IF (l > 320) THEN BEGIN wx = wx * 320 / l; wy = wy * 320 / l; END
+      wx = wx - vx; wy = wy - vy;
+      l = vlen(wx, wy, 0);
+      IF (l > 320 * dt) THEN BEGIN wx = wx * 320 * dt / l; wy = wy * 320 * dt / l; END
+      vx = vx + wx; vy = vy + wy;
+    END
+    nvz = vz - 800 * dt;
+    EXECUTE PROCEDURE trace_move(NULL, -15, -15, -24, 15, 15, 32, x, y, z, x + vx * dt, y + vy * dt, z + (vz + nvz) / 2 * dt, 65537)
+      RETURNING_VALUES f, ex, ey, ez, nx, ny, nz, sf, ct, als, sts, hit;
+    IF (sts = 1) THEN RETURN 0;
+    IF (f < 1) THEN
+    BEGIN
+      -- a ceiling or a wall ends it (a player would slide; the check stays on the safe side); a floor is the landing
+      IF (nz < 0.7e0) THEN RETURN 0;
+      RETURN IIF(vlen(ex - bx, ey - by_, 0) <= 48 AND ABS(ez - (bz - 1)) < 30, 1, 0);
+    END
+    x = ex; y = ey; z = ez; vz = nvz;
+    t = t + dt;
+  END
+  RETURN 0;
+END^
+
 -- the walkable edges of up to `cnt` nodes not yet linked, each to its nearest neighbours; returns how many
 -- nodes remain. The game calls it a few nodes per frame, so the arena opens while the bots learn their way
 CREATE OR ALTER PROCEDURE wp_link_chunk (cnt INTEGER)
@@ -379,6 +437,29 @@ BEGIN
           INSERT INTO wp_edges (a, b, len, kind) VALUES (:b, :a, vlen(:bx - :ax, :by_ - :ay, :bz - :az), 0);
       END
       pass = pass + 1;
+    END
+    -- a pad that throws nearly straight up: up to six places it reaches steered (items first, then the
+    -- highest), each a walk from nowhere near the pad
+    IF (EXISTS (SELECT 1 FROM waypoints w JOIN ents p ON p.id = w.ent_id WHERE w.id = :a AND w.kind = 3 AND vlen(p.p1x, p.p1y, 0) < 100)) THEN
+    BEGIN
+      n = 0;
+      FOR SELECT w2.id, w2.x, w2.y, w2.z FROM waypoints w2 CROSS JOIN waypoints w JOIN ents p ON p.id = w.ent_id
+           WHERE w.id = :a AND w2.id <> :a AND w2.kind NOT IN (3, 5)
+             AND w2.z < :az + p.p1z * p.p1z / 1600 - 30 AND w2.z > :az - 400 AND ABS(w2.x - :ax) < 1200 AND ABS(w2.y - :ay) < 1200
+             AND vlen(w2.x - :ax, w2.y - :ay, 0) > 96
+           ORDER BY IIF(w2.kind = 2, 0, 1), w2.z DESC, (w2.x - :ax) * (w2.x - :ax) + (w2.y - :ay) * (w2.y - :ay)
+           INTO b, bx, by_, bz
+      DO
+      BEGIN
+        IF (n >= 6) THEN LEAVE;
+        IF (EXISTS (SELECT 1 FROM wp_edges e WHERE e.a = :a AND e.b = :b)) THEN CONTINUE;
+        IF (wp_pad_steer(ax, ay, az, (SELECT p.p1x FROM waypoints w JOIN ents p ON p.id = w.ent_id WHERE w.id = :a), (SELECT p.p1y FROM waypoints w JOIN ents p ON p.id = w.ent_id WHERE w.id = :a),
+                         (SELECT p.p1z FROM waypoints w JOIN ents p ON p.id = w.ent_id WHERE w.id = :a), bx, by_, bz) = 1) THEN
+        BEGIN
+          INSERT INTO wp_edges (a, b, len, kind) VALUES (:a, :b, vlen(:bx - :ax, :by_ - :ay, :bz - :az), 6);
+          n = n + 1;
+        END
+      END
     END
     -- and up to two rocket jumps to a ledge above, beyond a jump and within the reach (six tried at most;
     -- not from or onto a pad or a teleporter)

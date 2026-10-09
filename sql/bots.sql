@@ -299,7 +299,7 @@ BEGIN
   EXECUTE PROCEDURE fire_weapon(eid, 16, ex, ey, ez - 14, 0, 0, -1, 1);
   EXECUTE PROCEDURE snd(eid, 2, 'sound/player/' || COALESCE(pm, 'sarge') || '/jump1.wav', 1, 1);
   EXECUTE PROCEDURE set_anims(eid, 18, 7);
-  UPDATE bot_routes r SET r.rj_x = :tx, r.rj_y = :ty, r.rj_z = :tz, r.rj_until = now_() + 3 WHERE r.ent_id = :eid;
+  UPDATE bot_routes r SET r.rj_x = :tx, r.rj_y = :ty, r.rj_z = :tz, r.rj_until = now_() + 3, r.rj_hold = NULL WHERE r.ent_id = :eid;
 END^
 
 -- the air control of a bot in a rocket jump's flight: the horizontal velocity that would bring it over the
@@ -334,6 +334,7 @@ DECLARE path VARCHAR(400); DECLARE s VARCHAR(400); DECLARE cut VARCHAR(400); DEC
 DECLARE dst INTEGER; DECLARE src INTEGER; DECLARE odst INTEGER; DECLARE nid INTEGER; DECLARE t DOUBLE PRECISION; DECLARE p INTEGER; DECLARE i INTEGER;
 DECLARE fails SMALLINT; DECLARE yaw DOUBLE PRECISION; DECLARE reach DOUBLE PRECISION; DECLARE prog_d DOUBLE PRECISION; DECLARE prog_t DOUBLE PRECISION; DECLARE stuck SMALLINT = 0;
 DECLARE last_n INTEGER; DECLARE cutn INTEGER; DECLARE rpath VARCHAR(400); DECLARE lx DOUBLE PRECISION; DECLARE ly DOUBLE PRECISION; DECLARE lz DOUBLE PRECISION;
+DECLARE p2 INTEGER; DECLARE n2 INTEGER;
 BEGIN
   moved = 0;
   t = now_();
@@ -395,6 +396,20 @@ BEGIN
   BEGIN
     nid = CAST(SUBSTRING(path FROM 2 FOR p - 2) AS INTEGER);
     SELECT w.x, w.y, w.z FROM waypoints w WHERE w.id = :nid INTO nx, ny, nz;
+    -- the next node a pad that throws straight up and the one after a place steered to in the throw
+    -- (BotFinishTravel_JumpPad's air control): run_physics steers the flight there (bot_air_steer)
+    -- (or the pad already reached, standing on it, and the place the next node)
+    p2 = POSITION(',', path, p + 1);
+    n2 = NULL;
+    IF (p2 > 0) THEN n2 = CAST(SUBSTRING(path FROM p + 1 FOR p2 - p - 1) AS INTEGER);
+    IF (n2 IS NOT NULL AND vlen(nx - x, ny - y, 0) < 300 AND EXISTS (SELECT 1 FROM wp_edges e WHERE e.a = :nid AND e.b = :n2 AND e.kind = 6)) THEN n2 = n2;
+    ELSE IF (last_n IS NOT NULL AND EXISTS (SELECT 1 FROM wp_edges e WHERE e.a = :last_n AND e.b = :nid AND e.kind = 6)) THEN n2 = nid;
+    ELSE n2 = NULL;
+    IF (n2 IS NOT NULL) THEN
+    BEGIN
+      SELECT w.x, w.y, w.z FROM waypoints w WHERE w.id = :n2 INTO lx, ly, lz;
+      UPDATE OR INSERT INTO bot_routes (ent_id, rj_x, rj_y, rj_z, rj_until, rj_hold) VALUES (:eid, :lx, :ly, :lz, :t + 4, :lz + 8) MATCHING (ent_id);
+    END
     IF (last_n IS NOT NULL AND EXISTS (SELECT 1 FROM wp_edges e WHERE e.a = :last_n AND e.b = :nid AND e.kind = 4)) THEN
     BEGIN
       -- a rocket jump (BotTravel_RocketJump): onto its start, slowing as it nears it, then up
@@ -1623,7 +1638,7 @@ DECLARE flags INTEGER; DECLARE wl SMALLINT; DECLARE tid INTEGER; DECLARE vz DOUB
 DECLARE f DOUBLE PRECISION; DECLARE ex DOUBLE PRECISION; DECLARE ey DOUBLE PRECISION; DECLARE ez DOUBLE PRECISION;
 DECLARE nx DOUBLE PRECISION; DECLARE ny DOUBLE PRECISION; DECLARE nz DOUBLE PRECISION; DECLARE sf INTEGER; DECLARE ct INTEGER; DECLARE als SMALLINT; DECLARE sts SMALLINT; DECLARE hit INTEGER;
 DECLARE px DOUBLE PRECISION; DECLARE py DOUBLE PRECISION; DECLARE pz DOUBLE PRECISION;
-DECLARE rx DOUBLE PRECISION; DECLARE ry DOUBLE PRECISION; DECLARE rz DOUBLE PRECISION; DECLARE ru DOUBLE PRECISION;
+DECLARE rx DOUBLE PRECISION; DECLARE ry DOUBLE PRECISION; DECLARE rz DOUBLE PRECISION; DECLARE ru DOUBLE PRECISION; DECLARE rh DOUBLE PRECISION;
 BEGIN
   t = now_();
   -- thinks that are due (non-pushers)
@@ -1640,8 +1655,9 @@ BEGIN
     BEGIN
       -- a bot in the air: gravity and a slide, until it lands
       -- (moved by the tic's average vertical speed, then given the tic's end: gravity as PM_SlideMove integrates it)
-      SELECT r.rj_x, r.rj_y, r.rj_z, r.rj_until FROM bot_routes r WHERE r.ent_id = :eid INTO rx, ry, rz, ru;
-      IF (ru > t) THEN EXECUTE PROCEDURE bot_air_steer(eid, rx, ry, rz, dt);
+      SELECT r.rj_x, r.rj_y, r.rj_z, r.rj_until, r.rj_hold FROM bot_routes r WHERE r.ent_id = :eid INTO rx, ry, rz, ru, rh;
+      -- (a pad's throw is steered once it is over the ledge, or coming down)
+      IF (ru > t AND (rh IS NULL OR pz > rh OR vz < 0)) THEN EXECUTE PROCEDURE bot_air_steer(eid, rx, ry, rz, dt);
       UPDATE ents e SET e.vz = e.vz - (SELECT g.gravity FROM game g WHERE g.id = 1) * :dt / 2, e.flags = BIN_AND(e.flags, BIN_NOT(512)) WHERE e.id = :eid;
       EXECUTE PROCEDURE fly_move(eid, dt) RETURNING_VALUES wl, tid;
       IF (NOT EXISTS (SELECT 1 FROM ents e WHERE e.id = :eid)) THEN CONTINUE;

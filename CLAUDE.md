@@ -64,7 +64,7 @@ explosion sprites, beams) and nothing else. The renderers never query the databa
 | bot behaviour, skill characteristics (`bot_char`) | `sql/bots.sql` |
 | retreat or chase, grenade avoidance | `bot_aggression`, `bot_retreat_goal`, `bot_avoid_grenade` in `sql/bots.sql`, used in `bot_think` |
 | bot chat | `src/botchat.js` (the pak's botfiles into rows), `bot_say` and `bot_chat_event` at the top of `sql/bots.sql` |
-| bot navigation (nodes, edges, routing, incremental build) | `sql/waypoints.sql`, `bot_follow_route` in `sql/bots.sql`; the edge kinds' tests (`wp_walkable`, `wp_jump`, `wp_rocket_jump`) |
+| bot navigation (nodes, edges, routing, incremental build) | `sql/waypoints.sql`, `bot_follow_route` in `sql/bots.sql`; the edge kinds' tests (`wp_walkable`, `wp_jump`, `wp_rocket_jump`, `wp_pad_steer`) |
 | the tic entry point, think/physics dispatch, scoring, `init_map` | the end of `sql/bots.sql` |
 | what a frame returns | `sql/render.sql` (`frame_all`), read in `src/scene.js` `FrameState.parse` |
 | interpolation between tics, local prediction | `src/main.js`: `viewRow`, `interpolateFrame`, `poseOf`; the eye clamp in `view_setup` |

@@ -63,8 +63,7 @@ fuzzy logic from the botfiles. What that leaves out:
 
 | Gap | Notes |
 | --- | --- |
-| **Air control, strafe-jumping** | the bots jump gaps (`wp_jump`, kind 5), rocket-jump up to ledges (kind 4, steering in the air) and jump down ledges; they do not steer in a plain jump or a drop, and never strafe-jump for speed |
-| **Vertical boost pads** | a pad that lands on itself (q3dm17's centre) is only useful with air control; the bots do not take it, so the railgun platform is theirs only by chance |
+| **Air control, strafe-jumping** | the bots jump gaps (`wp_jump`, kind 5), rocket-jump up to ledges (kind 4) and steer a straight-up pad's throw onto the ledges around it (kind 6), both steered in the air; they do not steer in a plain jump, a drop or a sloping pad's throw, and never strafe-jump for speed |
 | **Item weights and timing** | botlib weighs items by the bot's needs and times the big ones (the "long-term goal"); here a roaming goal is the nearest item with a bonus for weapons, armour and powerups |
 | **Dodging** | grenades are avoided (160 units, `bot_avoid_grenade`) and `BotAggression` decides retreat and chase (`bot_aggression`, `bot_retreat_goal`); no reaction to incoming rockets (botlib has none either, beyond the attack move's strafing), and the retreat's goal is an item in sight rather than the AAS long-term goal; ammunition is not counted, so a gun held is a gun loaded |
 | **Weapon preferences per bot** | all bots use `bot_best_weapon`; the botfiles give each character its favourites |

@@ -500,7 +500,7 @@ that floor to find the next level. A floor the box does not fit on is tried 40 u
 wall beside the column), a column that finds nothing is tried 56 units to each side (corridors).
 `wp_add` merges anything within 64 units of an existing node.
 
-**Edges** (`wp_edges`: `a → b`, length, kind 0 walk / 1 jump pad / 2 teleporter / 3 drop / 4 rocket jump / 5 jump).
+**Edges** (`wp_edges`: `a → b`, length, kind 0 walk / 1 jump pad / 2 teleporter / 3 drop / 4 rocket jump / 5 jump / 6 pad steered).
 `wp_link_chunk` links each node to its ten nearest neighbours within 420 units, and then to the four
 nearest on a lower level (the ten are all on the node's own level when the grid is dense, and a
 ledge needs its way down), when `wp_walkable` says a player can get there: first a straight box
@@ -522,7 +522,14 @@ way, to nodes 60 to 220 units higher and at least 48 to the side, six tried at m
 reach of the flight (680 a second up once the rocket's knock is in, measured: a 300-unit apex; down
 at gravity; across with the bots' air control, 16 a tic up to 320, with a fifth to spare), and room
 for it: a box trace up from the start, across at the top, down onto the end. q3dm1 has 8, q3dm7 85,
-q3dm17 2; building them adds nothing measurable to the edge time.
+q3dm17 2; building them adds nothing measurable to the edge time. A pad that throws nearly straight up
+(under 100 a second across: q3dm17's centre pad lands where it took off) also gets up to six *steered*
+edges (the AAS's jump-pad reachabilities with air control): `wp_pad_steer` bounds the reach (the
+landing under the apex by 30, within what the air acceleration covers while the throw is over the
+landing's height) and then flies the throw in tenths of a second as a bot flies it, steered as
+`bot_air_steer` steers, the box traced each step; the edge stands when the flight comes down on the
+landing's floor. Items first, then the highest. q3dm17 has 18 (the centre pad to the red armour's
+ledge, 530 across and 229 up), q3dm7 5, q3tourney2 10.
 
 **Routing.** `wp_nearest(x, y, z, see)` finds the node nearest a spot (height weighted ×4), the
 nearest *in sight* for the bot's own position. `wp_route(src, dst, rj)` is a breadth-first search (over
@@ -552,7 +559,10 @@ slowing as it nears it, then `bot_rocket_jump` (`BotTravel_RocketJump`) faces th
 launcher, looks straight down, jumps and fires. When the edge is a jump (`BotTravel_Jump`), it
 walks onto the start (or is already past it toward the landing) and leaves it with the horizontal speed
 that lands it on the end node (at most 320) and 270 up, the jump's sound; `run_physics` flies it,
-unsteered. In a rocket jump's flight `run_physics` calls `bot_air_steer`
+unsteered. When the next node is a straight-up pad and the one after a steered edge's end (or the
+pad was just reached), the bot's route row takes that end as the place to steer for (`rj_x`, `rj_y`,
+`rj_z`) with `rj_hold`, its height: the pad throws it, and in the air it steers once it is over that
+height or coming down (a player who steers sooner hits the ledge's side). In a rocket jump's flight `run_physics` calls `bot_air_steer`
 (`BotFinishTravel_WeaponJump`): the horizontal velocity that would put it over the landing as it comes
 down to it, approached at the air acceleration. The rocket takes 45 health of 100 (half of its 90), and
 the bot lands within a few units of the node. Stepping onto a jump pad's node puts the bot in the pad's trigger;
@@ -569,12 +579,13 @@ told `link: false` (screenshots do not need it). Sizes: q3dm1 172 nodes and 1170
 and 3700; q3dm17 287 nodes, 2880 edges, 12 pad edges and 3 teleporter edges; every spawn point can
 route to every other on all three.
 
-**Known limits.** No air control except in a rocket jump, so on q3dm17 the
-platforms reached only by steering off the vertical boost pad stay out of the bots' reach; nodes on
+**Known limits.** No air control but in a rocket jump and off a straight-up pad; nodes on
 roofs and other sealed pockets are harmless islands. The bots test also puts a bot at the start of a
 rocket-jump edge no walk replaces (q3dm1 has them; q3dm17's two have walks) and checks it gets there,
 and at the start of the map's widest level jump (q3dm1's: across and down) and checks it lands. Every
-jump edge of the four maps, flown this way, lands (91 of 91). The bots test runs the hunt from the farthest spawn on
+jump edge of the four maps, flown this way, lands (91 of 91); and at the start of the farthest steered
+pad edge (q3dm17's centre pad to the armour), checking it lands there. Every steered edge, flown, lands
+(33 of 33). The bots test runs the hunt from the farthest spawn on
 q3dm1 and q3dm17 (four runs in a row pass on each; the criterion is "within 350 units", where a bot
 in sight starts to circle-strafe instead of closing in). The page's console has a `waypoints` button and a `bot
 routes` button; `SELECT wp_route(a, b) FROM rdb$database` asks for a route by hand.
