@@ -26,7 +26,7 @@ CREATE TABLE wp_edges (
   a INTEGER NOT NULL,
   b INTEGER NOT NULL,
   len DOUBLE PRECISION NOT NULL,
-  kind SMALLINT DEFAULT 0 NOT NULL,     -- 0 walk 1 jump pad 2 teleporter 3 drop (one way) 4 rocket jump (one way)
+  kind SMALLINT DEFAULT 0 NOT NULL,     -- 0 walk 1 jump pad 2 teleporter 3 drop (one way) 4 rocket jump (one way) 5 jump (one way)
   PRIMARY KEY (a, b)
 );
 CREATE INDEX wp_edges_a ON wp_edges (a);
@@ -308,6 +308,34 @@ BEGIN
   RETURN 1;
 END^
 
+-- A jump across a gap (the AAS's TRAVEL_JUMP): a run and a jump, 320 across and 270 up under gravity 800,
+-- lands b's floor (no higher than 40 above a: the jump's apex is 45) within 85 percent of the reach,
+-- t = (270 + sqrt(270² - 1600 dz)) / 800 seconds at 320. The flight's room: up 50 from a, across, down onto b
+CREATE OR ALTER FUNCTION wp_jump (ax DOUBLE PRECISION, ay DOUBLE PRECISION, az DOUBLE PRECISION, bx DOUBLE PRECISION, by_ DOUBLE PRECISION, bz DOUBLE PRECISION) RETURNS SMALLINT
+AS
+DECLARE h DOUBLE PRECISION; DECLARE d DOUBLE PRECISION; DECLARE top DOUBLE PRECISION;
+DECLARE f DOUBLE PRECISION; DECLARE ex DOUBLE PRECISION; DECLARE ey DOUBLE PRECISION; DECLARE ez DOUBLE PRECISION;
+DECLARE nx DOUBLE PRECISION; DECLARE ny DOUBLE PRECISION; DECLARE nz DOUBLE PRECISION;
+DECLARE sf INTEGER; DECLARE ct INTEGER; DECLARE als SMALLINT; DECLARE sts SMALLINT; DECLARE hit INTEGER;
+BEGIN
+  h = bz - az; d = vlen(bx - ax, by_ - ay, 0);
+  IF (h > 40 OR h < -400 OR d < 64) THEN RETURN 0;
+  IF (d > 0.85e0 * 320 * (270 + SQRT(270e0 * 270 - 1600 * h)) / 800) THEN RETURN 0;
+  top = MAXVALUE(az, bz) + 50;
+  EXECUTE PROCEDURE trace_move(NULL, -15, -15, -24, 15, 15, 32, ax, ay, az, ax, ay, top, 65537)
+    RETURNING_VALUES f, ex, ey, ez, nx, ny, nz, sf, ct, als, sts, hit;
+  IF (f < 1 OR sts = 1) THEN RETURN 0;
+  EXECUTE PROCEDURE trace_move(NULL, -15, -15, -24, 15, 15, 32, ax, ay, top, bx, by_, top, 65537)
+    RETURNING_VALUES f, ex, ey, ez, nx, ny, nz, sf, ct, als, sts, hit;
+  IF (f < 1 OR sts = 1) THEN RETURN 0;
+  EXECUTE PROCEDURE trace_move(NULL, -15, -15, -24, 15, 15, 32, bx, by_, top, bx, by_, bz - 30, 65537)
+    RETURNING_VALUES f, ex, ey, ez, nx, ny, nz, sf, ct, als, sts, hit;
+  IF (f >= 1 OR sts = 1 OR nz < 0.7e0 OR ez < bz - 4 OR ez > bz + 3) THEN RETURN 0;
+  -- not into lava or slime
+  IF (BIN_AND(point_contents(bx, by_, bz - 24), 24) <> 0) THEN RETURN 0;
+  RETURN 1;
+END^
+
 -- the walkable edges of up to `cnt` nodes not yet linked, each to its nearest neighbours; returns how many
 -- nodes remain. The game calls it a few nodes per frame, so the arena opens while the bots learn their way
 CREATE OR ALTER PROCEDURE wp_link_chunk (cnt INTEGER)
@@ -338,7 +366,13 @@ BEGIN
         n = n + 1;
         IF (EXISTS (SELECT 1 FROM wp_edges e WHERE e.a = :a AND e.b = :b)) THEN CONTINUE;
         w = wp_walkable(ax, ay, az, bx, by_, bz);
-        IF (w = 0) THEN CONTINUE;
+        IF (w = 0) THEN
+        BEGIN
+          -- no walk: a jump across the gap, maybe (from a pad or a teleporter's trigger, no)
+          IF (wp_jump(ax, ay, az, bx, by_, bz) = 1 AND NOT EXISTS (SELECT 1 FROM waypoints w WHERE w.id = :a AND w.kind IN (3, 5))) THEN
+            INSERT INTO wp_edges (a, b, len, kind) VALUES (:a, :b, vlen(:bx - :ax, :by_ - :ay, :bz - :az), 5);
+          CONTINUE;
+        END
         INSERT INTO wp_edges (a, b, len, kind) VALUES (:a, :b, vlen(:bx - :ax, :by_ - :ay, :bz - :az), IIF(:w = 3, 3, 0));
         -- a flat walk goes both ways
         IF (w = 1 AND ABS(bz - az) < 40 AND NOT EXISTS (SELECT 1 FROM wp_edges e WHERE e.a = :b AND e.b = :a)) THEN

@@ -417,6 +417,29 @@ BEGIN
       UPDATE OR INSERT INTO bot_routes (ent_id, target, dst_node, path, built, fails, prog_d, prog_t, last_node) VALUES (:eid, :target, :dst, :path, :built, :fails, NULL, :t, :last_n) MATCHING (ent_id);
       EXIT;
     END
+    IF (last_n IS NOT NULL AND EXISTS (SELECT 1 FROM wp_edges e WHERE e.a = :last_n AND e.b = :nid AND e.kind = 5)) THEN
+    BEGIN
+      -- a jump across a gap (BotTravel_Jump): onto its start, then off it with the speed that lands it on
+      -- the far node (320 at most, 270 up; in the air run_physics flies it, as a drop's)
+      SELECT w.x, w.y, w.z FROM waypoints w WHERE w.id = :last_n INTO lx, ly, lz;
+      IF (vlen(lx - x, ly - y, 0) > 16 AND vlen(nx - x, ny - y, 0) > vlen(nx - lx, ny - ly, 0)) THEN
+      BEGIN
+        yaw = vectoyaw(lx - x, ly - y);
+        UPDATE ents e SET e.ideal_yaw = :yaw WHERE e.id = :eid;
+        moved = step_direction(eid, yaw, MINVALUE(dist, vlen(lx - x, ly - y, 0)));
+        IF (moved = 0) THEN fails = fails + 1; ELSE fails = 0;
+        UPDATE OR INSERT INTO bot_routes (ent_id, target, dst_node, path, built, fails, prog_d, prog_t, last_node) VALUES (:eid, :target, :dst, :path, :built, :fails, NULL, :t, :last_n) MATCHING (ent_id);
+        EXIT;
+      END
+      yaw = vectoyaw(nx - x, ny - y);
+      reach = MINVALUE(320, vlen(nx - x, ny - y, 0) * 800 / (270 + SQRT(MAXVALUE(0, 270e0 * 270 - 1600 * (nz - z)))));
+      UPDATE ents e SET e.ideal_yaw = :yaw, e.yaw = :yaw, e.vx = COS(:yaw * 0.0174532925e0) * :reach, e.vy = SIN(:yaw * 0.0174532925e0) * :reach, e.vz = 270,
+             e.flags = BIN_AND(e.flags, BIN_NOT(512)) WHERE e.id = :eid;
+      EXECUTE PROCEDURE snd(eid, 2, 'sound/player/' || COALESCE((SELECT e.pmodel FROM ents e WHERE e.id = :eid), 'sarge') || '/jump1.wav', 1, 1);
+      UPDATE OR INSERT INTO bot_routes (ent_id, target, dst_node, path, built, fails, prog_d, prog_t, last_node) VALUES (:eid, :target, :dst, :path, :built, 0, NULL, :t + 1.5e0, :last_n) MATCHING (ent_id);
+      moved = 1;
+      EXIT;
+    END
     yaw = vectoyaw(nx - x, ny - y);
     UPDATE ents e SET e.ideal_yaw = :yaw WHERE e.id = :eid;
     -- progress: nearer to the node than ever, or not

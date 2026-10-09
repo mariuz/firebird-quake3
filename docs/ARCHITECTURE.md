@@ -500,7 +500,7 @@ that floor to find the next level. A floor the box does not fit on is tried 40 u
 wall beside the column), a column that finds nothing is tried 56 units to each side (corridors).
 `wp_add` merges anything within 64 units of an existing node.
 
-**Edges** (`wp_edges`: `a → b`, length, kind 0 walk / 1 jump pad / 2 teleporter / 3 drop / 4 rocket jump).
+**Edges** (`wp_edges`: `a → b`, length, kind 0 walk / 1 jump pad / 2 teleporter / 3 drop / 4 rocket jump / 5 jump).
 `wp_link_chunk` links each node to its ten nearest neighbours within 420 units, and then to the four
 nearest on a lower level (the ten are all on the node's own level when the grid is dense, and a
 ledge needs its way down), when `wp_walkable` says a player can get there: first a straight box
@@ -509,7 +509,13 @@ and the two are on one level, a chest-height point trace rules out walls at once
 *stepped walk* of 40-unit steps, each one tried 18 units up (three times for stairs and ramps) and
 settled onto the floor below with a drop of up to 400 units allowed (a fall that hurts a little, the
 AAS's "jump down"), which must end within 48 units of the target. A flat walk is stored both ways; a
-drop is one way. Pads and teleporters get their edges when their nodes are made. Last, each node
+drop is one way. Where there is no walk, `wp_jump` tries a *jump* across the gap (the AAS's
+`TRAVEL_JUMP`), one way: a run and a jump, 320 across and 270 up under gravity 800, to a floor no more than
+40 above the start (the jump's apex is 45) and at least 64 away, within 85 percent of the reach,
+320 × (270 + √(270² − 1600 dz)) / 800, with room for the flight (a box trace up 50, across, down onto
+the end) and no lava or slime under the landing; not from a pad's or a teleporter's node. q3dm1 has 3
+(all across a gap and down a ledge), q3dm17 16, q3dm7 55, q3tourney2 17, and building them adds
+nothing measurable. Pads and teleporters get their edges when their nodes are made. Last, each node
 (not a pad or a teleporter) gets up to two *rocket-jump* edges (the AAS's `TRAVEL_ROCKETJUMP`), one
 way, to nodes 60 to 220 units higher and at least 48 to the side, six tried at most, when
 `wp_rocket_jump` agrees: a floor a shot hits under the start (player clip lets a rocket through), the
@@ -543,7 +549,10 @@ a second time over the rocket jumps and takes that route when there is no walk o
 nodes longer (the AAS rates a rocket jump at five seconds). `bot_routes.last_node` remembers the node
 last reached; when the edge from it to the next one is a rocket jump, the bot walks onto its start,
 slowing as it nears it, then `bot_rocket_jump` (`BotTravel_RocketJump`) faces the landing, raises the
-launcher, looks straight down, jumps and fires. In the flight `run_physics` calls `bot_air_steer`
+launcher, looks straight down, jumps and fires. When the edge is a jump (`BotTravel_Jump`), it
+walks onto the start (or is already past it toward the landing) and leaves it with the horizontal speed
+that lands it on the end node (at most 320) and 270 up, the jump's sound; `run_physics` flies it,
+unsteered. In a rocket jump's flight `run_physics` calls `bot_air_steer`
 (`BotFinishTravel_WeaponJump`): the horizontal velocity that would put it over the landing as it comes
 down to it, approached at the air acceleration. The rocket takes 45 health of 100 (half of its 90), and
 the bot lands within a few units of the node. Stepping onto a jump pad's node puts the bot in the pad's trigger;
@@ -560,10 +569,12 @@ told `link: false` (screenshots do not need it). Sizes: q3dm1 172 nodes and 1170
 and 3700; q3dm17 287 nodes, 2880 edges, 12 pad edges and 3 teleporter edges; every spawn point can
 route to every other on all three.
 
-**Known limits.** No jumping across gaps and no air control except in a rocket jump, so on q3dm17 the
+**Known limits.** No air control except in a rocket jump, so on q3dm17 the
 platforms reached only by steering off the vertical boost pad stay out of the bots' reach; nodes on
 roofs and other sealed pockets are harmless islands. The bots test also puts a bot at the start of a
-rocket-jump edge no walk replaces (q3dm1 has them; q3dm17's two have walks) and checks it gets there. The bots test runs the hunt from the farthest spawn on
+rocket-jump edge no walk replaces (q3dm1 has them; q3dm17's two have walks) and checks it gets there,
+and at the start of the map's widest level jump (q3dm1's: across and down) and checks it lands. Every
+jump edge of the four maps, flown this way, lands (91 of 91). The bots test runs the hunt from the farthest spawn on
 q3dm1 and q3dm17 (four runs in a row pass on each; the criterion is "within 350 units", where a bot
 in sight starts to circle-strafe instead of closing in). The page's console has a `waypoints` button and a `bot
 routes` button; `SELECT wp_route(a, b) FROM rdb$database` asks for a route by hand.
