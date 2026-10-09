@@ -11,8 +11,24 @@
 import { md3Normal, ANIM } from './md3.js';
 import { loadImage, powerOfTwo, halve } from './image.js';
 import { SURF } from './bsp.js';
+import { deformVertex, envTexCoords } from './shader.js';
 
 const LIGHTMAP_SIZE = 128;
+
+/** deformVertexes autoSprite: each four vertices of the face a square turned to face the eye, its size from the
+ *  middle to the first corner (RB_CalcAutoSprite's radius 0.707 of that distance, each way) */
+export function autospriteQuads(f, look, ox = 0, oy = 0, oz = 0) {
+  if (!f.sprites) {
+    f.sprites = [];
+    const V = f.verts;
+    for (let q = 0; q + 3 < f.nverts; q += 4) {
+      const c = [0, 1, 2].map((i) => (V[q * 10 + i] + V[(q + 1) * 10 + i] + V[(q + 2) * 10 + i] + V[(q + 3) * 10 + i]) / 4);
+      const r = Math.hypot(V[q * 10] - c[0], V[q * 10 + 1] - c[1], V[q * 10 + 2] - c[2]) * 0.707;
+      f.sprites.push({ c, size: r * 2 });
+    }
+  }
+  return f.sprites.map((s) => ({ image: look.image, center: [s.c[0] + ox, s.c[1] + oy, s.c[2] + oz], size: s.size, blend: look.blend === 'opaque' ? 'blend' : look.blend }));
+}
 const DLIGHT_LOOK = { blend: 'opaque' };   // a dlight pass is drawn at once, never kept for the translucent pass
 
 export class Renderer {
@@ -46,6 +62,8 @@ export class Renderer {
     this.fb = new Uint32Array(this.image.data.buffer);
     this.zb = new Float32Array(w * h);
     this.dlights = [];
+    this.autosprites = [];
+    this.envSt = new Float32Array(2048);
     this.edgeL = new Float32Array(h * 7);   // x, iz, s/z, t/z, u/z, v/z, light per scanline
     this.edgeR = new Float32Array(h * 7);
   }
@@ -145,6 +163,38 @@ export class Renderer {
     view.cx = w / 2;
     view.cy = h / 2;
     this.alphaPolys = [];
+    this.autosprites = [];
+  }
+
+  /**
+   * A surface over chrome: the chrome (with the vertices' coordinates from this.envSt) lit by the lightmap,
+   * then the picture over it by its alpha, lit too (pewter_shiney); or the picture and the chrome added
+   * on top (largerblock3blood). The passes over the same polygon go at once, a hair nearer, so the depth
+   * test lets them through.
+   */
+  chromeFace(m, behind, info, fan) {
+    const vv = this.vv, env = this.envSt, look = info.look;
+    if (!info.chrome) {
+      const base = { ...look, env: null, tcGen: null };
+      info.chrome = {
+        env: { ...info, look: { ...base, image: look.env.image, anim: null, scroll: null, scale: null, turb: null, blend: look.env.mode === 'under' ? 'opaque' : 'add', lightmapped: look.env.mode === 'under' && look.lightmapped, add: null }, now: true },
+        main: { ...info, look: { ...base, blend: look.env.mode === 'under' ? 'blendlm' : 'opaque' }, now: look.env.mode === 'under' },
+      };
+    }
+    const st = new Float32Array(m * 2);
+    for (let k = 0; k < m; k++) { st[k * 2] = vv[k * 9 + 5]; st[k * 2 + 1] = vv[k * 9 + 6]; }
+    const setEnv = () => { for (let k = 0; k < m; k++) { vv[k * 9 + 5] = env[k * 2]; vv[k * 9 + 6] = env[k * 2 + 1]; } };
+    const setSt = () => { for (let k = 0; k < m; k++) { vv[k * 9 + 5] = st[k * 2]; vv[k * 9 + 6] = st[k * 2 + 1]; } };
+    const passes = look.env.mode === 'under' ? [[setEnv, info.chrome.env], [setSt, info.chrome.main]] : [[setSt, info.chrome.main], [setEnv, info.chrome.env]];
+    for (const [set, inf] of passes) {
+      set();
+      if (fan) this.emitPoly(0, 1, 2, m, behind, inf, true);
+      else for (let k = 0; k + 2 < inf.f.tris.length; k += 3) {
+        const a = inf.f.tris[k], b = inf.f.tris[k + 1], c = inf.f.tris[k + 2];
+        this.emitPoly(a, b, c, 3, vv[a * 9] < 4 || vv[b * 9] < 4 || vv[c * 9] < 4, inf, false);
+      }
+    }
+    setSt();
   }
 
   /** The frame's dynamic lights: [{ x, y, z, radius, color: [r, g, b] }] */
@@ -251,13 +301,15 @@ export class Renderer {
       if (look.nodraw || !f.nverts) continue;
       const lx = view.x - ox, ly = view.y - oy, lz = view.z - oz;
       if (ent !== lastEnt) { lastEnt = ent; M = ent && entAngles.get(ent) ? angleMatrix(entAngles.get(ent)) : null; }
-      const verts = f.verts, m = f.nverts;
+      if (look.autosprite) { this.autosprites.push(...autospriteQuads(f, look, ox, oy, oz)); continue; }
+      const verts = f.verts, m = f.nverts, defs = look.deforms, norms = f.norms;
       this.polyRoom(m);
       const vv = this.vv;   // (after polyRoom: it may have grown)
       let behind = false;
       for (let k = 0; k < m; k++) {
         const vi = k * 10;
-        const x = verts[vi], y = verts[vi + 1], z = verts[vi + 2];
+        let x = verts[vi], y = verts[vi + 1], z = verts[vi + 2];
+        if (defs) [x, y, z] = deformVertex(defs, x, y, z, norms[k * 3], norms[k * 3 + 1], norms[k * 3 + 2], time);
         let dx, dy, dz;
         if (M) { dx = M[0] * x + M[1] * y + M[2] * z - lx; dy = M[3] * x + M[4] * y + M[5] * z - ly; dz = M[6] * x + M[7] * y + M[8] * z - lz; }
         else { dx = x - lx; dy = y - ly; dz = z - lz; }
@@ -266,6 +318,24 @@ export class Renderer {
         vv[o] = vf; vv[o + 1] = vr; vv[o + 2] = vu;
         if (vf >= near) { vv[o + 3] = cx + (vr * sc) / vf; vv[o + 4] = cy - (vu * sc) / vf; } else behind = true;
         vv[o + 5] = verts[vi + 3]; vv[o + 6] = verts[vi + 4]; vv[o + 7] = verts[vi + 5]; vv[o + 8] = verts[vi + 6];
+      }
+      if (look.tcGen === 'environment' || look.env) {
+        // the vertices' chrome coordinates (RB_CalcEnvironmentTexCoords), from where they are in the world
+        if (this.envSt.length < m * 2) this.envSt = new Float32Array(m * 4);
+        const env = this.envSt;
+        for (let k = 0; k < m; k++) {
+          const o = k * 9, F = view.fwd, Rt = view.right, U = view.up;
+          const px = view.x + vv[o] * F[0] + vv[o + 1] * Rt[0] + vv[o + 2] * U[0];
+          const py = view.y + vv[o] * F[1] + vv[o + 1] * Rt[1] + vv[o + 2] * U[1];
+          const pz = view.z + vv[o] * F[2] + vv[o + 1] * Rt[2] + vv[o + 2] * U[2];
+          let nx = norms[k * 3], ny = norms[k * 3 + 1], nz = norms[k * 3 + 2];
+          if (M) [nx, ny, nz] = [M[0] * nx + M[1] * ny + M[2] * nz, M[3] * nx + M[4] * ny + M[5] * nz, M[6] * nx + M[7] * ny + M[8] * nz];
+          const [s, t] = envTexCoords(px, py, pz, nx, ny, nz, view.x, view.y, view.z);
+          env[k * 2] = s; env[k * 2 + 1] = t;
+        }
+        if (look.tcGen === 'environment') { for (let k = 0; k < m; k++) { vv[k * 9 + 5] = env[k * 2]; vv[k * 9 + 6] = env[k * 2 + 1]; } }
+        else this.chromeFace(m, behind, info, f.fan);
+        if (look.env) continue;
       }
       if (f.fan) {
         this.emitPoly(0, 1, 2, m, behind, info, true);
@@ -347,7 +417,8 @@ export class Renderer {
       if (n < 3) return;
     }
     const look = info.look;
-    if (look.blend !== 'opaque' && !look.sky) { this.alphaPolys.push({ verts: pp.slice(0, n * 7), n, info }); return; }
+    if (info.now) for (let k = 0; k < n; k++) pp[k * 7 + 2] *= 1 + 4e-6;
+    if (look.blend !== 'opaque' && !look.sky && !info.now) { this.alphaPolys.push({ verts: pp.slice(0, n * 7), n, info }); return; }
     this.drawSurfacePoly(pp, n, info);
   }
 
@@ -355,6 +426,8 @@ export class Renderer {
   drawAlphaPolys() {
     for (const p of this.alphaPolys) this.drawSurfacePoly(p.verts, p.n, p.info);
     this.alphaPolys = [];
+    for (const s of this.autosprites) this.drawSprite(s.image, s.center, s.size, s.blend);
+    this.autosprites = [];
   }
 
   drawSurfacePoly(poly, n, info) {
@@ -376,7 +449,7 @@ export class Renderer {
       if (look.blend === 'add' || look.blend === 'blend' || !look.lightmapped) flat = 255;
       if (look.vertexColor) flat = Math.min(255, (sum / (3 * f.nverts)) * this.lightScale);
     }
-    const mode = look.blend === 'add' ? 'add' : look.blend === 'blend' ? 'blend' : look.blend === 'filter' ? 'filter' : look.alphaTest ? 'alphatest' : 'opaque';
+    const mode = look.blend === 'add' ? 'add' : look.blend === 'blend' ? 'blend' : look.blend === 'blendlm' ? (page ? 'blendlm' : 'blend') : look.blend === 'filter' ? 'filter' : look.alphaTest ? 'alphatest' : 'opaque';
     this.fillPolygon(poly, n, tex, page, mode, flat, ds, dt, look.turb ? 1 : 0, scale);
     if (look.add && mode === 'opaque') {
       // the glow layer of lights and screens: added over the lit surface
@@ -492,6 +565,21 @@ export class Renderer {
             zb[idx] = iz;
             if (fl >= 1) fb[idx] = c | 0xff000000;
             else fb[idx] = (0xff000000 | ((((c >> 16) & 255) * fl) << 16) | ((((c >> 8) & 255) * fl) << 8) | ((c & 255) * fl)) >>> 0;
+          }
+        } else if (mode === 'blendlm') {
+          for (let k = 0; k < run; k++, idx++, iz += diz, s += dss, t += dtt, u += duu, v += dvv) {
+            if (iz <= zb[idx]) continue;
+            const c = td[((t & hm) * tw + (s & wm)) >>> 0], a = (c >>> 24) / 255;
+            if (a <= 0) continue;
+            // the chrome under (lit by the lightmap already) and the picture, each lit by the lightmap plus the
+            // a - a² of GL_ONE_MINUS_DST_ALPHA's shine
+            const li = (((v & 127) << 7) + (u & 127)) * 3, d = fb[idx], ia = 1 - a, k = (a - a * a) * 255;
+            const lr = lm[li], lg = lm[li + 1], lb = lm[li + 2];
+            let r = (lr > 0 ? (d & 255) * (lr + k) / lr : 0) * ia + (c & 255) * (lr + k) / 255 * a;
+            let g = (lg > 0 ? ((d >> 8) & 255) * (lg + k) / lg : 0) * ia + ((c >> 8) & 255) * (lg + k) / 255 * a;
+            let b = (lb > 0 ? ((d >> 16) & 255) * (lb + k) / lb : 0) * ia + ((c >> 16) & 255) * (lb + k) / 255 * a;
+            if (r > 255) r = 255; if (g > 255) g = 255; if (b > 255) b = 255;
+            fb[idx] = (0xff000000 | (b << 16) | (g << 8) | r) >>> 0;
           }
         } else if (mode === 'add') {
           for (let k = 0; k < run; k++, idx++, iz += diz, s += dss, t += dtt) {

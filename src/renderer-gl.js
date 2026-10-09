@@ -8,7 +8,7 @@
 // vertex shader; the player parts hang on their tags as before. The HUD is
 // drawn by the software painter onto a transparent canvas laid over this one.
 
-import { Renderer, yawAxis, anglesAxis, tagTransform, animFrame } from './renderer.js';
+import { Renderer, yawAxis, anglesAxis, tagTransform, animFrame, autospriteQuads } from './renderer.js';
 import { loadImage, powerOfTwo } from './image.js';
 
 const LIGHTMAP_SIZE = 128;
@@ -19,15 +19,35 @@ layout(location=0) in vec3 aPos;
 layout(location=1) in vec2 aSt;
 layout(location=2) in vec2 aLm;
 layout(location=3) in vec3 aColor;
+layout(location=4) in vec3 aNormal;
 uniform mat4 uProj;
 uniform mat4 uView;
 uniform mat4 uModel;
+uniform float uTime;
+uniform int uDefN;        // deformVertexes: how many (up to 2)
+uniform vec4 uDefA[2];    // kind (1 wave, 2 move), spread, func, base
+uniform vec4 uDefB[2];    // amp, phase, freq
+uniform vec3 uDefMove[2];
 out vec2 vSt;
 out vec2 vLm;
 out vec3 vColor;
 out vec3 vWorld;
+// EvalWaveForm: sin, triangle, square, sawtooth, inverse sawtooth over one period per unit
+float wave(float func, float base, float amp, float x) {
+  x = fract(x);
+  float v = func < 0.5 ? sin(x * 6.2831853) : func < 1.5 ? (x < 0.25 ? x * 4.0 : x < 0.75 ? 2.0 - x * 4.0 : x * 4.0 - 4.0)
+          : func < 2.5 ? (x < 0.5 ? 1.0 : -1.0) : func < 3.5 ? x : 1.0 - x;
+  return base + amp * v;
+}
 void main() {
-  vec4 w = uModel * vec4(aPos, 1.0);
+  vec3 p = aPos;
+  for (int i = 0; i < 2; i++) {
+    if (i >= uDefN) break;
+    vec4 a = uDefA[i], b = uDefB[i];
+    if (a.x < 1.5) p += aNormal * wave(a.z, a.w, b.x, b.y + (aPos.x + aPos.y + aPos.z) * a.y + uTime * b.z);
+    else p += uDefMove[i] * wave(a.z, a.w, b.x, b.y + uTime * b.z);
+  }
+  vec4 w = uModel * vec4(p, 1.0);
   vWorld = w.xyz;
   gl_Position = uProj * uView * w;
   vSt = aSt; vLm = aLm; vColor = aColor;
@@ -53,6 +73,8 @@ uniform sampler2D uSky2;
 uniform int uSkyLayers;
 uniform vec4 uSkyScroll;  // layer 1 xy, layer 2 zw
 uniform vec2 uSkyScale;
+uniform int uEnvMode;     // tcGen environment: 1 the picture itself, 2 a chrome under it, 3 a chrome added
+uniform sampler2D uEnv;
 uniform int uDlCount;     // the dynamic lights on this surface (0 for the translucent ones)
 uniform vec4 uDlPos[8];   // xyz, radius
 uniform vec3 uDlColor[8];
@@ -90,9 +112,23 @@ void main() {
   }
   vec2 st = vSt * uScale + uScroll;
   if (uTurb > 0.0) st += vec2(sin(vSt.y * 12.0 + uTime * 2.0), sin(vSt.x * 12.0 + uTime * 2.0)) * 0.015;
-  vec4 c = texture(uTex, st);
+  // RB_CalcEnvironmentTexCoords: the view reflected in the surface (the face's normal, towards the eye)
+  vec2 envSt = vec2(0.0);
+  if (uEnvMode > 0) {
+    vec3 n = normalize(cross(dFdx(vWorld), dFdy(vWorld)));
+    vec3 viewer = normalize(uEye - vWorld);
+    if (dot(n, viewer) < 0.0) n = -n;
+    vec3 r = n * 2.0 * dot(n, viewer) - viewer;
+    envSt = vec2(0.5 + r.y * 0.5, 0.5 - r.z * 0.5);
+  }
+  vec4 c = texture(uTex, uEnvMode == 1 ? envSt : st);
+  // over a chrome the lightmap stage is GL_DST_COLOR GL_ONE_MINUS_DST_ALPHA: the frame's alpha after the picture
+  // blended over the opaque chrome is a² + 1 - a, so a - a² of the unlit colour shows through the shadow
+  float shine = 0.0;
+  if (uEnvMode == 2) { shine = c.a - c.a * c.a; c = vec4(mix(texture(uEnv, envSt).rgb, c.rgb, c.a), 1.0); }
+  else if (uEnvMode == 3) c.rgb += texture(uEnv, envSt).rgb;
   if (uAlphaTest == 1 && c.a < 0.5) discard;
-  vec3 lit = uMode == 0 ? c.rgb * texture(uLightmap, vLm).rgb : c.rgb * uFlat;
+  vec3 lit = uMode == 0 ? c.rgb * (texture(uLightmap, vLm).rgb + shine) : c.rgb * uFlat;
   if (uDlCount > 0) lit *= 1.0 + dlights();
   fragColor = vec4(min(lit, 1.0), c.a);
 }`;
@@ -254,13 +290,16 @@ export class GLRenderer {
     this.bsp = bsp;
     let total = 0;
     for (const f of bsp.faces) total += f.nverts;
-    const vb = new Float32Array(total * 10);
+    const vb = new Float32Array(total * 13);
     let base = 0;
     const indexOf = [];
     bsp.faces.forEach((f, i) => {
       const tex = bsp.textures[f.texture];
       const look = this.look(tex?.name ?? '');
-      vb.set(f.verts, base * 10);
+      for (let k = 0; k < f.nverts; k++) {
+        vb.set(f.verts.subarray(k * 10, k * 10 + 10), (base + k) * 13);
+        if (f.norms) vb.set(f.norms.subarray(k * 3, k * 3 + 3), (base + k) * 13 + 10);
+      }
       let idx;
       if (f.fan) { idx = new Uint32Array(Math.max(0, (f.nverts - 2) * 3)); for (let k = 0; k < f.nverts - 2; k++) { idx[k * 3] = base; idx[k * 3 + 1] = base + k + 1; idx[k * 3 + 2] = base + k + 2; } }
       else if (f.tris) { idx = new Uint32Array(f.tris.length); for (let k = 0; k < f.tris.length; k++) idx[k] = base + f.tris[k]; }
@@ -367,6 +406,7 @@ export class GLRenderer {
     gl.cullFace(gl.FRONT);        // Quake III's triangles are clockwise seen from the front
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
     this.alphaGroups = [];
+    this.autosprites = [];
     this.overlay.fb.fill(0);
     this.overlay.view = view;
   }
@@ -398,6 +438,7 @@ export class GLRenderer {
     for (const row of rows) {
       const info = this.faceInfo.get(row[0]);
       if (!info || info.look.nodraw || !info.idx.length) continue;
+      if (info.look.autosprite) { this.autosprites.push(...autospriteQuads(info.f, info.look, row[2], row[3], row[4])); continue; }
       const ent = row[1];
       const key = `${info.look.name}|${info.lm}|${ent}`;
       let g = groups.get(key);
@@ -438,14 +479,15 @@ export class GLRenderer {
     gl.useProgram(this.world.p);
     gl.bindBuffer(gl.ARRAY_BUFFER, this.worldVbo);
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.worldIbo);
-    gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 40, 0);
-    gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 2, gl.FLOAT, false, 40, 12);
-    gl.enableVertexAttribArray(2); gl.vertexAttribPointer(2, 2, gl.FLOAT, false, 40, 20);
-    gl.enableVertexAttribArray(3); gl.vertexAttribPointer(3, 3, gl.FLOAT, false, 40, 28);
+    gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 52, 0);
+    gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 2, gl.FLOAT, false, 52, 12);
+    gl.enableVertexAttribArray(2); gl.vertexAttribPointer(2, 2, gl.FLOAT, false, 52, 20);
+    gl.enableVertexAttribArray(3); gl.vertexAttribPointer(3, 3, gl.FLOAT, false, 52, 28);
+    gl.enableVertexAttribArray(4); gl.vertexAttribPointer(4, 3, gl.FLOAT, false, 52, 40);
     const u = this.world.u;
     gl.uniformMatrix4fv(u.uProj, false, this.proj);
     gl.uniformMatrix4fv(u.uView, false, this.viewM);
-    gl.uniform1i(u.uTex, 0); gl.uniform1i(u.uLightmap, 1); gl.uniform1i(u.uSky2, 2);
+    gl.uniform1i(u.uTex, 0); gl.uniform1i(u.uLightmap, 1); gl.uniform1i(u.uSky2, 2); gl.uniform1i(u.uEnv, 3);
     gl.uniform3f(u.uEye, this.view.x, this.view.y, this.view.z);
     gl.uniform1f(u.uTime, this.time);
     const dl = this.dlights ?? [];
@@ -463,6 +505,16 @@ export class GLRenderer {
     const gl = this.gl, u = this.world.u, look = g.look;
     const axis = g.angles ? anglesAxis(g.angles[0], g.angles[1], g.angles[2]) : null;
     gl.uniformMatrix4fv(u.uModel, false, g.ent ? this.modelMatrix(g.origin, axis ?? [1, 0, 0, 0, 1, 0, 0, 0, 1]) : this.identity);
+    const defs = look.deforms ?? [];
+    gl.uniform1i(u.uDefN, defs.length);
+    if (defs.length) {
+      const A = new Float32Array(8), B = new Float32Array(8), M = new Float32Array(6);
+      defs.forEach((d, i) => { A.set([d.kind, d.spread, d.func, d.base], i * 4); B.set([d.amp, d.phase, d.freq, 0], i * 4); M.set(d.move, i * 3); });
+      gl.uniform4fv(u['uDefA[0]'], A); gl.uniform4fv(u['uDefB[0]'], B); gl.uniform3fv(u['uDefMove[0]'], M);
+    }
+    const envMode = look.tcGen === 'environment' ? 1 : look.env?.mode === 'under' ? 2 : look.env?.mode === 'add' ? 3 : 0;
+    gl.uniform1i(u.uEnvMode, envMode);
+    if (envMode > 1) { gl.activeTexture(gl.TEXTURE3); gl.bindTexture(gl.TEXTURE_2D, this.texture(look.env.image).tex); }
     gl.disable(gl.CULL_FACE);
     if (!look.twoSided && look.name && !look.sky) gl.enable(gl.CULL_FACE);
     if (look.sky) {
@@ -506,6 +558,7 @@ export class GLRenderer {
       gl.uniform2f(u.uScale, look.add.scale ? look.add.scale[0] : 1, look.add.scale ? look.add.scale[1] : 1);
       gl.uniform1i(u.uAlphaTest, 0);
       gl.uniform1i(u.uDlCount, 0);
+      gl.uniform1i(u.uEnvMode, 0);
       this.setBlend('add');
       gl.drawElements(gl.TRIANGLES, g.count, gl.UNSIGNED_INT, g.first * 4);
     }
@@ -525,6 +578,8 @@ export class GLRenderer {
   }
 
   drawAlphaPolys() {
+    for (const s of this.autosprites ?? []) this.drawSprite(s.image, s.center, s.size, s.blend);
+    this.autosprites = [];
     if (!this.alphaGroups.length) return;
     this.bindWorld();
     for (const g of this.alphaGroups) this.drawGroup(g);

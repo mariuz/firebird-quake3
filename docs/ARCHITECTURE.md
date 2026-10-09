@@ -51,7 +51,7 @@ Contents
 | `src/pk3.js` | 204 | Zip reader with a pure-JS inflate (no `node:zlib`, see §2) |
 | `src/bsp.js` | 435 | IBSP 46 parser, Bézier tessellation, facet brushes, PVS, light grid |
 | `src/md3.js` | 123 | MD3 models, `animation.cfg`, `.skin` files |
-| `src/shader.js` | 147 | Shader scripts reduced to a "look" per surface |
+| `src/shader.js` | 210 | Shader scripts reduced to a "look" per surface |
 | `src/image.js` | 117 | TGA and JPEG (jpeg-js) to `Uint32` ABGR pixels, mip halving |
 | `src/gamedata.js` | 71 | `bg_itemlist`, the weapons' models and timings, the bot roster |
 | `src/loader.js` | 277 | Schema creation, bulk loading, resources, `loadMap`, `buildWaypoints` |
@@ -664,6 +664,23 @@ at 800 and collide with the world through `Bsp.pointContents` (a point against t
 `CM_PointContents`): in steps of at most 4 units, a step that would enter a solid reverses the axis that
 does and keeps 0.4 of the speed, and a shell that a floor stops below 40 units a second lies still.
 That is cosmetic collision in the browser, like cgame's `CG_Trace`; nothing in the game depends on it.
+
+*Shader features.* Beyond the picture, blend, lightmap, animation and tcMods, a look carries three of
+the shader's tricks. `env`: a stage with `tcGen environment` (RB_CalcEnvironmentTexCoords: the view
+reflected in the surface, its y and z as s and t). When the picture is blended over it by its alpha
+(`pewter_shiney`) the chrome shows where the picture's alpha is low, and the lightmap stage
+(`GL_DST_COLOR GL_ONE_MINUS_DST_ALPHA`) adds a − a² of the unlit colour, so the metal shines in the
+shadow; when it is added on top it is added. A shader whose only picture is the chrome (`kmlamp_white`)
+gets `tcGen` instead. The WebGL world shader computes the coordinates per pixel from the face's normal
+(the derivatives of the world position); the software painter per vertex from the face's normals and
+draws two passes, the chrome lit by the lightmap and then the picture over it in a `blendlm` span mode,
+the second pass a hair nearer so the depth test lets it through. `deforms`: up to two `deformVertexes
+wave` (along the vertex normal, the phase spread over x + y + z by 1 / div) or `move` (along a vector),
+each an `EvalWaveForm` of the time (`waveValue`); the faces now keep their vertex normals (`f.norms`,
+the plane's for a polygon, the vertices' for a mesh), the WebGL world buffer carries them (52 bytes a
+vertex) and its vertex shader moves the vertex, the software painter moves it before the projection.
+`autosprite`: each four vertices of the face become a sprite facing the eye (`autospriteQuads`, the
+size from the middle to a corner as RB_CalcAutoSprite has it), drawn with the translucent surfaces.
 
 *Dynamic lights* are `trap_R_AddLightToScene`'s, gathered each frame by `sceneLights` from what the
 frame already has: a rocket (effects 16) or a BFG ball (64) in flight at 200, a rocket's or a grenade's

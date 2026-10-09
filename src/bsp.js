@@ -186,7 +186,8 @@ export class Bsp {
   /**
    * The drawable geometry of every face: a polygon (planar faces keep their
    * vertex order), or a triangle list (meshes, and patches tessellated at
-   * RENDER_LEVEL). Each face gets { verts: Float32Array(n × 10: x y z s t u v r g b), tris: Uint16Array | null, plane }.
+   * RENDER_LEVEL). Each face gets { verts: Float32Array(n × 10: x y z s t u v r g b), norms: Float32Array(n × 3),
+   * tris: Uint16Array | null, plane }.
    */
   buildSurfaces() {
     const V = this.vertices, T = this.texcoords, L = this.lmcoords, C = this.colors;
@@ -196,6 +197,7 @@ export class Bsp {
         const g = tessellate(this, f, RENDER_LEVEL);
         f.verts = g.verts; f.tris = g.tris; f.nverts = g.nverts; f.twoSided = true;
         f.plane = null;
+        f.norms = new Float32Array(g.nverts * 3);   // (not interpolated: no deform or chrome on the demo's patches)
       } else if (f.type === 1 || f.type === 3) {
         const n = f.numVerts;
         const verts = new Float32Array(n * 10);
@@ -206,7 +208,13 @@ export class Bsp {
           verts[o + 5] = L[vi * 2]; verts[o + 6] = L[vi * 2 + 1];
           verts[o + 7] = C[vi * 4]; verts[o + 8] = C[vi * 4 + 1]; verts[o + 9] = C[vi * 4 + 2];
         }
-        f.verts = verts; f.nverts = n;
+        // the vertex normals: the plane's for a polygon, the vertices' own for a mesh
+        const norms = new Float32Array(n * 3), N = this.normals;
+        for (let k = 0; k < n; k++) {
+          if (f.type === 1) norms.set(f.normal, k * 3);
+          else { const vi = f.firstVert + k; norms[k * 3] = N[vi * 3]; norms[k * 3 + 1] = N[vi * 3 + 1]; norms[k * 3 + 2] = N[vi * 3 + 2]; }
+        }
+        f.verts = verts; f.nverts = n; f.norms = norms;
         f.tris = new Uint16Array(this.meshverts.subarray(f.firstMeshVert, f.firstMeshVert + f.numMeshVerts));
         f.twoSided = f.type === 3;
         // the polygon's plane (type 1): the face normal, through its first vertex
@@ -215,7 +223,7 @@ export class Bsp {
         // is the polygon a plain fan over its vertices? then it can be scan-converted as one convex polygon
         f.fan = f.type === 1;   // planar faces are convex polygons in vertex order (their meshverts are a fan)
       } else {
-        f.verts = new Float32Array(0); f.tris = null; f.nverts = 0; f.plane = null; f.twoSided = true;   // billboards: not drawn
+        f.verts = new Float32Array(0); f.norms = new Float32Array(0); f.tris = null; f.nverts = 0; f.plane = null; f.twoSided = true;   // billboards: not drawn
       }
       // bounding sphere
       let cx = 0, cy = 0, cz = 0;

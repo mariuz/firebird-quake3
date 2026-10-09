@@ -7,7 +7,8 @@
 
 import fs from 'node:fs';
 import { FrameState, firstPersonView, zoomedFov, fovY, mapTorsoToWeaponFrame, viewTorsoFrame, underwaterFov, sceneLights, litByDlights, MAX_DLIGHTS } from '../src/scene.js';
-import { tagTransform } from '../src/renderer.js';
+import { tagTransform, autospriteQuads } from '../src/renderer.js';
+import { parseDeform, waveValue, deformVertex, envTexCoords, parseShaderScript, surfaceLook } from '../src/shader.js';
 import { Md3, parseAnimationCfg } from '../src/md3.js';
 import { Pk3 } from '../src/pk3.js';
 
@@ -203,6 +204,33 @@ const markBsp = {
   const grid = { ambient: [20, 20, 20], directed: [10, 10, 10], dir: [0, 0, 1] };
   const lit = litByDlights(grid, 0, 0, 0, [{ x: 100, y: 0, z: 0, radius: 200, color: [1, 0.75, 0] }]);
   assert(Math.abs(lit.directed[0] - 10 - 64) < 1e-6 && Math.abs(lit.directed[1] - 10 - 48) < 1e-6 && lit.dir[0] > 0.9, `a model 100 units from a 200 light: 16 r² / d² = 64 more directed light, from its side (${lit.directed.map((v) => v.toFixed(0)).join(' ')})`);
+}
+
+// the shader features: deformVertexes wave and move, tcGen environment, autosprite, chrome under a picture
+{
+  const near = (a, b) => Math.abs(a - b) < 1e-6;
+  assert(near(waveValue(0, 0, 3, 0, 0.5, 1), 0) && near(waveValue(0, 0, 3, 0.25, 0, 0), 3) && near(waveValue(1, 1, 2, 0.5, 0, 0), 1) && near(waveValue(3, 0, 1, 0.75, 0, 0), 0.75),
+    'the wave forms: sin, triangle and sawtooth over a period');
+  const wave = parseDeform(['wave', '100', 'sin', '0', '3', '0', '.7']);
+  assert(wave.kind === 1 && near(wave.spread, 0.01) && wave.amp === 3 && wave.freq === 0.7, 'deformVertexes wave 100 sin 0 3 0 .7: spread 1/100');
+  const p = deformVertex([wave], 25, 0, 0, 0, 1, 0, 0);   // phase 0.25 from x + y + z = 25: the sine's top
+  assert(near(p[0], 25) && near(p[1], 3) && near(p[2], 0), `a vertex waves along its normal by the amplitude (${p.map((v) => v.toFixed(2)).join(' ')})`);
+  const move = parseDeform(['move', '0', '0', '3', 'sin', '0', '5', '0', '0.1']);
+  const q = deformVertex([move], 0, 0, 0, 1, 0, 0, 2.5);   // a quarter period in: 5 × 3 up
+  assert(move.kind === 2 && near(q[2], 15) && near(q[0], 0), `deformVertexes move 0 0 3 sin 0 5 0 0.1 lifts by 15 at its top (${q[2].toFixed(2)})`);
+  const head = envTexCoords(0, 0, 0, 0, -1, 0, 0, -100, 0);
+  const side = envTexCoords(0, 0, 0, 0, -1, 0, 0, -100, 100);
+  assert(near(head[0], 0) && near(head[1], 0.5) && side[1] > head[1], `tcGen environment: head-on the reflection is the picture's edge, from above it moves (${side.map((v) => v.toFixed(2)).join(' ')})`);
+  const quad = { nverts: 4, verts: new Float32Array(40) };
+  [[0, -8, -8], [0, 8, -8], [0, 8, 8], [0, -8, 8]].forEach((v, i) => quad.verts.set(v, i * 10));
+  const spr = autospriteQuads(quad, { image: 'flare', blend: 'add' }, 100, 0, 0);
+  assert(spr.length === 1 && near(spr[0].center[0], 100) && Math.abs(spr[0].size - 16) < 0.01, `an autosprite quad 16 across becomes a sprite 16 across at its middle (${spr[0].size.toFixed(2)})`);
+  const shaders = parseShaderScript(`textures/x/shiny { { map textures/fx/tin.tga tcGen environment } { map textures/x/shiny.tga blendFunc GL_SRC_ALPHA GL_ONE_MINUS_SRC_ALPHA } { map $lightmap blendFunc GL_DST_COLOR GL_ONE_MINUS_DST_ALPHA } }
+    textures/x/flag { cull disable deformVertexes wave 30 sin 0 3 0 .2 deformVertexes wave 100 sin 0 3 0 .7 { map textures/x/flag.tga } }`);
+  const shiny = surfaceLook(shaders, 'textures/x/shiny'), flag = surfaceLook(shaders, 'textures/x/flag');
+  assert(shiny.image === 'textures/x/shiny.tga' && shiny.env?.image === 'textures/fx/tin.tga' && shiny.env.mode === 'under' && shiny.blend === 'opaque' && shiny.lightmapped,
+    'a picture over a chrome: the picture on top, the chrome under it, opaque and lightmapped');
+  assert(flag.deforms?.length === 2 && near(flag.deforms[0].spread, 1 / 30), 'both of a banner\'s waves are kept');
 }
 
 // and the hand model really carries the gun down on those frames (with the pak, when it is there)

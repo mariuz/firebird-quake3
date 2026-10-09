@@ -28,7 +28,7 @@ export function parseShaderScript(text, into = new Map()) {
     const name = t[i++].toLowerCase();
     if (t[i] !== '{') continue;
     i++;
-    const sh = { name, stages: [], parms: new Set(), cull: 'front', sky: null, sort: 0, deform: null, nopicmip: false };
+    const sh = { name, stages: [], parms: new Set(), cull: 'front', sky: null, sort: 0, deform: null, deforms: [], nopicmip: false };
     while (i < t.length && t[i] !== '}') {
       if (t[i] === '{') {
         i++;
@@ -78,7 +78,7 @@ export function parseShaderScript(text, into = new Map()) {
         case 'cull': { const c = (args[0] ?? 'front').toLowerCase(); sh.cull = c === 'none' || c === 'disable' || c === 'twosided' ? 'none' : c === 'back' || c === 'backside' || c === 'backsided' ? 'back' : 'front'; break; }
         case 'skyparms': sh.sky = { box: args[0] && args[0] !== '-' ? args[0].toLowerCase() : null, height: Number(args[1]) || 512 }; break;
         case 'sort': sh.sort = args[0]; break;
-        case 'deformvertexes': sh.deform = args.map((x) => x.toLowerCase()); break;
+        case 'deformvertexes': sh.deform = args.map((x) => x.toLowerCase()); sh.deforms.push(sh.deform); break;
         case 'nopicmip': case 'nomipmaps': sh.nopicmip = true; break;
         default: break;
       }
@@ -93,6 +93,55 @@ const STAGE_KEYS = new Set(['map', 'clampmap', 'animmap', 'blendfunc', 'alphafun
 const SHADER_KEYS = new Set(['surfaceparm', 'cull', 'skyparms', 'sort', 'deformvertexes', 'nopicmip', 'nomipmaps', 'polygonoffset', 'entitymergable', 'fogparms', 'light', 'tesssize', 'q3map_sun', 'q3map_surfacelight', 'qer_editorimage', 'qer_trans', 'qer_nocarve', 'q3map_lightimage', 'q3map_globaltexture', 'q3map_lightsubdivide', 'cloudparms', 'sky', 'portal', 'fogonly', 'q3map_backshader', 'q3map_flare', 'q3map_tessSize', 'q3map_backsplash', 'q3map_lightmapsamplesize', 'q3map_novertexshadows', 'q3map_forcesunlight', 'q3map_vertexshadows', 'q3map_tesssize', 'lightning', 'entitymergable']);
 const isStageKeyword = (s) => STAGE_KEYS.has(s.toLowerCase());
 const isShaderKeyword = (s) => SHADER_KEYS.has(s.toLowerCase());
+
+/**
+ * deformVertexes wave <div> <func> <base> <amp> <phase> <freq> (along the normal, the phase spread over the
+ * vertex's x + y + z by 1 / div) and move <x> <y> <z> <func> <base> <amp> <phase> <freq> (along the vector),
+ * as RB_DeformTessGeometry has them; the others are not drawn
+ */
+const WAVE_FUNCS = { sin: 0, triangle: 1, square: 2, sawtooth: 3, inversesawtooth: 4 };
+export function parseDeform(d) {
+  const num = (k) => Number(d[k]) || 0;
+  if (d[0] === 'wave' && d.length >= 7 && d[2] in WAVE_FUNCS) {
+    const div = num(1);
+    return { kind: 1, spread: div ? 1 / div : 100, func: WAVE_FUNCS[d[2]], base: num(3), amp: num(4), phase: num(5), freq: num(6), move: [0, 0, 0] };
+  }
+  if (d[0] === 'move' && d.length >= 9 && d[4] in WAVE_FUNCS) {
+    return { kind: 2, spread: 0, func: WAVE_FUNCS[d[4]], base: num(5), amp: num(6), phase: num(7), freq: num(8), move: [num(1), num(2), num(3)] };
+  }
+  return null;
+}
+
+/** EvalWaveForm: base + amp × the function's value at phase + time × freq (one period per unit) */
+export function waveValue(func, base, amp, phase, freq, time) {
+  let x = phase + time * freq;
+  x -= Math.floor(x);
+  const v = func === 0 ? Math.sin(x * 2 * Math.PI) : func === 1 ? (x < 0.25 ? x * 4 : x < 0.75 ? 2 - x * 4 : x * 4 - 4) : func === 2 ? (x < 0.5 ? 1 : -1) : func === 3 ? x : 1 - x;
+  return base + amp * v;
+}
+
+/** A vertex moved by a look's deforms at a time: [x, y, z] from [x, y, z] and its normal */
+export function deformVertex(deforms, x, y, z, nx, ny, nz, time) {
+  for (const d of deforms) {
+    if (d.kind === 1) {
+      const s = waveValue(d.func, d.base, d.amp, d.phase + (x + y + z) * d.spread, d.freq, time);
+      x += nx * s; y += ny * s; z += nz * s;
+    } else {
+      const s = waveValue(d.func, d.base, d.amp, d.phase, d.freq, time);
+      x += d.move[0] * s; y += d.move[1] * s; z += d.move[2] * s;
+    }
+  }
+  return [x, y, z];
+}
+
+/** RB_CalcEnvironmentTexCoords: the view reflected in the surface, its y and z as s and t */
+export function envTexCoords(px, py, pz, nx, ny, nz, ex, ey, ez) {
+  let vx = ex - px, vy = ey - py, vz = ez - pz;
+  const l = Math.hypot(vx, vy, vz) || 1;
+  vx /= l; vy /= l; vz /= l;
+  const d = nx * vx + ny * vy + nz * vz;
+  return [0.5 + (ny * 2 * d - vy) * 0.5, 0.5 - (nz * 2 * d - vz) * 0.5];
+}
 
 /** Every scripts/*.shader of the pak, parsed. */
 export function loadShaders(pak) {
@@ -110,8 +159,11 @@ export function loadShaders(pak) {
  */
 export function surfaceLook(shaders, name) {
   const sh = shaders.get(name.toLowerCase());
-  const look = { name, image: null, anim: null, animFps: 0, blend: 'opaque', lightmapped: true, scroll: null, scale: null, turb: null, twoSided: false, sky: null, alphaTest: false, nodraw: false, rotate: 0, tcGen: null, vertexColor: false, add: null };
+  const look = { name, image: null, anim: null, animFps: 0, blend: 'opaque', lightmapped: true, scroll: null, scale: null, turb: null, twoSided: false, sky: null, alphaTest: false, nodraw: false, rotate: 0, tcGen: null, vertexColor: false, add: null, env: null, autosprite: false, deforms: null };
   if (!sh) { look.image = name; return look; }
+  look.autosprite = sh.deforms.some((d) => d[0] === 'autosprite' || d[0] === 'autosprite2');
+  const deforms = sh.deforms.map(parseDeform).filter(Boolean);
+  if (deforms.length) look.deforms = deforms.slice(0, 2);
   look.twoSided = sh.cull === 'none';
   look.nodraw = sh.parms.has('nodraw');
   if (sh.parms.has('sky') || sh.sky) {
@@ -126,6 +178,11 @@ export function surfaceLook(shaders, name) {
   for (const s of sh.stages) {
     if (!s.map) continue;
     if (!main) { main = s; continue; }
+    // a chrome stage (tcGen environment) the main picture is blended over: the picture is the one on top
+    // and the chrome shows where its alpha is low (pewter_shiney)
+    if (main.tcGen === 'environment' && !look.env && s.blend === 'blend') { look.env = { image: main.map, mode: 'under' }; main = s; continue; }
+    // a chrome stage added over the picture (largerblock3blood's tinfx3)
+    if (!look.env && s.tcGen === 'environment' && (s.blend === 'add' || s.blend === 'filteradd')) { look.env = { image: s.map, mode: 'add' }; continue; }
     if (!look.add && (s.blend === 'add' || s.blend === 'filteradd') && s.map && !s.tcGen) look.add = { image: s.map, anim: s.anim, animFps: s.animFps, scroll: s.scroll, scale: s.scale, rotate: s.rotate };
   }
   if (!main) { look.image = sh.stages.length ? null : name; look.lightmapped = hasLightmap || !sh.parms.has('nolightmap'); if (!look.image && !hasLightmap) look.nodraw = look.nodraw || sh.stages.length === 0 ? look.nodraw : false; return look; }
@@ -143,5 +200,6 @@ export function surfaceLook(shaders, name) {
   else if (main.blend === 'filter' || main.blend === 'filterinv') look.blend = 'filter';
   else look.blend = 'opaque';
   if (sh.parms.has('trans') && look.blend === 'opaque' && main.alphaFunc) look.blend = 'opaque';
+  if (look.env?.mode === 'under') look.blend = 'opaque';   // the chrome fills what the picture's alpha leaves
   return look;
 }
