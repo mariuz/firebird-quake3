@@ -444,7 +444,19 @@ files: reaction 2.0/1.5/0.8/0.4/0.15 s, aim scatter 0.14 down to 0.012 of the di
 range 900 + 800×skill, field of view (cosine 0.5 at skill 1, everything at 5), turn speed, strafe,
 hesitate and pause probabilities, speed 26/29/32 units per think (the player's 32 from skill 3), and
 how long it searches. Measured with a standing player (`.prof/fair.mjs`): skill 1 first kills after
-about two minutes, skill 2 after 25 s, skill 5 after 5 s.
+about two minutes, skill 2 after 25 s, skill 5 after 5 s (before the characters' own values below).
+
+Where the bot's character file has a value, it wins (`bot_cv(eid, key, default)`: `bots/NAME_c.c` at the
+bot's skill, the skill's block or the two around it interpolated as botlib does, read by
+`src/botchat.js` into `bot_chatchar`, and bounded as `Characteristic_BFloat` bounds it: 0 to 1, the
+turning 1 to 360). `CHARACTERISTIC_REACTIONTIME` is the wait before the first shot; `ALERTNESS` the
+notice range, 900 + 4000 × it, and with the files the field of view is `BotFindEnemy`'s, 90 degrees up
+close widening to 180 at 810 units; `VIEW_MAXCHANGE` the turning (a tenth of it a think);
+`ATTACK_SKILL` how often it circle-strafes; `FIRETHROTTLE` a pause of its length one shot in (1 − it);
+`AIM_ACCURACY` (or `AIM_ACCURACY_RAILGUN` … for the gun in hand) the scatter, `BotAimAtEnemy`'s
+0.3 × (1 − accuracy) on each part of the aim's direction under 0.8 and none above, a hitscan gun's
+accuracy × 0.6 at the muzzle rising to × 1 at 150 units; and an `AIM_SKILL` over 0.5 leads
+projectiles.
 
 `spawn_bot(name)` adds a bot from `bot_defs` (Sarge, Grunt, Major, Visor, Daemia, Stripe with their
 models and skins). Mid-game, `add_bot(name, skill)` is `G_AddBot` (the `addbot` command and the Add

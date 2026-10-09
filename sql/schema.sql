@@ -512,7 +512,7 @@ CREATE TABLE bot_avoid (
 CREATE TABLE bot_chatchar (
   bot    VARCHAR(16) NOT NULL,
   skill  SMALLINT NOT NULL,
-  ckey   VARCHAR(24) NOT NULL,              -- kill, death, insult, misc, random, startendlevel, …
+  ckey   VARCHAR(40) NOT NULL,              -- kill, death, insult, misc, random, startendlevel, …, and the fight's (reactiontime, aim_accuracy, …)
   val    DOUBLE PRECISION NOT NULL,
   PRIMARY KEY (bot, skill, ckey)
 );

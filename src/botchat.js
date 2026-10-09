@@ -119,6 +119,12 @@ export function loadBotChat(pak, bots) {
       for (const k of CHAT_KEYS) if (typeof ch[`CHARACTERISTIC_CHAT_${k}`] === 'number') chars.push([b.name, s, k.toLowerCase(), ch[`CHARACTERISTIC_CHAT_${k}`]]);
       // and whether it rocket-jumps (BotCanAndWantsToRocketJump wants 0.5 or more)
       if (typeof ch.CHARACTERISTIC_WEAPONJUMPING === 'number') chars.push([b.name, s, 'weaponjumping', ch.CHARACTERISTIC_WEAPONJUMPING]);
+      // and how it fights (bot_cv in sql/bots.sql): reaction, aim (per gun where the file says), alertness, turning,
+      // the attack's skill, the fire throttle
+      for (const [k, v] of Object.entries(ch)) {
+        const m = k.match(/^CHARACTERISTIC_(REACTIONTIME|AIM_ACCURACY(?:_\w+)?|AIM_SKILL(?:_\w+)?|ALERTNESS|VIEW_MAXCHANGE|VIEW_FACTOR|ATTACK_SKILL|FIRETHROTTLE)$/);
+        if (m && typeof v === 'number') chars.push([b.name, s, m[1].toLowerCase(), v]);
+      }
     }
   }
   return { rnd, chat, chars };

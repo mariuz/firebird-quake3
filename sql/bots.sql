@@ -504,17 +504,44 @@ BEGIN
   RETURN 0;
 END^
 
+-- A characteristic of the bot's own character file at its skill (botlib's Characteristic_Float over
+-- bots/NAME_c.c, the skill's block or the two around it interpolated, read by src/botchat.js into
+-- bot_chatchar): reactiontime, aim_accuracy and aim_skill (and their _rocketlauncher … per gun),
+-- alertness, view_maxchange, attack_skill, firethrottle, bounded as botlib bounds them. `dflt` when the file has none
+CREATE OR ALTER FUNCTION bot_cv (eid INTEGER, k VARCHAR(40), dflt DOUBLE PRECISION) RETURNS DOUBLE PRECISION
+AS
+DECLARE v DOUBLE PRECISION;
+BEGIN
+  SELECT c.val FROM ents e JOIN bot_defs b ON b.name = e.bot JOIN bot_chatchar c ON c.bot = e.bot AND c.skill = b.skill AND c.ckey = :k
+   WHERE e.id = :eid INTO v;
+  IF (v IS NULL) THEN RETURN dflt;
+  -- Characteristic_BFloat's bounds: the turning 1 to 360 degrees a second, the rest 0 to 1 (a reaction time
+  -- of 3.5 in a file is a second)
+  IF (k = 'view_maxchange') THEN RETURN MAXVALUE(1, MINVALUE(360, v));
+  RETURN MAXVALUE(0, MINVALUE(1, v));
+END^
+
+-- a gun's name in the characteristics (CHARACTERISTIC_AIM_ACCURACY_ROCKETLAUNCHER …)
+CREATE OR ALTER FUNCTION weapon_char_name (w INTEGER) RETURNS VARCHAR(20)
+AS
+BEGIN
+  RETURN TRIM(CASE w WHEN 1 THEN 'gauntlet' WHEN 2 THEN 'machinegun' WHEN 4 THEN 'shotgun' WHEN 8 THEN 'grenadelauncher' WHEN 16 THEN 'rocketlauncher'
+                     WHEN 32 THEN 'lightning' WHEN 64 THEN 'railgun' WHEN 128 THEN 'plasmagun' WHEN 256 THEN 'bfg10k' ELSE '' END);
+END^
+
 
 -- the nearest player or bot the bot notices (BotFindEnemy): within its alertness range, inside its field
 -- of view unless very close, in sight, and not invisible unless it is shooting (its refire still running)
 CREATE OR ALTER FUNCTION bot_find_target (eid INTEGER) RETURNS INTEGER
 AS
 DECLARE c INTEGER; DECLARE d DOUBLE PRECISION; DECLARE best INTEGER; DECLARE bestd DOUBLE PRECISION = 1e9; DECLARE inv DOUBLE PRECISION; DECLARE paf DOUBLE PRECISION;
-DECLARE skill SMALLINT; DECLARE alert DOUBLE PRECISION; DECLARE fov DOUBLE PRECISION; DECLARE cosang DOUBLE PRECISION;
+DECLARE skill SMALLINT; DECLARE alert DOUBLE PRECISION; DECLARE fov DOUBLE PRECISION; DECLARE cosang DOUBLE PRECISION; DECLARE al DOUBLE PRECISION;
 BEGIN
   SELECT p.invis_finished, p.attack_finished FROM player p WHERE p.id = 1 INTO inv, paf;
   SELECT COALESCE(b.skill, 2) FROM ents e LEFT JOIN bot_defs b ON b.name = e.bot WHERE e.id = :eid INTO skill;
-  alert = bot_char(skill, 'alert'); fov = bot_char(skill, 'fov');
+  -- BotFindEnemy: no farther than 900 + 4000 × the character's alertness
+  al = bot_cv(eid, 'alertness', NULL);
+  alert = IIF(al IS NULL, bot_char(skill, 'alert'), 900 + 4000 * al); fov = bot_char(skill, 'fov');
   FOR SELECT o.id, vlen(o.x - e.x, o.y - e.y, o.z - e.z),
              (COS(e.yaw * 0.0174532925e0) * (o.x - e.x) + SIN(e.yaw * 0.0174532925e0) * (o.y - e.y)) / MAXVALUE(1e-3, vlen(o.x - e.x, o.y - e.y, 0))
         FROM ents o CROSS JOIN ents e
@@ -527,7 +554,10 @@ BEGIN
   DO
   BEGIN
     IF (d >= bestd OR d > alert) THEN LEAVE;
-    IF (d > 250 AND cosang < fov) THEN CONTINUE;      -- behind it
+    -- behind it: BotFindEnemy's field of view, 90 degrees close, widening to 180 at 810 and past (with the
+    -- character files; without them the skill's)
+    IF (al IS NOT NULL AND cosang < COS((90 + MINVALUE(d * d, 656100) / 7290) * 0.00872664626e0)) THEN CONTINUE;
+    IF (al IS NULL AND d > 250 AND cosang < fov) THEN CONTINUE;
     IF (visible(eid, c) = 1) THEN BEGIN best = c; bestd = d; END
   END
   RETURN best;
@@ -719,12 +749,17 @@ DECLARE dx DOUBLE PRECISION; DECLARE dy DOUBLE PRECISION; DECLARE dz DOUBLE PREC
 DECLARE tf DOUBLE PRECISION; DECLARE ttx DOUBLE PRECISION; DECLARE tty DOUBLE PRECISION; DECLARE ttz DOUBLE PRECISION;
 DECLARE tnx DOUBLE PRECISION; DECLARE tny DOUBLE PRECISION; DECLARE tnz DOUBLE PRECISION;
 DECLARE tsf INTEGER; DECLARE tct INTEGER; DECLARE tas SMALLINT; DECLARE tss SMALLINT; DECLARE thit INTEGER;
+DECLARE acc DOUBLE PRECISION; DECLARE askill DOUBLE PRECISION;
 BEGIN
   SELECT e.enemy_id, e.weapon, COALESCE(b.skill, 2) FROM ents e LEFT JOIN bot_defs b ON b.name = e.bot WHERE e.id = :eid INTO enemy, w, skill;
   IF (enemy IS NULL) THEN EXIT;
   EXECUTE PROCEDURE eye_of(eid) RETURNING_VALUES ex, ey, ez, fx, fy, fz;
+  -- the character's aim for this gun (CHARACTERISTIC_AIM_ACCURACY_ROCKETLAUNCHER …, else the general one)
+  acc = bot_cv(eid, 'aim_accuracy_' || weapon_char_name(w), bot_cv(eid, 'aim_accuracy', NULL));
+  askill = bot_cv(eid, 'aim_skill_' || weapon_char_name(w), bot_cv(eid, 'aim_skill', NULL));
   -- aim at the chest; a skilled bot leads projectiles by the target's velocity, a poor one aims where it was
-  lead = IIF(skill >= 3, CASE w WHEN 16 THEN 1 / 900e0 WHEN 128 THEN 1 / 2000e0 WHEN 8 THEN 1 / 700e0 ELSE 0 END, 0);
+  -- (an aim skill over 0.5 predicts the movement; without the character files, skill 3 and up)
+  lead = IIF(IIF(askill IS NULL, skill >= 3, askill > 0.5e0), CASE w WHEN 16 THEN 1 / 900e0 WHEN 128 THEN 1 / 2000e0 WHEN 8 THEN 1 / 700e0 ELSE 0 END, 0);
   SELECT o.x + o.vx * :lead * vlen(o.x - :ex, o.y - :ey, o.z - :ez) - IIF(:skill <= 2, o.vx * 0.1e0, 0),
          o.y + o.vy * :lead * vlen(o.x - :ex, o.y - :ey, o.z - :ez) - IIF(:skill <= 2, o.vy * 0.1e0, 0),
          o.z + (o.minz + o.maxz) / 2 + 8
@@ -732,8 +767,15 @@ BEGIN
   dx = tx - ex; dy = ty - ey; dz = tz - ez;
   dl = vlen(dx, dy, dz);
   IF (dl = 0) THEN EXIT;
-  -- the scatter: a fraction of the distance, by the aim accuracy of the skill
-  err = dl * bot_char(skill, 'aim');
+  -- the scatter (BotAimAtEnemy): under 0.8 accuracy each part of the aim's direction is off by up to
+  -- 0.3 × (1 - accuracy); a bullet, a shotgun blast, the lightning and the rail are less accurate up close
+  -- (× 0.6 at the muzzle to × 1 at 150). Without the character files, a fraction of the distance by skill
+  IF (acc IS NULL) THEN err = dl * bot_char(skill, 'aim');
+  ELSE
+  BEGIN
+    IF (w IN (2, 4, 32, 64)) THEN acc = acc * (0.6e0 + MINVALUE(dl, 150) / 150 * 0.4e0);
+    err = dl * IIF(acc < 0.8e0, 0.3e0 * (1 - MAXVALUE(acc, 0.0001e0)), 0);
+  END
   -- BotAimAtEnemy: at an invisible enemy the aim is 0.4 as good, nine times in ten
   IF (RAND() > 0.1e0 AND EXISTS (SELECT 1 FROM ents o LEFT JOIN player p ON p.ent_id = o.id WHERE o.id = :enemy AND IIF(o.classname = 'player', p.invis_finished, o.invis_finished) > now_())) THEN err = err / 0.4e0;
   dx = dx + crand() * err; dy = dy + crand() * err; dz = dz + crand() * err * 0.7e0;
@@ -802,7 +844,7 @@ BEGIN
   IF (attacker > 0 AND attacker <> eid AND EXISTS (SELECT 1 FROM ents a WHERE a.id = :attacker AND a.classname IN ('player', 'bot'))) THEN
     UPDATE ents e SET e.enemy_id = :attacker, e.search_time = now_() + bot_char(:skill, 'search'), e.st = 'run',
            e.ideal_yaw = vectoyaw((SELECT a.x FROM ents a WHERE a.id = :attacker) - e.x, (SELECT a.y FROM ents a WHERE a.id = :attacker) - e.y),
-           e.attack_finished = IIF(:enemy IS DISTINCT FROM :attacker, MAXVALUE(e.attack_finished, now_() + bot_char(:skill, 'reaction') * 0.5e0), e.attack_finished) WHERE e.id = :eid;
+           e.attack_finished = IIF(:enemy IS DISTINCT FROM :attacker, MAXVALUE(e.attack_finished, now_() + bot_cv(:eid, 'reactiontime', bot_char(:skill, 'reaction')) * 0.5e0), e.attack_finished) WHERE e.id = :eid;
   -- hit and still standing: it may say something about it (BotChat_HitNoDeath)
   IF (attacker > 0 AND attacker <> eid AND EXISTS (SELECT 1 FROM ents a WHERE a.id = :attacker AND a.classname IN ('player', 'bot'))) THEN
     EXECUTE PROCEDURE bot_chat_event(eid, 'hit_nodeath', attacker, mod_);
@@ -848,7 +890,7 @@ BEGIN
          e.flags = 32, e.st = 'stand', e.legs_anim = 22, e.legs_time = :t, e.torso_anim = 11, e.torso_time = :t, e.enemy_id = NULL, e.goal_id = NULL,
          e.attack_finished = :t + 1, e.teleport_time = :t + 0.3e0, e.lx = NULL, e.nextthink = :t + 0.1e0, e.think = 'bot_think', e.respawn_time = 0,
          e.quad_finished = 0, e.haste_finished = 0, e.invis_finished = 0, e.regen_finished = 0, e.enviro_finished = 0, e.health_tick = :t + 1,
-         e.yaw_speed = bot_char((SELECT b.skill FROM bot_defs b WHERE b.name = e.bot), 'turn') WHERE e.id = :eid;
+         e.yaw_speed = COALESCE(bot_cv(:eid, 'view_maxchange', NULL) / 10, bot_char((SELECT b.skill FROM bot_defs b WHERE b.name = e.bot), 'turn')) WHERE e.id = :eid;
   EXECUTE PROCEDURE link_ent(eid);
   EXECUTE PROCEDURE snd_at(x, y, z, 'sound/world/telein.wav', 1, 1);
   EXECUTE PROCEDURE fx(5, x, y, z + 9, 0, 0, 0, 1);
@@ -862,7 +904,7 @@ DECLARE rt DOUBLE PRECISION; DECLARE srch DOUBLE PRECISION; DECLARE af DOUBLE PR
 DECLARE x DOUBLE PRECISION; DECLARE y DOUBLE PRECISION; DECLARE z DOUBLE PRECISION; DECLARE ex DOUBLE PRECISION; DECLARE ey DOUBLE PRECISION; DECLARE ez DOUBLE PRECISION; DECLARE ehp INTEGER;
 DECLARE d DOUBLE PRECISION; DECLARE vis SMALLINT; DECLARE yaw DOUBLE PRECISION; DECLARE moved SMALLINT = 0; DECLARE w INTEGER; DECLARE diff DOUBLE PRECISION; DECLARE spd DOUBLE PRECISION;
 DECLARE ox DOUBLE PRECISION; DECLARE oy DOUBLE PRECISION; DECLARE match_done SMALLINT; DECLARE waiting SMALLINT; DECLARE hp INTEGER; DECLARE hesitate SMALLINT = 0; DECLARE fresh SMALLINT = 0;
-DECLARE aggr INTEGER; DECLARE htick DOUBLE PRECISION; DECLARE haste DOUBLE PRECISION; DECLARE regen DOUBLE PRECISION;
+DECLARE aggr INTEGER; DECLARE ft DOUBLE PRECISION; DECLARE htick DOUBLE PRECISION; DECLARE haste DOUBLE PRECISION; DECLARE regen DOUBLE PRECISION;
 BEGIN
   t = now_();
   nt = t + 0.1e0;
@@ -911,7 +953,7 @@ BEGIN
     BEGIN
       -- BotFindEnemy: the reaction time passes before the first shot
       enemy = w; srch = t + bot_char(skill, 'search'); fresh = 1;
-      af = MAXVALUE(af, t + bot_char(skill, 'reaction'));
+      af = MAXVALUE(af, t + bot_cv(eid, 'reactiontime', bot_char(skill, 'reaction')));
     END
   END
   -- a poor bot dawdles now and then
@@ -963,7 +1005,7 @@ BEGIN
     END
     ELSE IF (vis = 0) THEN BEGIN END   -- no chase in it and nothing to run for: it waits where it is
     ELSE IF (d > 350 OR w = 1) THEN EXECUTE PROCEDURE move_to_goal(eid, enemy, spd);
-    ELSE IF (RAND() < bot_char(skill, 'strafe')) THEN
+    ELSE IF (RAND() < bot_cv(eid, 'attack_skill', bot_char(skill, 'strafe'))) THEN
     BEGIN
       -- close enough: circle-strafe, switching sides now and then or when blocked (BotAttackMove)
       IF (RAND() < 0.08e0) THEN BEGIN lefty = 1 - lefty; UPDATE ents e SET e.lefty = :lefty WHERE e.id = :eid; END
@@ -982,7 +1024,10 @@ BEGIN
     IF (vis = 1 AND af <= t AND (diff < 25 OR diff > 335)) THEN
     BEGIN
       EXECUTE PROCEDURE bot_fire(eid);
-      UPDATE ents e SET e.attack_finished = :t + fire_time(e.weapon) / IIF(:haste > :t, 1.3e0, 1) * (1 + RAND() * (5 - :skill) * 0.4e0) + IIF(RAND() < bot_char(:skill, 'pause'), 0.5e0 + RAND() * 0.8e0, 0) WHERE e.id = :eid;
+      -- (BotCheckAttack's fire throttle: with it, a pause of its length one shot in (1 - it))
+      ft = bot_cv(eid, 'firethrottle', NULL);
+      UPDATE ents e SET e.attack_finished = :t + fire_time(e.weapon) / IIF(:haste > :t, 1.3e0, 1) * IIF(:ft IS NULL, 1 + RAND() * (5 - :skill) * 0.4e0, 1)
+             + IIF(:ft IS NULL, IIF(RAND() < bot_char(:skill, 'pause'), 0.5e0 + RAND() * 0.8e0, 0), IIF(RAND() > :ft, :ft, 0)) WHERE e.id = :eid;
     END
   END
   ELSE
@@ -1061,6 +1106,8 @@ BEGIN
          e.solid = 3, e.movetype = 4, e.clipmask = 33619969, e.health = 125, e.max_health = 100, e.takedamage = 2, e.mass = 200, e.flags = 32,
          e.yaw_speed = bot_char((SELECT b.skill FROM bot_defs b WHERE b.name = :bname), 'turn'), e.st = 'stand', e.weapons = 3, e.weapon = 2, e.legs_time = :t, e.torso_time = :t,
          e.think = 'bot_think', e.nextthink = :t + 0.5e0 + RAND() * 0.5e0, e.attack_finished = :t + 2 WHERE e.id = :id;
+  -- its turning from its character file (CHARACTERISTIC_VIEW_MAXCHANGE degrees a second, a think a tenth of it)
+  UPDATE ents e SET e.yaw_speed = COALESCE(bot_cv(:id, 'view_maxchange', NULL) / 10, e.yaw_speed) WHERE e.id = :id;
   -- in a team game, a team (PickTeam) and its colours (the model's red or blue skin)
   IF ((SELECT g.gametype FROM game g WHERE g.id = 1) >= 3) THEN
   BEGIN

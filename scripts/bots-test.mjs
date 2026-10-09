@@ -41,7 +41,9 @@ for (const d of [200, 150, 100, 64]) {
   if (spot) break;
 }
 spot ??= [p.X + Math.cos((p.YAW * Math.PI) / 180) * 200, p.Y + Math.sin((p.YAW * Math.PI) / 180) * 200];
-await db.exec(`UPDATE ents SET x = ${spot[0]}, y = ${spot[1]}, z = ${p.Z}, vx = 0, vy = 0, vz = 0, enemy_id = NULL WHERE id = ${b}`);
+// (facing us: BotFindEnemy's field of view is 90 degrees up close)
+const faceUs = (Math.atan2(p.Y - spot[1], p.X - spot[0]) * 180) / Math.PI;
+await db.exec(`UPDATE ents SET x = ${spot[0]}, y = ${spot[1]}, z = ${p.Z}, vx = 0, vy = 0, vz = 0, enemy_id = NULL, yaw = ${faceUs}, ideal_yaw = ${faceUs} WHERE id = ${b}`);
 await db.exec(`EXECUTE PROCEDURE link_ent(${b})`);
 // (noticed at any tic: the fight that follows may kill it before the 70 are up)
 let found = null;
@@ -219,6 +221,17 @@ if (item) {
   const shooting = (await q(`SELECT bot_find_target(${b}) t FROM rdb$database`))[0].T;
   assert(hidden !== b2 && shooting === b2, `an invisible bot goes unnoticed (${hidden}) until it shoots (${shooting})`);
   await bset(b2, 'invis_finished = 0, attack_finished = 0');
+
+  // the character's own fighting values (bots/NAME_c.c at its skill, bounded as Characteristic_BFloat bounds
+  // them), and BotFindEnemy's field of view: 90 degrees up close, so another 100 units off to the side goes
+  // unnoticed until the bot turns to it
+  const cv = (await q(`SELECT bot_cv(${b}, 'reactiontime', -1) rt, bot_cv(${b}, 'aim_accuracy', -1) aa, bot_cv(${b}, 'alertness', -1) al, bot_cv(${b}, 'view_maxchange', -1) vm, yaw_speed ys FROM ents WHERE id = ${b}`))[0];
+  await bset(b, `yaw = ${spot.YAW + 90}`);
+  const side = (await q(`SELECT bot_find_target(${b}) t FROM rdb$database`))[0].T;
+  await bset(b, `yaw = ${spot.YAW}`);
+  const ahead = (await q(`SELECT bot_find_target(${b}) t FROM rdb$database`))[0].T;
+  assert([cv.RT, cv.AA, cv.AL].every((v) => v >= 0 && v <= 1) && cv.VM >= 1 && Math.abs(cv.YS - cv.VM / 10) < 1e-6 && side !== b2 && ahead === b2,
+    `its character: reaction ${cv.RT}, aim ${cv.AA}, alertness ${cv.AL}, turning ${cv.VM}°/s (${cv.YS} a think); the other bot at its side unnoticed (${side}), ahead noticed`);
 
   // accuracy (FireWeapon's accuracy_shots, LogAccuracyHit's accuracy_hits): the bot shoots the other, both
   // holding still; a bullet that hits, one that misses, a shotgun blast (one hit for the pattern), a gauntlet
