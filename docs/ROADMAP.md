@@ -44,7 +44,7 @@ the order a player notices them on the demo maps:
 | --- | --- | --- |
 | **Dynamic lights, the rest** | 32 lights (the port keeps the 8 nearest); a light behind the view's frustum or out of the PVS lighting what is in view (the port takes its lights from the entities in view); the bots' muzzle flashes; the software painter lights planar faces only, not patches or curved meshes, and models only in brightness | `scene.js` `sceneLights`, `renderer.js` `dlightFace` |
 | **Shader features** | `deformVertexes` bulge, normal and autosprite2's axis, `tcGen vector`, more than the main stage plus one glow and one chrome, `alphaFunc` beyond a test, `rgbGen` wave variants, `alphaGen portal`, `fogparms`, `sort` keys, `polygonOffset`, `entityMergable`, multiple lightmap styles; the chrome reflects by the face's normal, not the vertices' (patches' normals are not kept) | `shader.js` and the painters |
-| **Fog volumes** | `fogs` lump, per-vertex fog | not drawn; q3dm7's fog pit is clear |
+| **Fog, the rest** | models, brass and sprites inside a fog are not fogged (`R_FogFactor` on entities); the software painter fogs the opaque faces only, and a surface's own translucent stages are drawn unfogged | `scene.js` and the painters |
 | **Portals and mirrors** | `misc_portal_surface`, `surfaceparm portal` | a second frame query from the portal's camera |
 | **Flares** | `flare` shaders on lights | small |
 | **Entity shadows** | the blob shadow under players (`cg_shadows 1`) and the stencil shadows (3) | a decal under each player model |
@@ -145,7 +145,9 @@ brass (`CG_MachineGunEjectBrass`, `CG_ShotgunEjectBrass`) bouncing on the floor;
 muzzle flash) on the world as `ProjectDlightTexture` lights it and on the models as `R_SetupEntityLighting` does;
 the shader features the demo's arenas use most: `tcGen environment` (the chrome of `pewter_shiney` all over
 q3dm17 and q3tourney2, under the pewter picture, and the lamps), `deformVertexes autoSprite` (the lamp flares)
-and `deformVertexes wave` and `move` (the lava, the banners, the bobbing lamps);
+and `deformVertexes wave` and `move` (the lava, the banners, the bobbing lamps); the fog volumes (the `fogs` lump
+and `fogparms`: q3dm7's red pit and orange ground fog, q3tourney2's hell fogs) as `RB_CalcFogTexCoords` and
+`R_FogFactor` have them;
 lightmaps with the overbright
 shift, the light grid for models, sky cloud layers, blend/add/filter surfaces, scroll/scale/turb
 tcMods, animMap, two-sided surfaces; the software and WebGL painters; positional sound, loops,

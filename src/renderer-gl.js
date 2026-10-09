@@ -8,7 +8,7 @@
 // vertex shader; the player parts hang on their tags as before. The HUD is
 // drawn by the software painter onto a transparent canvas laid over this one.
 
-import { Renderer, yawAxis, anglesAxis, tagTransform, animFrame, autospriteQuads } from './renderer.js';
+import { Renderer, yawAxis, anglesAxis, tagTransform, animFrame, autospriteQuads, fogDefs } from './renderer.js';
 import { loadImage, powerOfTwo } from './image.js';
 
 const LIGHTMAP_SIZE = 128;
@@ -75,6 +75,12 @@ uniform vec4 uSkyScroll;  // layer 1 xy, layer 2 zw
 uniform vec2 uSkyScale;
 uniform int uEnvMode;     // tcGen environment: 1 the picture itself, 2 a chrome under it, 3 a chrome added
 uniform sampler2D uEnv;
+uniform int uFogOn;       // in a fog volume: RB_FogPass by R_FogFactor
+uniform vec3 uFogColor;
+uniform vec4 uFogPlane;   // the fog's surface (normal, dist); w unused when uFogHasPlane is 0
+uniform int uFogHasPlane;
+uniform float uFogOpaque;
+uniform vec3 uFwd;
 uniform int uDlCount;     // the dynamic lights on this surface (0 for the translucent ones)
 uniform vec4 uDlPos[8];   // xyz, radius
 uniform vec3 uDlColor[8];
@@ -130,6 +136,19 @@ void main() {
   if (uAlphaTest == 1 && c.a < 0.5) discard;
   vec3 lit = uMode == 0 ? c.rgb * (texture(uLightmap, vLm).rgb + shine) : c.rgb * uFlat;
   if (uDlCount > 0) lit *= 1.0 + dlights();
+  if (uFogOn == 1) {
+    // RB_CalcFogTexCoords and R_FogFactor: the depth along the view over the distance to opaque, times the
+    // share of the sight line under the fog's surface; the fog table is the square root
+    float s = dot(vWorld - uEye, uFwd) / uFogOpaque, t = 31.0 / 32.0;
+    if (uFogHasPlane == 1) {
+      float tP = uFogPlane.w - dot(vWorld, uFogPlane.xyz), tE = uFogPlane.w - dot(uEye, uFogPlane.xyz);
+      if (tE < 0.0) t = tP < 1.0 ? 1.0 / 32.0 : 1.0 / 32.0 + 30.0 / 32.0 * tP / (tP - tE);
+      else t = tP < 0.0 ? 1.0 / 32.0 : 31.0 / 32.0;
+    }
+    float f = 0.0;
+    if (t > 1.0 / 32.0 + 1e-6 && s > 0.0) { if (t < 31.0 / 32.0) s *= (t - 1.0 / 32.0) / (30.0 / 32.0); f = sqrt(min(1.0, s)); }
+    lit = mix(lit, uFogColor, f);
+  }
   fragColor = vec4(min(lit, 1.0), c.a);
 }`;
 
@@ -306,10 +325,11 @@ export class GLRenderer {
       else idx = new Uint32Array(0);
       let sum = 0;
       for (let k = 0; k < f.nverts; k++) sum += f.verts[k * 10 + 7] + f.verts[k * 10 + 8] + f.verts[k * 10 + 9];
-      this.faceInfo.set(i, { f, look, idx, lm: f.lmIndex, flat: f.nverts ? sum / (3 * f.nverts) : 255 });
+      this.faceInfo.set(i, { f, look, idx, lm: f.lmIndex, flat: f.nverts ? sum / (3 * f.nverts) : 255, fog: f.effect });
       indexOf.push(idx);
       base += f.nverts;
     });
+    this.fogs = fogDefs(bsp, res);
     if (this.worldVbo) gl.deleteBuffer(this.worldVbo);
     this.worldVbo = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, this.worldVbo);
@@ -440,9 +460,10 @@ export class GLRenderer {
       if (!info || info.look.nodraw || !info.idx.length) continue;
       if (info.look.autosprite) { this.autosprites.push(...autospriteQuads(info.f, info.look, row[2], row[3], row[4])); continue; }
       const ent = row[1];
-      const key = `${info.look.name}|${info.lm}|${ent}`;
+      const fog = info.fog >= 0 && this.fogs?.[info.fog] ? info.fog : -1;
+      const key = `${info.look.name}|${info.lm}|${ent}|${fog}`;
       let g = groups.get(key);
-      if (!g) { g = { look: info.look, lm: info.lm, ent, origin: [row[2], row[3], row[4]], angles: ent ? entAngles.get(ent) : null, faces: [], count: 0, flat: 0 }; groups.set(key, g); }
+      if (!g) { g = { look: info.look, lm: info.lm, ent, fog, origin: [row[2], row[3], row[4]], angles: ent ? entAngles.get(ent) : null, faces: [], count: 0, flat: 0 }; groups.set(key, g); }
       g.faces.push(info.idx);
       g.count += info.idx.length;
       g.flat += info.flat;
@@ -489,6 +510,7 @@ export class GLRenderer {
     gl.uniformMatrix4fv(u.uView, false, this.viewM);
     gl.uniform1i(u.uTex, 0); gl.uniform1i(u.uLightmap, 1); gl.uniform1i(u.uSky2, 2); gl.uniform1i(u.uEnv, 3);
     gl.uniform3f(u.uEye, this.view.x, this.view.y, this.view.z);
+    gl.uniform3f(u.uFwd, this.view.fwd[0], this.view.fwd[1], this.view.fwd[2]);
     gl.uniform1f(u.uTime, this.time);
     const dl = this.dlights ?? [];
     if (dl.length) {
@@ -547,6 +569,14 @@ export class GLRenderer {
     gl.uniform1f(u.uTurb, look.turb ? 1 : 0);
     gl.uniform1i(u.uAlphaTest, look.alphaTest ? 1 : 0);
     gl.uniform1i(u.uDlCount, look.blend === 'opaque' ? (this.dlights?.length ?? 0) : 0);
+    const fog = g.fog >= 0 && look.blend === 'opaque' ? this.fogs[g.fog] : null;
+    gl.uniform1i(u.uFogOn, fog ? 1 : 0);
+    if (fog) {
+      gl.uniform3f(u.uFogColor, fog.color[0], fog.color[1], fog.color[2]);
+      gl.uniform1f(u.uFogOpaque, fog.opaque);
+      gl.uniform1i(u.uFogHasPlane, fog.plane ? 1 : 0);
+      if (fog.plane) gl.uniform4f(u.uFogPlane, fog.plane.nx, fog.plane.ny, fog.plane.nz, fog.plane.dist);
+    }
     this.setBlend(look.blend);
     gl.drawElements(gl.TRIANGLES, g.count, gl.UNSIGNED_INT, g.first * 4);
     if (look.add && look.blend === 'opaque') {
@@ -559,6 +589,7 @@ export class GLRenderer {
       gl.uniform1i(u.uAlphaTest, 0);
       gl.uniform1i(u.uDlCount, 0);
       gl.uniform1i(u.uEnvMode, 0);
+      gl.uniform1i(u.uFogOn, 0);
       this.setBlend('add');
       gl.drawElements(gl.TRIANGLES, g.count, gl.UNSIGNED_INT, g.first * 4);
     }

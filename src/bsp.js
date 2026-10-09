@@ -123,6 +123,14 @@ export class Bsp {
     l = lump(LUMP.meshverts);
     this.meshverts = new Int32Array(bytes.buffer.slice(l.off, l.off + l.len));
 
+    // the fog volumes: a shader, a brush, the side whose plane is the fog's surface (-1: none)
+    l = lump(LUMP.effects);
+    this.fogs = [];
+    for (let p = l.off; p + 72 <= l.off + l.len; p += 72) {
+      let name = '';
+      for (let k = 0; k < 64 && bytes[p + k]; k++) name += String.fromCharCode(bytes[p + k]);
+      this.fogs.push({ name: name.toLowerCase(), brush: dv.getInt32(p + 64, true), side: dv.getInt32(p + 68, true) });
+    }
     l = lump(LUMP.faces);
     this.faces = [];
     for (let p = l.off; p < l.off + l.len; p += 104) {
@@ -179,6 +187,11 @@ export class Bsp {
     }
 
     this.buildSurfaces();
+    for (const fg of this.fogs) {
+      const br = this.brushes[fg.brush];
+      const pl = br && fg.side >= 0 && fg.side < br.numSides ? this.planes[this.brushsides[br.firstSide + fg.side].plane] : null;
+      fg.plane = pl ? { nx: pl.nx, ny: pl.ny, nz: pl.nz, dist: pl.dist } : null;
+    }
     this.buildFacets();
     this.modelLeaves();
   }

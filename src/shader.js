@@ -79,6 +79,7 @@ export function parseShaderScript(text, into = new Map()) {
         case 'skyparms': sh.sky = { box: args[0] && args[0] !== '-' ? args[0].toLowerCase() : null, height: Number(args[1]) || 512 }; break;
         case 'sort': sh.sort = args[0]; break;
         case 'deformvertexes': sh.deform = args.map((x) => x.toLowerCase()); sh.deforms.push(sh.deform); break;
+        case 'fogparms': { const n = args.filter((a) => a !== '(' && a !== ')').map(Number); if (n.length >= 4) sh.fog = { color: n.slice(0, 3), opaque: n[3] || 1 }; break; }
         case 'nopicmip': case 'nomipmaps': sh.nopicmip = true; break;
         default: break;
       }
@@ -90,7 +91,7 @@ export function parseShaderScript(text, into = new Map()) {
 }
 
 const STAGE_KEYS = new Set(['map', 'clampmap', 'animmap', 'blendfunc', 'alphafunc', 'tcmod', 'tcgen', 'rgbgen', 'alphagen', 'depthwrite', 'depthfunc', 'detail', 'videomap']);
-const SHADER_KEYS = new Set(['surfaceparm', 'cull', 'skyparms', 'sort', 'deformvertexes', 'nopicmip', 'nomipmaps', 'polygonoffset', 'entitymergable', 'fogparms', 'light', 'tesssize', 'q3map_sun', 'q3map_surfacelight', 'qer_editorimage', 'qer_trans', 'qer_nocarve', 'q3map_lightimage', 'q3map_globaltexture', 'q3map_lightsubdivide', 'cloudparms', 'sky', 'portal', 'fogonly', 'q3map_backshader', 'q3map_flare', 'q3map_tessSize', 'q3map_backsplash', 'q3map_lightmapsamplesize', 'q3map_novertexshadows', 'q3map_forcesunlight', 'q3map_vertexshadows', 'q3map_tesssize', 'lightning', 'entitymergable']);
+const SHADER_KEYS = new Set(['fogparms', 'surfaceparm', 'cull', 'skyparms', 'sort', 'deformvertexes', 'nopicmip', 'nomipmaps', 'polygonoffset', 'entitymergable', 'fogparms', 'light', 'tesssize', 'q3map_sun', 'q3map_surfacelight', 'qer_editorimage', 'qer_trans', 'qer_nocarve', 'q3map_lightimage', 'q3map_globaltexture', 'q3map_lightsubdivide', 'cloudparms', 'sky', 'portal', 'fogonly', 'q3map_backshader', 'q3map_flare', 'q3map_tessSize', 'q3map_backsplash', 'q3map_lightmapsamplesize', 'q3map_novertexshadows', 'q3map_forcesunlight', 'q3map_vertexshadows', 'q3map_tesssize', 'lightning', 'entitymergable']);
 const isStageKeyword = (s) => STAGE_KEYS.has(s.toLowerCase());
 const isShaderKeyword = (s) => SHADER_KEYS.has(s.toLowerCase());
 
@@ -165,7 +166,8 @@ export function surfaceLook(shaders, name) {
   const deforms = sh.deforms.map(parseDeform).filter(Boolean);
   if (deforms.length) look.deforms = deforms.slice(0, 2);
   look.twoSided = sh.cull === 'none';
-  look.nodraw = sh.parms.has('nodraw');
+  // a fog volume's surface with no stages of its own shows only the fog of what is under it
+  look.nodraw = sh.parms.has('nodraw') || (sh.parms.has('fog') && !sh.stages.some((s) => s.map));
   if (sh.parms.has('sky') || sh.sky) {
     look.sky = { box: sh.sky?.box ?? null, layers: sh.stages.filter((s) => s.map).map((s) => ({ image: s.map, scroll: s.scroll, scale: s.scale, blend: s.blend })) };
     look.lightmapped = false;

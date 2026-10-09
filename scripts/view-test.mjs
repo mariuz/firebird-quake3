@@ -7,7 +7,7 @@
 
 import fs from 'node:fs';
 import { FrameState, firstPersonView, zoomedFov, fovY, mapTorsoToWeaponFrame, viewTorsoFrame, underwaterFov, sceneLights, litByDlights, MAX_DLIGHTS } from '../src/scene.js';
-import { tagTransform, autospriteQuads } from '../src/renderer.js';
+import { tagTransform, autospriteQuads, fogST, fogFactor } from '../src/renderer.js';
 import { parseDeform, waveValue, deformVertex, envTexCoords, parseShaderScript, surfaceLook } from '../src/shader.js';
 import { Md3, parseAnimationCfg } from '../src/md3.js';
 import { Pk3 } from '../src/pk3.js';
@@ -231,6 +231,21 @@ const markBsp = {
   assert(shiny.image === 'textures/x/shiny.tga' && shiny.env?.image === 'textures/fx/tin.tga' && shiny.env.mode === 'under' && shiny.blend === 'opaque' && shiny.lightmapped,
     'a picture over a chrome: the picture on top, the chrome under it, opaque and lightmapped');
   assert(flag.deforms?.length === 2 && near(flag.deforms[0].spread, 1 / 30), 'both of a banner\'s waves are kept');
+}
+
+// fog volumes (RB_CalcFogTexCoords, R_FogFactor): a fog with its surface at z = 0, opaque at 400
+{
+  const fogShaders = parseShaderScript(`textures/x/fog { surfaceparm fog fogparms ( .75 .38 0 ) 400 }
+    textures/x/hellfog { surfaceparm fog fogparms ( .5 .1 .1 ) 128 { map textures/x/cloud.tga blendfunc gl_dst_color gl_zero } }`);
+  const fogSh = fogShaders.get('textures/x/fog');
+  assert(fogSh.fog && fogSh.fog.opaque === 400 && fogSh.fog.color.join() === '0.75,0.38,0', 'fogparms ( .75 .38 0 ) 400 parsed');
+  assert(surfaceLook(fogShaders, 'textures/x/fog').nodraw && !surfaceLook(fogShaders, 'textures/x/hellfog').nodraw, 'a fog surface with no stages draws nothing; one with clouds draws them');
+  const fog = { color: [0.75, 0.38, 0], opaque: 400, plane: { nx: 0, ny: 0, nz: 1, dist: 0 } };
+  const at = (eye, p) => { const [s, t] = fogST(fog, p[0], p[1], p[2], { x: eye[0], y: eye[1], z: eye[2], fwd: [1, 0, 0] }); return fogFactor(s, t); };
+  assert(at([0, 0, -10], [100, 0, -10]) > 0.49 && at([0, 0, -10], [100, 0, -10]) < 0.51, 'inside the fog, a point a quarter of the way to opaque is half fogged (the square root)');
+  assert(at([0, 0, -10], [800, 0, -10]) === 1 && at([0, 0, -10], [100, 0, 50]) === 0, 'past opaque it is all fog; above the surface none');
+  const half = at([0, 0, 100], [400, 0, -100]);
+  assert(Math.abs(half - Math.sqrt(0.5)) < 1e-6, `from above, a point as deep under the surface as the eye is over it gets half the depth's fog (${half.toFixed(3)})`);
 }
 
 // and the hand model really carries the gun down on those frames (with the pak, when it is there)

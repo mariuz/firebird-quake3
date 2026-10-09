@@ -682,6 +682,17 @@ vertex) and its vertex shader moves the vertex, the software painter moves it be
 `autosprite`: each four vertices of the face become a sprite facing the eye (`autospriteQuads`, the
 size from the middle to a corner as RB_CalcAutoSprite has it), drawn with the translucent surfaces.
 
+*Fog volumes.* The BSP's fogs lump names a shader (its `fogparms ( r g b ) distance-to-opaque`), a
+brush and the side whose plane is the fog's surface; a face's `effect` is its fog. `fogDefs` puts each
+fog's colour, distance and surface plane together, and every opaque face in a fog is blended towards
+its colour by `R_FogFactor`: s is the point's depth along the view over the distance to opaque, t how
+much of the sight line is in the fog (from outside, the point's depth under the surface over its depth
+and the eye's height together; from inside, all of it for a point under the surface), the share s
+scaled by t, and the fog table's square root of it (`fogST`, `fogFactor`). The WebGL world shader does
+it per pixel (the groups are split by fog too); the software painter draws each fogged face once more
+(`fogFace`) with s and t where the lightmap coordinates go and blends the pixels that face left on top.
+A fog surface without stages of its own (`fog_intel`) is not drawn; it was a checkerboard before.
+
 *Dynamic lights* are `trap_R_AddLightToScene`'s, gathered each frame by `sceneLights` from what the
 frame already has: a rocket (effects 16) or a BFG ball (64) in flight at 200, a rocket's or a grenade's
 explosion at 300 (full for the first half of its sprite's life, then fading to nothing), a player

@@ -15,6 +15,33 @@ import { deformVertex, envTexCoords } from './shader.js';
 
 const LIGHTMAP_SIZE = 128;
 
+/** The map's fog volumes with their shaders' fogparms: [{ color: [r, g, b], opaque, plane | null }] by fog number */
+export function fogDefs(bsp, res) {
+  return (bsp.fogs ?? []).map((fg) => {
+    const fog = res.shaders?.get(fg.name)?.fog;
+    return fog ? { color: fog.color, opaque: fog.opaque, plane: fg.plane } : null;
+  });
+}
+
+/**
+ * RB_CalcFogTexCoords for a point: s, the depth along the view over the distance to opaque; t, how much of
+ * the sight line is in the fog (1/32 none, 31/32 all; from outside, the point's depth under the fog's
+ * surface over its and the eye's together). R_FogFactor makes them the fog's share of the colour.
+ */
+export function fogST(fog, px, py, pz, view) {
+  const s = ((px - view.x) * view.fwd[0] + (py - view.y) * view.fwd[1] + (pz - view.z) * view.fwd[2]) / fog.opaque;
+  const pl = fog.plane;
+  if (!pl) return [s, 31 / 32];
+  const tP = pl.dist - (px * pl.nx + py * pl.ny + pz * pl.nz), tE = pl.dist - (view.x * pl.nx + view.y * pl.ny + view.z * pl.nz);
+  if (tE < 0) return [s, tP < 1 ? 1 / 32 : 1 / 32 + ((30 / 32) * tP) / (tP - tE)];
+  return [s, tP < 0 ? 1 / 32 : 31 / 32];
+}
+export function fogFactor(s, t) {
+  if (t <= 1 / 32 + 1e-6 || s <= 0) return 0;
+  if (t < 31 / 32) s *= (t - 1 / 32) / (30 / 32);
+  return Math.sqrt(Math.min(1, s));   // tr.fogTable: the square root
+}
+
 /** deformVertexes autoSprite: each four vertices of the face a square turned to face the eye, its size from the
  *  middle to the first corner (RB_CalcAutoSprite's radius 0.707 of that distance, each way) */
 export function autospriteQuads(f, look, ox = 0, oy = 0, oz = 0) {
@@ -77,9 +104,10 @@ export class Renderer {
       const bsp = m.bsp;
       bsp.faces.forEach((f, i) => {
         const tex = bsp.textures[f.texture];
-        this.faceInfo.set(i, { bsp, f, look: this.look(tex?.name ?? '') });
+        this.faceInfo.set(i, { bsp, f, look: this.look(tex?.name ?? ''), fog: f.effect });
       });
       this.bsp = bsp;
+      this.fogs = fogDefs(bsp, res);
     }
   }
 
@@ -264,7 +292,7 @@ export class Renderer {
       const t0 = xs + 0.5 - xl;
       let iz = edgeL[o + 1] + diz * t0, uz = edgeL[o + 4] + duz * t0, vz = edgeL[o + 5] + dvz * t0;
       for (let x = xs, idx = y * w + xs; x <= xe; x++, idx++, iz += diz, uz += duz, vz += dvz) {
-        if (iz < zb[idx]) continue;
+        if (iz < zb[idx] || iz > zb[idx] * 1.00002) continue;
         const u = uz / iz, v = vz / iz, d2 = u * u + v * v;
         if (d2 >= 60.84) continue;   // 7.8 texels: past the image's last lit texel
         // 4000 / d² of 255, full within 4 texels, the edge at 75 softened over the last texel
@@ -352,6 +380,54 @@ export class Renderer {
           this.emitPoly(a, b, c, 3, bh, info, false);
         }
       }
+      if (info.fog >= 0 && this.fogs?.[info.fog] && look.blend === 'opaque' && !look.sky) this.fogFace(m, behind, info, this.fogs[info.fog]);
+    }
+  }
+
+  /**
+   * RB_FogPass for a face just drawn (its vertices in this.vv): the face again with its vertices' fog s and t
+   * where the lightmap coordinates go, the pixels it left on top blended towards the fog's colour by
+   * R_FogFactor.
+   */
+  fogFace(m, behind, info, fog) {
+    const vv = this.vv, view = this.view, F = view.fwd, Rt = view.right, U = view.up;
+    for (let k = 0; k < m; k++) {
+      const o = k * 9;
+      const px = view.x + vv[o] * F[0] + vv[o + 1] * Rt[0] + vv[o + 2] * U[0];
+      const py = view.y + vv[o] * F[1] + vv[o + 1] * Rt[1] + vv[o + 2] * U[1];
+      const pz = view.z + vv[o] * F[2] + vv[o + 1] * Rt[2] + vv[o + 2] * U[2];
+      const [s, t] = fogST(fog, px, py, pz, view);
+      vv[o + 7] = s / LIGHTMAP_SIZE; vv[o + 8] = t / LIGHTMAP_SIZE;
+    }
+    const pass = { fogpass: fog, look: DLIGHT_LOOK, f: info.f };
+    if (info.f.fan) this.emitPoly(0, 1, 2, m, behind, pass, true);
+    else {
+      const T = info.f.tris;
+      for (let k = 0; k + 2 < T.length; k += 3) this.emitPoly(T[k], T[k + 1], T[k + 2], 3, vv[T[k] * 9] < 4 || vv[T[k + 1] * 9] < 4 || vv[T[k + 2] * 9] < 4, pass, false);
+    }
+  }
+
+  /** One fog pass over a polygon: the pixels it left on top towards the fog's colour. */
+  fogSpans(y0, y1, fog) {
+    const { w, edgeL, edgeR, fb, zb } = this;
+    const fr = fog.color[0] * 255, fg = fog.color[1] * 255, fbl = fog.color[2] * 255;
+    for (let y = y0; y <= y1; y++) {
+      const o = y * 7, xl = edgeL[o], xr = edgeR[o];
+      if (xl === Infinity || xr === -Infinity) continue;
+      const xs = Math.max(0, Math.ceil(xl - 0.5)), xe = Math.min(w - 1, Math.ceil(xr - 0.5) - 1);
+      if (xs > xe) continue;
+      const span = xr - xl || 1;
+      const diz = (edgeR[o + 1] - edgeL[o + 1]) / span, duz = (edgeR[o + 4] - edgeL[o + 4]) / span, dvz = (edgeR[o + 5] - edgeL[o + 5]) / span;
+      const t0 = xs + 0.5 - xl;
+      let iz = edgeL[o + 1] + diz * t0, uz = edgeL[o + 4] + duz * t0, vz = edgeL[o + 5] + dvz * t0;
+      for (let x = xs, idx = y * w + xs; x <= xe; x++, idx++, iz += diz, uz += duz, vz += dvz) {
+        if (iz < zb[idx] || iz > zb[idx] * 1.00002) continue;   // only where this face is what is there (not an alpha-tested hole)
+        const f = fogFactor(uz / iz, vz / iz);
+        if (f <= 0) continue;
+        const d = fb[idx], k = 1 - f;
+        const r = (d & 255) * k + fr * f, g = ((d >> 8) & 255) * k + fg * f, b = ((d >> 16) & 255) * k + fbl * f;
+        fb[idx] = (0xff000000 | (b << 16) | (g << 8) | r) >>> 0;
+      }
     }
   }
 
@@ -432,6 +508,7 @@ export class Renderer {
 
   drawSurfacePoly(poly, n, info) {
     if (info.dlight) { this.fillPolygon(poly, n, null, null, 'dlight', 0, 0, 0, 0, null, info.dlight); return; }
+    if (info.fogpass) { this.fillPolygon(poly, n, null, null, 'fog', 0, 0, 0, 0, null, info.fogpass); return; }
     const { f, look, bsp } = info;
     if (look.sky) { this.fillPolygon(poly, n, null, null, 'sky', 0, 0, 0, 0); return; }
     const tex = this.texture(this.animImage(look, look.image, look.anim, look.animFps));
@@ -520,6 +597,7 @@ export class Renderer {
     }
     if (mode === 'sky') { this.skySpans(y0, y1); return; }
     if (mode === 'dlight') { this.dlightSpans(y0, y1, dl.mod, dl.color); return; }
+    if (mode === 'fog') { this.fogSpans(y0, y1, dl); return; }
     const td = tex.data, wm = tex.wm, hm = tex.hm;
     const lm = page;
     const tphase = this.time * 2;
