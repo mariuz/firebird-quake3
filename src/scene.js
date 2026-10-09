@@ -163,6 +163,8 @@ export function litByDlights(light, x, y, z, lights) {
 // cg_railTrailTime 400; r_railCoreWidth 6, r_railWidth 16, r_railSegmentLength 32; the colour is the shooter's
 // color1 times 0.75 in Quake III (one colour for all here), fading to nothing (LE_FADE_RGB)
 const RAIL_TIME = 0.4, RAIL_CORE_WIDTH = 6, RAIL_WIDTH = 16, RAIL_SEGMENT = 32, RAIL_COLOR = [0.375, 0.56, 0.75];
+// the EF bits of the powerups drawn as shells: 256 invisible, 512 quad, 1024 regeneration, 4096 battle suit
+const POWERUP_BITS = 256 | 512 | 1024 | 4096;
 const quadSt = (t0, t1) => Float32Array.of(t0, 0, t0, 1, t1, 1, t1, 0);
 /** DoRailCore: a ribbon from a to b spanWidth either side along `right`, its texture t = length / 256 long */
 function railCore(a, b, right, w) {
@@ -303,7 +305,8 @@ export class FrameState {
     this.kick = { dmgSeen: null, at: -1e9, pitch: 0, roll: 0, bob: 0 };   // the first-person view's state
     this.bubbles = [];        // { p: [x, y, z], v: [vx, vy, vz], t0, dur } (CG_BubbleTrail's local entities)
     this.lastPos = new Map(); // a missile's position and time at the last frame: its trail starts there
-    this.puffs = [];          // { p: [x, y, z], t0, dur, radius } (CG_SmokePuff's LE_SCALE_FADE)
+    this.puffs = [];          // { p: [x, y, z], t0, dur, radius, alpha } (CG_SmokePuff's LE_SCALE_FADE)
+    this.hasteTime = new Map();   // entity → its next haste puff (centity_t's trailTime)
     this.brass = [];          // { p, v, angles, t0, end, model, rest } (the shells' LE_FRAGMENT)
     this.marks = [];          // { pts, st, n, img, blend, color, t0, energy } (cg_marks.c's mark polys)
     this.markFaces = null;    // the world faces a mark can land on, for this.markBsp
@@ -449,6 +452,18 @@ export class FrameState {
       const t = i * TRAIL_STEP, k = Math.max(0, Math.min(1, (t - last[3]) / (time - last[3])));
       this.puffs.push({ p: [last[0] + (p[0] - last[0]) * k, last[1] + (p[1] - last[1]) * k, last[2] + (p[2] - last[2]) * k], t0: t, dur, radius });
     }
+    if (this.puffs.length > MAX_PUFFS) this.puffs.splice(0, this.puffs.length - MAX_PUFFS);
+  }
+
+  /** CG_HasteTrail: a runner with the haste drops a puff under its feet every 100 ms (16 below the origin,
+   *  radius 8, half a second, hasteSmokePuff: smokepuff3 at full alpha) */
+  hasteTrail(id, p, time) {
+    let t = this.hasteTime.get(id) ?? 0;
+    if (t > time) return;
+    t += 0.1;
+    if (t < time) t = time;
+    this.hasteTime.set(id, t);
+    this.puffs.push({ p: [p[0], p[1], p[2] - 16], t0: time, dur: 0.5, radius: 8, alpha: 1 });
     if (this.puffs.length > MAX_PUFFS) this.puffs.splice(0, this.puffs.length - MAX_PUFFS);
   }
 
@@ -649,7 +664,7 @@ export function drawScene(renderer, hud, res, bsp, last, frame, opts = {}) {
         if (e.pmodel) {
           const [pm, skin] = e.pmodel.split('/');
           const [legs, torso, , cls] = e.anims.split(',');
-          r.drawPlayer(pm, skin, +legs, e.legsTime, +torso, e.torsoTime, cls === 'corpse' ? 0 : e.weapon, [e.x, e.y, e.z], e.yaw, time, light);
+          r.drawPlayer(pm, skin, +legs, e.legsTime, +torso, e.torsoTime, cls === 'corpse' ? 0 : e.weapon, [e.x, e.y, e.z], e.yaw, time, light, { powerups: e.effects & POWERUP_BITS });
           continue;
         }
         const m = res.models.get(e.model);
@@ -678,7 +693,9 @@ export function drawScene(renderer, hud, res, bsp, last, frame, opts = {}) {
       const [pm, skin] = e.pmodel.split('/');
       const [legs, torso, hp, cls] = e.anims.split(',');
       const isCorpse = cls === 'corpse';
-      r.drawPlayer(pm, skin, +legs, e.legsTime, +torso, e.torsoTime, isCorpse ? 0 : e.weapon, [e.x, e.y, e.z], e.yaw, time, light);
+      r.drawPlayer(pm, skin, +legs, e.legsTime, +torso, e.torsoTime, isCorpse ? 0 : e.weapon, [e.x, e.y, e.z], e.yaw, time, light, { powerups: e.effects & POWERUP_BITS });
+      // CG_PlayerPowerups: the haste's smoke behind a runner (LEGS_RUN, LEGS_BACK)
+      if (e.effects & 2048 && (+legs === 15 || +legs === 16)) state.hasteTrail(e.id, [e.x, e.y, e.z], time);
       // a fresh reward floats over the head (CG_PlayerSprites, CG_PlayerFloatSprite)
       const medal = e.effects & 8192 ? 'excellent' : e.effects & 32768 ? 'impressive' : e.effects & 16384 ? 'gauntlet' : null;
       if (medal && !isCorpse) r.drawSprite(`menu/medals/medal_${medal}`, [e.x, e.y, e.z + 48], 20, 'blend');
@@ -716,6 +733,9 @@ export function drawScene(renderer, hud, res, bsp, last, frame, opts = {}) {
     }
   }
 
+  // our own haste's smoke, running on the ground
+  if (last.HASTE > 0 && last.ONGROUND && !last.DEAD && Math.hypot(last.VX ?? 0, last.VY ?? 0) > 50) state.hasteTrail(-1, [last.PX, last.PY, last.PZ], time);
+
   // the bubbles: radius 3, rising, gone after their second (LE_MOVE_SCALE_FADE, LEF_PUFF_DONT_SCALE)
   if (state.bubbles.length) {
     state.bubbles = state.bubbles.filter((b) => time - b.t0 < b.dur && time >= b.t0 - 0.1);
@@ -745,7 +765,7 @@ export function drawScene(renderer, hud, res, bsp, last, frame, opts = {}) {
       const radius = p.radius * (1 - c) + 8;
       const d = (p.p[0] - view.x) * r.view.fwd[0] + (p.p[1] - view.y) * r.view.fwd[1] + (p.p[2] - view.z) * r.view.fwd[2];
       if (d < radius) continue;
-      r.drawSprite('gfx/misc/smokepuff3', p.p, radius * 2, 'blend', 255, 0.33 * c);   // the smokePuff shader
+      r.drawSprite('gfx/misc/smokepuff3', p.p, radius * 2, 'blend', 255, (p.alpha ?? 0.33) * c);   // the smokePuff shader
     }
   }
   // effects in flight
@@ -797,14 +817,16 @@ function drawViewWeapon(r, res, bsp, last, time, view, lights = []) {
     gunOrigin = [org[0] + axis[0] * 10 - axis[3] * 6 - axis[6] * 6, org[1] + axis[1] * 10 - axis[4] * 6 - axis[7] * 6, org[2] + axis[2] * 10 - axis[5] * 6 - axis[8] * 6];
   }
   r.zb.fill(0);
-  r.drawMd3(gun, 0, gunOrigin, gunAxis, null, light, { near: 1 });
+  // CG_AddWeaponWithPowerups: our own powerups on the gun
+  const pw = (last.INVIS > 0 ? 256 : 0) | (last.QUAD > 0 ? 512 : 0) | (last.ENVIRO > 0 ? 4096 : 0);
+  r.drawMd3Powered(gun, 0, gunOrigin, gunAxis, null, light, { near: 1 }, pw, time, true);
   // the barrel of the machinegun and the extra parts (rocketl_1, …) hang on tag_barrel / tag_weapon of the gun
   for (const part of ['_barrel', '_1', '_2']) {
     const pid = res.byName.get(`models/weapons2/${dir}/${dir}${part}.md3`);
     if (!pid) continue;
     const tag = part === '_barrel' ? 'tag_barrel' : 'tag_weapon';
     const t = tagTransform(gun, 0, tag, gunOrigin, gunAxis);
-    if (t) r.drawMd3(res.models.get(pid).mdl, 0, t.origin, t.axis, null, light, { near: 1 });
+    if (t) r.drawMd3Powered(res.models.get(pid).mdl, 0, t.origin, t.axis, null, light, { near: 1 }, pw, time, true);
   }
   // the muzzle flash for a tenth of a second
   if (last.ATTACK_START > 0 && time - last.ATTACK_START < 0.1 && last.WEAPON !== 1 && last.WEAPON !== 64) {

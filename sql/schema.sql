@@ -315,6 +315,11 @@ CREATE TABLE ents (
   lefty      SMALLINT DEFAULT 0 NOT NULL,
   respawn_time DOUBLE PRECISION DEFAULT 0 NOT NULL,
   quad_finished DOUBLE PRECISION DEFAULT 0 NOT NULL,
+  haste_finished  DOUBLE PRECISION DEFAULT 0 NOT NULL,   -- bots: the other powerups (the player's are in player)
+  invis_finished  DOUBLE PRECISION DEFAULT 0 NOT NULL,
+  regen_finished  DOUBLE PRECISION DEFAULT 0 NOT NULL,
+  enviro_finished DOUBLE PRECISION DEFAULT 0 NOT NULL,
+  health_tick     DOUBLE PRECISION DEFAULT 0 NOT NULL,   -- bots: the next ClientTimerActions second
   -- placement
   leaf       INTEGER,                      -- leaf of the origin
   cluster    INTEGER,

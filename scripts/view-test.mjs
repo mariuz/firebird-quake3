@@ -7,8 +7,8 @@
 
 import fs from 'node:fs';
 import { FrameState, firstPersonView, zoomedFov, fovY, mapTorsoToWeaponFrame, viewTorsoFrame, underwaterFov, sceneLights, litByDlights, MAX_DLIGHTS, drawRail, drawBolt, findPortals, portalView, portalFade, perpendicular, floorBelow, drawShadows } from '../src/scene.js';
-import { tagTransform, autospriteQuads, fogST, fogFactor } from '../src/renderer.js';
-import { parseDeform, waveValue, deformVertex, envTexCoords, parseShaderScript, surfaceLook } from '../src/shader.js';
+import { Renderer, tagTransform, autospriteQuads, fogST, fogFactor } from '../src/renderer.js';
+import { parseDeform, waveValue, deformVertex, envTexCoords, parseShaderScript, surfaceLook, shellMesh, eyeInModel } from '../src/shader.js';
 import { Md3, parseAnimationCfg } from '../src/md3.js';
 import { Pk3 } from '../src/pk3.js';
 
@@ -308,6 +308,47 @@ const markBsp = {
   assert(Math.abs(calls[0].k - 0.375 * 0.25) < 1e-6, `three quarters through, a quarter of its colour is left (${calls[0].k.toFixed(3)})`);
   calls.length = 0; drawBolt(r, view, bolt, 10);
   assert(calls.length === 8 && calls.every((c) => c.img === 'gfx/misc/lightning3'), 'the lightning: four ribbons, each in two stages');
+}
+
+// the powerups' shells (CG_AddRefEntityWithPowerups): powerups/quad pushes a vertex 3 out along its normal, its
+// texture the eye reflected in it, turned 30 degrees a second and scrolled (1, 0.1) a second
+{
+  const look = surfaceLook(parseShaderScript(`powerups/quad
+{
+  deformVertexes wave 100 sin 3 0 0 0
+  {
+    map textures/effects/quadmap2.tga
+    blendfunc GL_ONE GL_ONE
+    tcGen environment
+    tcmod rotate 30
+    tcmod scroll 1 .1
+  }
+}`), 'powerups/quad');
+  // one vertex at z = 10 with its normal up (latitude and longitude 0), the eye straight above
+  const surf = { numVerts: 1, xyz: Int16Array.of(0, 0, 640, 0) };
+  const eye = eyeInModel({ x: 100, y: 0, z: 100 }, [100, 0, 0], [1, 0, 0, 0, 1, 0, 0, 0, 1]);
+  const a = shellMesh(surf, 0, eye, look, 0), b = shellMesh(surf, 0, eye, look, 1);
+  const near = (x, y) => Math.abs(x - y) < 1e-4;
+  assert(look.blend === 'add' && near(a.xyz[2], 13) && near(a.st[0], 0.5) && near(a.st[1], 0),
+    `the quad's shell: 3 out (z ${a.xyz[2]}), the eye's reflection at (0.5, 0) (${a.st[0].toFixed(2)}, ${a.st[1].toFixed(2)})`);
+  assert(near(b.st[0], 0.25) && near(b.st[1], 0.1 + 0.5 - 0.5 * Math.cos(Math.PI / 6)), `a second later, turned 30 degrees and scrolled (${b.st[0].toFixed(3)}, ${b.st[1].toFixed(3)})`);
+  // which passes each powerup draws, on a body and on a gun
+  const passes = (pw, time, gun) => {
+    const r = Object.create(Renderer.prototype), out = [];
+    r.look = (name) => ({ image: name });
+    r.drawMd3 = (m, f, o, ax, sk, light, opts) => out.push(opts.shell ? opts.shell.look.image.replace('powerups/', '') : 'model');
+    r.drawMd3Powered(null, 0, [0, 0, 0], null, null, null, {}, pw, time, gun);
+    return out.join(' ');
+  };
+  assert(passes(256, 10, false) === 'invisibility' && passes(256, 10, true) === 'invisibility', `invisible: the shell alone (${passes(256, 10, false)})`);
+  assert(passes(512 | 4096, 10, false) === 'model quad battleSuit' && passes(512 | 4096, 10, true) === 'model quadWeapon battleWeapon', `the quad and the battle suit over the model (${passes(512 | 4096, 10, true)} on a gun)`);
+  assert(passes(1024, 10.15, false) === 'model regen' && passes(1024, 10.25, false) === 'model' && passes(1024, 10.15, true) === 'model', 'regeneration flashes a tenth of each second, not on the gun');
+  // the haste's smoke: a puff every 100 ms under the feet
+  const st = new FrameState();
+  for (const t of [10, 10.05, 10.1, 10.15, 10.2]) st.hasteTrail(7, [0, 0, 24], t);
+  // (CG_HasteTrail's trailTime starts at the first frame's time, so the second frame puffs too)
+  const at = st.puffs.map((p) => p.t0).join(',');
+  assert(at === '10,10.05,10.1,10.2' && st.puffs.every((p) => p.p[2] === 8 && p.dur === 0.5 && p.alpha === 1), `the haste: a puff every 100 ms, 16 under the origin (at ${at})`);
 }
 
 // and the hand model really carries the gun down on those frames (with the pak, when it is there)

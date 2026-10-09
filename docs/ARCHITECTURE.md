@@ -362,7 +362,7 @@ linearly with distance, a trace checks that the target is not behind a wall.
 
 Items (`item_touch`) are `g_items.c`: health counts above the maximum and decays, armour caps at 200,
 weapons give their ammo, every item respawns after the `respawn` time `item_defs` copied from
-`bg_itemlist`, powerups stack their time, holdables (medkit, teleporter) wait for the Enter key (the
+`bg_itemlist`, powerups stack their time (the bots take every one but flight, `bot_item_touch`), holdables (medkit, teleporter) wait for the Enter key (the
 teleporter sends you to a `select_spawn` spot, as `Use_Teleporter` does); `item_respawn` makes the
 item solid again and plays the respawn sound; a picked-up item is not drawn because `alpha = 1`
 hides it from the frame query.
@@ -386,10 +386,16 @@ delays and the `wait`/`random` timing.
 A think:
 
 1. respawns a dead bot after its delay (`bot_respawn` puts it at a `select_spawn` spot with the
-   default weapons and the skill's turn speed), and touches triggers and items where it stands;
+   default weapons and the skill's turn speed), and touches triggers and items where it stands; once
+   a second (`ClientTimerActions`, `health_tick`) regeneration adds 15 health up to 110 percent, then
+   5 up to twice the maximum, or else health and armour over the maximum count down a point. The
+   haste makes it 1.3 times as fast on its feet and with its gun; the battle suit (in `t_damage`, as
+   for the player) halves damage and ignores splash, falls, lava and slime;
 2. keeps or drops its enemy: dropped when dead or unseen for `bot_char(skill, 'search')` seconds
    (3 to 7); a new one is noticed by `bot_find_target` once a second, within the skill's alertness
-   range and field of view (unless very close) and in sight (`visible`, a trace between the eyes);
+   range and field of view (unless very close) and in sight (`visible`, a trace between the eyes),
+   and not invisible unless it is shooting (its refire still running); at an invisible enemy the aim
+   is 0.4 as good nine times in ten (`BotAimAtEnemy`);
    a newly noticed enemy is not shot at before the skill's reaction time has passed;
 3. with an enemy: faces it (`change_yaw`, the yaw speed per skill), picks a weapon for the distance
    (`bot_best_weapon`: gauntlet when touching, shotgun and lightning close, rockets and rail far),
@@ -715,6 +721,19 @@ the player itself, `floorBelow` steps a point down through the brushes (`Bsp.poi
 player clip) for the floor within 128 units, and `drawShadows` lays the 24-unit `markShadow` there
 through `impactMark`, turned with the legs, subtracted with 1 - the height's fraction (darker the
 nearer), into a list of this frame only rather than the 10-second marks.
+
+*Powerups* are drawn as cgame draws them. The frame's EF bits for a player model come from the bot's
+`*_finished` columns (256 invisible, 512 quad, 1024 regeneration, 2048 haste, 4096 battle suit) and
+the gun's from our own timers. `drawMd3Powered` is `CG_AddRefEntityWithPowerups` for each part of
+a player and `CG_AddWeaponWithPowerups` for a gun: an invisible one is only the
+`powerups/invisibility` shell; else the model, then `powerups/quad`, `powerups/regen` for a tenth of
+each second (not on a gun) and `powerups/battleSuit` over it (`quadWeapon`, `battleWeapon` on a gun).
+A shell is the model drawn again, additive and full bright, through `shellMesh`: each vertex moved
+out along its normal by the shader's `deformVertexes wave` (3 units for the quad on a body, 0.5 on
+a gun), its texture coordinates the eye reflected in it (`tcGen environment` in the model's frame)
+through the stage's turb, rotate and scroll. The haste's smoke is `CG_HasteTrail`: a runner
+(`LEGS_RUN`, `LEGS_BACK`) drops a `smokepuff3` puff 16 under its origin every 100 ms, growing from 8
+to 16 as it fades over half a second; ours too, running on the ground.
 
 *Portals.* q3dm7's teleporter frame holds a `portal` shader face; a `misc_portal_surface` next to it
 targets a `misc_portal_camera`, which looks at its own target and is rolled by its "roll". The page

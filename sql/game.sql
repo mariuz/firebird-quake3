@@ -1034,13 +1034,14 @@ BEGIN
   -- no friendly fire (g_friendlyFire 0): a teammate's shot knocks, it does not hurt
   IF (targ <> attacker AND BIN_AND(dflags, 8) = 0 AND on_same_team(targ, attacker) = 1) THEN EXIT;
   IF (cls = 'player' AND BIN_AND(flags, 16) <> 0 AND BIN_AND(dflags, 8) = 0) THEN EXIT;   -- god mode
-  -- the battle suit halves damage and ignores splash
-  IF (cls = 'player' AND BIN_AND(dflags, 8) = 0) THEN
+  -- the battle suit halves damage and ignores splash and falls (lava and slime too: P_WorldEffects)
+  IF (cls IN ('player', 'bot') AND BIN_AND(dflags, 8) = 0) THEN
   BEGIN
-    SELECT p.enviro_finished FROM player p WHERE p.id = 1 INTO inv;
+    IF (cls = 'player') THEN SELECT p.enviro_finished FROM player p WHERE p.id = 1 INTO inv;
+    ELSE SELECT e.enviro_finished FROM ents e WHERE e.id = :targ INTO inv;
     IF (inv > now_()) THEN
     BEGIN
-      IF (BIN_AND(dflags, 1) <> 0 OR mod_ IN (14, 15)) THEN EXIT;
+      IF (BIN_AND(dflags, 1) <> 0 OR mod_ IN (13, 14, 15)) THEN EXIT;
       damage = damage / 2;
       EXECUTE PROCEDURE snd(targ, 3, 'sound/items/protect3.wav', 1, 1);
     END

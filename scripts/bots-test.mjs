@@ -151,6 +151,61 @@ if (item) {
   assert(away > 5 && none === 0, `a grenade 60 units off: the bot steps ${away?.toFixed(0)} further from it; without it, nothing`);
 }
 
+// the powerups on a bot: it takes them all but flight; regeneration counts its health up and health over the
+// maximum counts down (ClientTimerActions); the battle suit halves damage and ignores splash; an invisible bot
+// that is not shooting goes unnoticed (BotFindEnemy)
+{
+  const bset = (id, sql) => db.exec(`UPDATE ents SET ${sql} WHERE id = ${id}`);
+  const b2 = bots[1].ID;
+  for (const id of [b, b2]) if ((await q(`SELECT deadflag FROM ents WHERE id = ${id}`))[0].DEADFLAG) await db.exec(`EXECUTE PROCEDURE bot_respawn(${id})`);
+  const me = (await q(`SELECT x, y, z FROM ents WHERE id = ${pe}`))[0];
+  // a spot away from us with room ahead: a spawn point, the other bot 100 units along its facing
+  let spot = null;
+  for (const sp of await q("SELECT x, y, z, yaw FROM ents WHERE classname = 'info_player_deathmatch' ORDER BY id")) {
+    if (Math.hypot(sp.X - me.X, sp.Y - me.Y) < 400) continue;
+    const a = (sp.YAW * Math.PI) / 180;
+    await bset(b, `x = ${sp.X}, y = ${sp.Y}, z = ${sp.Z + 9}, yaw = ${sp.YAW}, vx = 0, vy = 0, vz = 0, health = 100, armor = 0, invis_finished = 0, attack_finished = 1e9`);
+    await bset(b2, `x = ${sp.X + Math.cos(a) * 100}, y = ${sp.Y + Math.sin(a) * 100}, z = ${sp.Z + 9}, vx = 0, vy = 0, vz = 0, health = 100, invis_finished = 0, attack_finished = 0`);
+    for (const id of [b, b2]) await db.exec(`EXECUTE PROCEDURE link_ent(${id})`);
+    if ((await q(`SELECT visible(${b}, ${b2}) v, bot_find_target(${b}) t FROM rdb$database`))[0].T === b2) { spot = sp; break; }
+  }
+  assert(spot, 'a bot notices another 100 units in front of it');
+  await bset(b2, 'invis_finished = 1e9');
+  const hidden = (await q(`SELECT bot_find_target(${b}) t FROM rdb$database`))[0].T;
+  await bset(b2, 'attack_finished = 1e9');
+  const shooting = (await q(`SELECT bot_find_target(${b}) t FROM rdb$database`))[0].T;
+  assert(hidden !== b2 && shooting === b2, `an invisible bot goes unnoticed (${hidden}) until it shoots (${shooting})`);
+  await bset(b2, 'invis_finished = 0, attack_finished = 0');
+
+  // Touch_Item: a haste is taken, a flight is not
+  const touch = async (cls) => {
+    const g = (await q(`SELECT id FROM spawn_ent('item', ${spot.X}, ${spot.Y}, ${spot.Z})`))[0].ID;
+    await db.exec(`UPDATE ents SET item = '${cls}', solid = 1 WHERE id = ${g}`);
+    await db.exec(`EXECUTE PROCEDURE bot_item_touch(${g}, ${b})`);
+    const taken = (await q(`SELECT solid FROM ents WHERE id = ${g}`))[0].SOLID === 0;
+    await db.exec(`DELETE FROM ents WHERE id = ${g}`);
+    return taken;
+  };
+  const haste = await touch('item_haste'), hasteLeft = (await q(`SELECT haste_finished - (SELECT now_() FROM rdb$database) h FROM ents WHERE id = ${b}`))[0].H;
+  const flight = await touch('item_flight');
+  assert(haste && hasteLeft > 25 && !flight, `a bot takes the haste (${hasteLeft.toFixed(0)} s) and leaves the flight`);
+
+  // a second of regeneration: 15 health; and without it, a point off health over the maximum
+  const think = async (sql) => { await bset(b, `${sql}, health_tick = 0, attack_finished = 1e9`); await db.exec(`EXECUTE PROCEDURE bot_think(${b})`); return (await q(`SELECT health FROM ents WHERE id = ${b}`))[0].HEALTH; };
+  const regen = await think('health = 50, regen_finished = 1e9');
+  const decay = await think('health = 150, regen_finished = 0');
+  assert(regen === 65 && decay === 149, `regeneration: 50 health to ${regen} in a second; 150 counts down to ${decay}`);
+
+  // the battle suit: no splash, half the rest
+  await bset(b, 'health = 100, armor = 0, enviro_finished = 1e9');
+  await db.exec(`EXECUTE PROCEDURE t_damage(${b}, ${pe}, ${pe}, 40, 0, 1, 7)`);
+  const afterSplash = (await q(`SELECT health FROM ents WHERE id = ${b}`))[0].HEALTH;
+  await db.exec(`EXECUTE PROCEDURE t_damage(${b}, ${pe}, ${pe}, 40, 0, 0, 7)`);
+  const afterHit = (await q(`SELECT health FROM ents WHERE id = ${b}`))[0].HEALTH;
+  assert(afterSplash === 100 && afterHit === 80, `the battle suit: splash ignored (${afterSplash}), a hit of 40 takes ${100 - afterHit}`);
+  await bset(b, 'health = 100, enviro_finished = 0, haste_finished = 0, regen_finished = 0, attack_finished = 0');
+}
+
 // a rocket jump (BotTravel_RocketJump): up to a ledge the walk does not reach, from a rocket-jump edge's
 // start, with a target on its end; bot_follow_route drives it each think
 {

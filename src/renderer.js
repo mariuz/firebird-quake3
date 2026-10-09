@@ -11,7 +11,7 @@
 import { md3Normal, ANIM } from './md3.js';
 import { loadImage, powerOfTwo, halve } from './image.js';
 import { SURF } from './bsp.js';
-import { deformVertex, envTexCoords } from './shader.js';
+import { deformVertex, envTexCoords, shellMesh, eyeInModel } from './shader.js';
 
 const LIGHTMAP_SIZE = 128;
 
@@ -783,7 +783,8 @@ export class Renderer {
   /**
    * Draw an MD3 at `origin` with `axis` (9 numbers: the rows forward, left, up — world =
    * origin + x·fwd + y·left + z·up), frame `frame`. `skin(surface)` names the picture of a surface.
-   * light: { ambient, directed, dir } from the light grid (or null for full bright).
+   * light: { ambient, directed, dir } from the light grid (or null for full bright). opts.shell: { look,
+   * time } draws a powerup's shell instead (`shellMesh`).
    */
   drawMd3(mdl, frame, origin, axis, skin, light, opts = {}) {
     const view = this.view;
@@ -806,17 +807,19 @@ export class Renderer {
     const tint = opts.tint ?? null;
     const n3 = this.anorm;
     const blend = opts.blend ?? 'opaque';
+    const shell = opts.shell ?? null, eye = shell ? eyeInModel(view, origin, axis) : null;
     for (const surf of mdl.surfaces) {
       const img = skin ? skin(surf) : null;
       if (img === false) continue;
-      const tex = this.texture(img ?? (surf.shaders[0] || ''));
+      const tex = this.texture(shell ? shell.look.image : img ?? (surf.shaders[0] || ''));
       const nv = surf.numVerts;
       this.aliasRoom(nv);
       const av = this.av;
       const xyz = surf.xyz, base = fr * nv * 4;
+      const sm = shell ? shellMesh(surf, fr, eye, shell.look, shell.time) : null;
       for (let i = 0; i < nv; i++) {
         const p = base + i * 4;
-        const mx = xyz[p] / 64, my = xyz[p + 1] / 64, mz = xyz[p + 2] / 64;
+        const mx = sm ? sm.xyz[i * 3] : xyz[p] / 64, my = sm ? sm.xyz[i * 3 + 1] : xyz[p + 1] / 64, mz = sm ? sm.xyz[i * 3 + 2] : xyz[p + 2] / 64;
         const wx = ox + mx * a0 + my * a3 + mz * a6;
         const wy = oy + mx * a1 + my * a4 + mz * a7;
         const wz = oz + mx * a2 + my * a5 + mz * a8;
@@ -825,8 +828,8 @@ export class Renderer {
         const o = i * 8;
         av[o] = f; av[o + 1] = r; av[o + 2] = u;
         if (f >= near) { av[o + 3] = vcx + (r * sc) / f; av[o + 4] = vcy - (u * sc) / f; av[o + 5] = (1 / f) * depthHack; }
-        let l = amb;
-        if (dir > 0) {
+        let l = sm ? 255 : amb;
+        if (dir > 0 && !sm) {
           md3Normal(xyz[p + 3] & 0xffff, n3, 0);
           const nx = n3[0] * a0 + n3[1] * a3 + n3[2] * a6, ny = n3[0] * a1 + n3[1] * a4 + n3[2] * a7, nz = n3[0] * a2 + n3[1] * a5 + n3[2] * a8;
           const d = nx * ldx + ny * ldy + nz * ldz;
@@ -834,7 +837,7 @@ export class Renderer {
         }
         av[o + 6] = l > 255 ? 255 : l;
       }
-      const tris = surf.tris, st = surf.st;
+      const tris = surf.tris, st = sm ? sm.st : surf.st;
       for (let t = 0; t < surf.numTris; t++) {
         const ia = tris[t * 3], ib = tris[t * 3 + 1], ic = tris[t * 3 + 2];
         const A = ia * 8, B = ib * 8, C = ic * 8;
@@ -954,17 +957,36 @@ export class Renderer {
     const axis = yawAxis(yaw);
     const lf = animFrame(p.anims, legsAnim, time - legsTime);
     const tf = animFrame(p.anims, torsoAnim < 0 ? legsAnim : torsoAnim, time - (torsoAnim < 0 ? legsTime : torsoTime));
-    this.drawMd3(p.lower, lf, origin, axis, sk, light, opts);
+    const pw = opts.powerups ?? 0;
+    this.drawMd3Powered(p.lower, lf, origin, axis, sk, light, opts, pw, time);
     const torso = tagTransform(p.lower, lf, 'tag_torso', origin, axis);
     if (!torso) return;
-    this.drawMd3(p.upper, tf, torso.origin, torso.axis, sk, light, opts);
+    this.drawMd3Powered(p.upper, tf, torso.origin, torso.axis, sk, light, opts, pw, time);
     const head = tagTransform(p.upper, tf, 'tag_head', torso.origin, torso.axis);
-    if (head) this.drawMd3(p.head, 0, head.origin, head.axis, sk, light, opts);
+    if (head) this.drawMd3Powered(p.head, 0, head.origin, head.axis, sk, light, opts, pw, time);
     if (weaponBit) {
       const wm = this.weaponModel(weaponBit);
       const hand = tagTransform(p.upper, tf, 'tag_weapon', torso.origin, torso.axis);
-      if (wm && hand) this.drawMd3(wm, 0, hand.origin, hand.axis, null, light, opts);
+      if (wm && hand) this.drawMd3Powered(wm, 0, hand.origin, hand.axis, null, light, opts, pw, time, true);
     }
+  }
+
+  /**
+   * CG_AddRefEntityWithPowerups (a player's parts) and CG_AddWeaponWithPowerups (a gun): an invisible one is
+   * only the invisibility shell; else the model, then over it the quad's shell, a tenth of each second the
+   * regeneration's, and the battle suit's (a gun takes the weapon versions and no regeneration). pw: the
+   * EF bits, 256 invisible, 512 quad, 1024 regeneration, 4096 battle suit.
+   */
+  drawMd3Powered(mdl, frame, origin, axis, skin, light, opts, pw, time, gun = false) {
+    const shell = (name) => {
+      const look = this.look(name);
+      if (look?.image) this.drawMd3(mdl, frame, origin, axis, skin, null, { ...opts, blend: 'add', shell: { look, time } });
+    };
+    if (pw & 256) { shell('powerups/invisibility'); return; }
+    this.drawMd3(mdl, frame, origin, axis, skin, light, opts);
+    if (pw & 512) shell(gun ? 'powerups/quadWeapon' : 'powerups/quad');
+    if (!gun && pw & 1024 && Math.floor(time * 10) % 10 === 1) shell('powerups/regen');
+    if (pw & 4096) shell(gun ? 'powerups/battleWeapon' : 'powerups/battleSuit');
   }
 
   weaponModel(bit) {

@@ -145,6 +145,50 @@ export function envTexCoords(px, py, pz, nx, ny, nz, ex, ey, ez) {
   return [0.5 + (ny * 2 * d - vy) * 0.5, 0.5 - (nz * 2 * d - vz) * 0.5];
 }
 
+/**
+ * A powerup's shell over an MD3 surface (CG_AddRefEntityWithPowerups' customShader): each vertex moved out
+ * along its normal by the shader's deforms, its texture the eye reflected in it (tcGen environment) through
+ * the stage's tcMods turb, rotate and scroll, in that order (RB_CalcTurbulentTexCoords,
+ * RB_CalcRotateTexCoords, RB_CalcScrollTexCoords). All in the model's frame: `eye` is the view origin there.
+ * Returns { xyz, st } (three and two floats a vertex).
+ */
+export function shellMesh(surf, frame, eye, look, time) {
+  const nv = surf.numVerts, base = frame * nv * 4, src = surf.xyz;
+  const xyz = new Float32Array(nv * 3), st = new Float32Array(nv * 2);
+  const k = 2 * Math.PI / 255, TAU = 2 * Math.PI;
+  let rc = 1, rs = 0;
+  if (look.rotate) { const a = (-look.rotate * time * Math.PI) / 180; rc = Math.cos(a); rs = Math.sin(a); }
+  const ss = look.scroll ? look.scroll[0] * time - Math.floor(look.scroll[0] * time) : 0;
+  const ts = look.scroll ? look.scroll[1] * time - Math.floor(look.scroll[1] * time) : 0;
+  for (let i = 0; i < nv; i++) {
+    const p = base + i * 4;
+    const packed = src[p + 3] & 0xffff, lat = ((packed >> 8) & 255) * k, lng = (packed & 255) * k;
+    const nx = Math.cos(lat) * Math.sin(lng), ny = Math.sin(lat) * Math.sin(lng), nz = Math.cos(lng);
+    let x = src[p] / 64, y = src[p + 1] / 64, z = src[p + 2] / 64;
+    if (look.deforms) [x, y, z] = deformVertex(look.deforms, x, y, z, nx, ny, nz, time);
+    let [s, t] = envTexCoords(x, y, z, nx, ny, nz, eye[0], eye[1], eye[2]);
+    if (look.turb) {
+      const amp = look.turb[1], now = look.turb[2] + time * look.turb[3];
+      s += Math.sin(((x + z) / 128 * 0.125 + now) * TAU) * amp;
+      t += Math.sin((y / 128 * 0.125 + now) * TAU) * amp;
+    }
+    if (look.rotate) {
+      const s2 = s * rc - t * rs + 0.5 - 0.5 * rc + 0.5 * rs;
+      t = s * rs + t * rc + 0.5 - 0.5 * rs - 0.5 * rc;
+      s = s2;
+    }
+    xyz[i * 3] = x; xyz[i * 3 + 1] = y; xyz[i * 3 + 2] = z;
+    st[i * 2] = s + ss; st[i * 2 + 1] = t + ts;
+  }
+  return { xyz, st };
+}
+
+/** The eye in a model's frame (axis: the rows forward, left, up) */
+export function eyeInModel(view, origin, axis) {
+  const ex = view.x - origin[0], ey = view.y - origin[1], ez = view.z - origin[2];
+  return [ex * axis[0] + ey * axis[1] + ez * axis[2], ex * axis[3] + ey * axis[4] + ez * axis[5], ex * axis[6] + ey * axis[7] + ez * axis[8]];
+}
+
 /** Every scripts/*.shader of the pak, parsed. */
 export function loadShaders(pak) {
   const shaders = new Map();

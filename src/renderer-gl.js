@@ -10,6 +10,7 @@
 
 import { Renderer, yawAxis, anglesAxis, tagTransform, animFrame, autospriteQuads, fogDefs } from './renderer.js';
 import { loadImage, powerOfTwo } from './image.js';
+import { shellMesh, eyeInModel } from './shader.js';
 
 const LIGHTMAP_SIZE = 128;
 
@@ -695,6 +696,19 @@ export class GLRenderer {
     return out;
   }
 
+  /** A powerup's shell as the model program's vertices: the moved positions, an up normal (it is drawn full
+   *  bright), the reflected texture coordinates */
+  shellBuffer(surf, fr, eye, shell) {
+    const { xyz, st } = shellMesh(surf, fr, eye, shell.look, shell.time);
+    const out = new Float32Array(surf.numVerts * 8);
+    for (let i = 0; i < surf.numVerts; i++) {
+      const o = i * 8;
+      out[o] = xyz[i * 3]; out[o + 1] = xyz[i * 3 + 1]; out[o + 2] = xyz[i * 3 + 2];
+      out[o + 5] = 1; out[o + 6] = st[i * 2]; out[o + 7] = st[i * 2 + 1];
+    }
+    return out;
+  }
+
   drawMd3(mdl, frame, origin, axis, skin, light, opts = {}) {
     const gl = this.gl, u = this.model.u;
     const fr = Math.min(Math.max(frame | 0, 0), mdl.numFrames - 1);
@@ -723,13 +737,14 @@ export class GLRenderer {
     gl.enableVertexAttribArray(2); gl.vertexAttribPointer(2, 2, gl.FLOAT, false, 32, 24);
     gl.disableVertexAttribArray(3);
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.dynIbo);
+    const shell = opts.shell ?? null, eye = shell ? eyeInModel(this.view, origin, axis) : null;
     mdl.surfaces.forEach((surf, si) => {
       const img = skin ? skin(surf) : null;
       if (img === false) return;
-      const tex = this.texture(img ?? (surf.shaders[0] || ''));
+      const tex = this.texture(shell ? shell.look.image : img ?? (surf.shaders[0] || ''));
       gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, tex.tex);
       gl.uniform1i(u.uAlphaTest, tex.hasAlpha && blend === 'opaque' ? 1 : 0);
-      gl.bufferData(gl.ARRAY_BUFFER, this.mesh(mdl, si, fr), gl.DYNAMIC_DRAW);
+      gl.bufferData(gl.ARRAY_BUFFER, shell ? this.shellBuffer(surf, fr, eye, shell) : this.mesh(mdl, si, fr), gl.DYNAMIC_DRAW);
       if (!surf.tris32) surf.tris32 = new Uint32Array(surf.tris);
       gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, surf.tris32, gl.DYNAMIC_DRAW);
       gl.drawElements(gl.TRIANGLES, surf.numTris * 3, gl.UNSIGNED_INT, 0);
@@ -858,6 +873,6 @@ export class GLRenderer {
 }
 
 // the player parts, the weapon models and the particle bookkeeping are the software painter's
-for (const m of ['drawPlayer', 'weaponModel', 'spawnParticles', 'runParticles']) GLRenderer.prototype[m] = Renderer.prototype[m];
+for (const m of ['drawPlayer', 'drawMd3Powered', 'weaponModel', 'spawnParticles', 'runParticles']) GLRenderer.prototype[m] = Renderer.prototype[m];
 
 export { yawAxis, anglesAxis, tagTransform, animFrame };

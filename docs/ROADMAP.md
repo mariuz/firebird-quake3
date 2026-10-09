@@ -30,7 +30,7 @@ has no ladders.
 | **`shooter_*`, `target_laser`** | not spawned (none in the demo maps) |
 | **Grappling hook** | not in Quake III's arenas; nothing to do |
 | **Holdables** | medkit and the personal teleporter are picked up and used; the teleporter's destination is a random spawn, as in the game |
-| **Powerups** | quad, haste, invisibility, regeneration, battle suit, flight are here; invisibility is not drawn as the invisible shader, haste leaves no trail |
+| **Powerups** | quad, haste, invisibility, regeneration, battle suit, flight are here, for the bots too but flight (they would float off); the red team's quad shell in team play (`redQuadShader`) and the powerups' sounds (the regeneration's pulse is played, the flight's loop and the battle suit's hum are not); a dead player does not drop its powerups (`TossClientItems`) |
 | **Corpses** | removed after 8 s (gibs after 5 to 8); Quake III sinks them into the floor first. Gibs leave blood on the walls; a bleeding player does not (`CG_Bleed` leaves no mark either) |
 | **Persistent stats** | accuracy, per-weapon kills, the end-of-match stats screen |
 
@@ -150,7 +150,8 @@ and `fogparms`: q3dm7's red pit and orange ground fog, q3tourney2's hell fogs) a
 `R_FogFactor` have them; the portal (q3dm7's teleporter shows its camera's view, `R_MirrorViewBySurface`, fogged
 over in 256 units by `alphaGen portal`); the blob shadow under every player and under the player itself
 (`CG_PlayerShadow`, `cg_shadows 1`); the rail's core and rings (`cg_oldRail 1`) fading over 400 ms and the lightning
-gun's four crossed ribbons;
+gun's four crossed ribbons; the powerups' shells on players and on our own gun (quad, regeneration, battle suit,
+invisibility) and the haste's smoke;
 lightmaps with the overbright
 shift, the light grid for models, sky cloud layers, blend/add/filter surfaces, scroll/scale/turb
 tcMods, animMap, two-sided surfaces; the software and WebGL painters; positional sound, loops,
