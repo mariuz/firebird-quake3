@@ -953,6 +953,7 @@ export class Renderer {
     const p = this.res.players.get(pm) ?? this.res.players.values().next().value;
     if (!p) return;
     const skin = p.skins.get(skinName) ?? p.skins.get('default') ?? new Map();
+    if (skinName === 'red') opts = { ...opts, red: true };   // (only the red team wears the red skin)
     const sk = (surf) => { const img = skin.get(surf.name.toLowerCase()); return img && img !== 'nodraw' ? img : surf.shaders[0] || null; };
     const axis = yawAxis(yaw);
     const lf = animFrame(p.anims, legsAnim, time - legsTime);
@@ -975,7 +976,8 @@ export class Renderer {
    * CG_AddRefEntityWithPowerups (a player's parts) and CG_AddWeaponWithPowerups (a gun): an invisible one is
    * only the invisibility shell; else the model, then over it the quad's shell, a tenth of each second the
    * regeneration's, and the battle suit's (a gun takes the weapon versions and no regeneration). pw: the
-   * EF bits, 256 invisible, 512 quad, 1024 regeneration, 4096 battle suit.
+   * EF bits, 256 invisible, 512 quad, 1024 regeneration, 4096 battle suit. A red team player's quad is
+   * redQuadShader, which Quake III registers as "powerups/blueflag" (its map is red); `opts.red` says so.
    */
   drawMd3Powered(mdl, frame, origin, axis, skin, light, opts, pw, time, gun = false) {
     const shell = (name) => {
@@ -984,7 +986,7 @@ export class Renderer {
     };
     if (pw & 256) { shell('powerups/invisibility'); return; }
     this.drawMd3(mdl, frame, origin, axis, skin, light, opts);
-    if (pw & 512) shell(gun ? 'powerups/quadWeapon' : 'powerups/quad');
+    if (pw & 512) shell(gun ? 'powerups/quadWeapon' : opts.red ? 'powerups/blueflag' : 'powerups/quad');
     if (!gun && pw & 1024 && Math.floor(time * 10) % 10 === 1) shell('powerups/regen');
     if (pw & 4096) shell(gun ? 'powerups/battleWeapon' : 'powerups/battleSuit');
   }

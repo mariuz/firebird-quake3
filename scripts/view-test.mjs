@@ -335,15 +335,17 @@ const markBsp = {
     `the quad's shell: 3 out (z ${a.xyz[2]}), the eye's reflection at (0.5, 0) (${a.st[0].toFixed(2)}, ${a.st[1].toFixed(2)})`);
   assert(near(b.st[0], 0.25) && near(b.st[1], 0.1 + 0.5 - 0.5 * Math.cos(Math.PI / 6)), `a second later, turned 30 degrees and scrolled (${b.st[0].toFixed(3)}, ${b.st[1].toFixed(3)})`);
   // which passes each powerup draws, on a body and on a gun
-  const passes = (pw, time, gun) => {
+  const passes = (pw, time, gun, opts = {}) => {
     const r = Object.create(Renderer.prototype), out = [];
     r.look = (name) => ({ image: name });
     r.drawMd3 = (m, f, o, ax, sk, light, opts) => out.push(opts.shell ? opts.shell.look.image.replace('powerups/', '') : 'model');
-    r.drawMd3Powered(null, 0, [0, 0, 0], null, null, null, {}, pw, time, gun);
+    r.drawMd3Powered(null, 0, [0, 0, 0], null, null, null, opts, pw, time, gun);
     return out.join(' ');
   };
   assert(passes(256, 10, false) === 'invisibility' && passes(256, 10, true) === 'invisibility', `invisible: the shell alone (${passes(256, 10, false)})`);
   assert(passes(512 | 4096, 10, false) === 'model quad battleSuit' && passes(512 | 4096, 10, true) === 'model quadWeapon battleWeapon', `the quad and the battle suit over the model (${passes(512 | 4096, 10, true)} on a gun)`);
+  assert(passes(512, 10, false, { red: true }) === 'model blueflag' && passes(512, 10, true, { red: true }) === 'model quadWeapon',
+    `the red team's quad is redQuadShader, "powerups/blueflag" (${passes(512, 10, false, { red: true })}); its gun keeps the quad's`);
   assert(passes(1024, 10.15, false) === 'model regen' && passes(1024, 10.25, false) === 'model' && passes(1024, 10.15, true) === 'model', 'regeneration flashes a tenth of each second, not on the gun');
   // the haste's smoke: a puff every 100 ms under the feet
   const st = new FrameState();

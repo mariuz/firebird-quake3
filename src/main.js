@@ -343,6 +343,8 @@ async function frame() {
     const listener = { x: view.PX, y: view.PY, z: view.VIEW_Z, yaw: view.YAW };
     if (fr.sounds.length) { lastSoundId = fr.sounds[fr.sounds.length - 1][0]; audio.playEvents(fr.sounds, listener); }
     audio.update(listener);
+    // CG_Player's flight loop while the flight powerup runs (the bots never take it)
+    audio.setLoop('flight', 'sound/items/flight.wav', !last.DEAD && last.FLIGHT > 0);
     audio.setLoop('weapon', last.WEAPON === 32 ? 'sound/weapons/lightning/lg_hum.wav' : last.WEAPON === 64 ? 'sound/weapons/railgun/rg_hum.wav' : null, !last.DEAD && (last.WEAPON === 32 || last.WEAPON === 64));
     if (fr.fx.length) { lastFxId = fr.fx[fr.fx.length - 1][0]; state.handleFx(renderer, fr.fx, view.TIME_, map.bsp); }
     if (ticked && (scoreboard || last.MATCH_OVER) && frameNo % 10 === 0) scores = (await db.query('SELECT * FROM scoreboard', [], arr)).rows;

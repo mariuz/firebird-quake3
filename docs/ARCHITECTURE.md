@@ -802,6 +802,9 @@ the gun's from our own timers. `drawMd3Powered` is `CG_AddRefEntityWithPowerups`
 a player and `CG_AddWeaponWithPowerups` for a gun: an invisible one is only the
 `powerups/invisibility` shell; else the model, then `powerups/quad`, `powerups/regen` for a tenth of
 each second (not on a gun) and `powerups/battleSuit` over it (`quadWeapon`, `battleWeapon` on a gun).
+A red team player's quad is `redQuadShader`, registered as `powerups/blueflag` (whose map is red),
+told by the red skin. The flight's loop (`sound/items/flight.wav`) plays in `src/main.js` while the
+tic says our flight runs.
 A shell is the model drawn again, additive and full bright, through `shellMesh`: each vertex moved
 out along its normal by the shader's `deformVertexes wave` (3 units for the quad on a body, 0.5 on
 a gun), its texture coordinates the eye reflected in it (`tcGen environment` in the model's frame)
