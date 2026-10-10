@@ -877,7 +877,10 @@ places, darkened by the distance's fog, under the portal's own stages. The eye i
 offset from the surface (the entity's origin put on the face's plane) carried into the camera's frame, so
 it stands behind the camera as far as the viewer stands before the portal, and what lies behind the
 camera's plane is cut off (the portal plane, the camera's looking direction through it), as for mirrors
-below.
+below. The camera turns about its forward axis as `R_GetPortalOrientations` turns it (`cameraRoll`, by the
+game time): it sways 4 degrees either side of its roll (`sin(ms × 0.003)`), turns at 25 or 75 degrees a
+second with spawnflags 1 or 2, and holds its roll with 4 ("noswing"); the roll is kept as the byte
+`locateCamera` sends.
 
 *Mirrors.* A `misc_portal_surface` with no target is a mirror (OpenArena's oa_dm1 has one on a wall, oa_dm2
 mirror floors). Each portal face belongs to the surface entity within 64 units of its plane, the nearest

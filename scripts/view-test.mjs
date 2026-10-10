@@ -6,7 +6,7 @@
 //   node scripts/view-test.mjs
 
 import fs from 'node:fs';
-import { FrameState, firstPersonView, zoomedFov, fovY, mapTorsoToWeaponFrame, viewTorsoFrame, underwaterFov, sceneLights, litByDlights, MAX_DLIGHTS, drawRail, drawBolt, findPortals, portalView, mirrorView, portalFade, perpendicular, floorBelow, drawShadows } from '../src/scene.js';
+import { FrameState, firstPersonView, zoomedFov, fovY, mapTorsoToWeaponFrame, viewTorsoFrame, underwaterFov, sceneLights, litByDlights, MAX_DLIGHTS, drawRail, drawBolt, findPortals, portalView, mirrorView, portalFade, cameraRoll, perpendicular, floorBelow, drawShadows } from '../src/scene.js';
 import { Renderer, tagTransform, autospriteQuads, fogST, fogFactor, md3Lod, entityFog, clipFace } from '../src/renderer.js';
 import { parseDeform, waveValue, deformVertex, envTexCoords, parseShaderScript, surfaceLook, shellMesh, eyeInModel, stageBrightness } from '../src/shader.js';
 import { Md3, parseAnimationCfg, parseSkin } from '../src/md3.js';
@@ -303,6 +303,15 @@ const markBsp = {
   const rolled = findPortals({ ...bsp, entities: bsp.entities.map((e) => (e.classname === 'misc_portal_camera' ? { ...e, roll: '180' } : e)) }, (n) => ({ portal: n === 'portal' }));
   const upside = portalView(rolled[0], { x: 0, y: 100, z: 0, yaw: 270, pitch: 0, fov: 90 });
   assert(Math.abs(upside.up[2] + 1) < 1e-6 && Math.abs(Math.abs(upside.roll) - 180) < 1e-6, 'a camera rolled 180 turns the view over');
+  // R_GetPortalOrientations: a camera sways 4 degrees about its roll (sin(ms × 0.003)), turns at 25 or 75 a second
+  // with spawnflags 1 or 2, and holds still with 4
+  const cam = (sf) => findPortals({ ...bsp, entities: bsp.entities.map((e) => (e.classname === 'misc_portal_camera' ? { ...e, roll: '90', spawnflags: String(sf) } : e)) }, (n) => ({ portal: n === 'portal' }))[0];
+  const peak = Math.PI / 2 / 3;   // seconds to sin's top
+  assert(Math.abs(cameraRoll(cam(0).camera, peak) - 94) < 1e-9 && Math.abs(cameraRoll(cam(0).camera, 3 * peak) - 86) < 1e-9 && cameraRoll(cam(1).camera, 2) === 50
+    && cameraRoll(cam(2).camera, 2) === 150 && cameraRoll(cam(4).camera, peak) === 90,
+    'a portal camera swings 4 degrees about its roll, turns at 25 or 75 degrees a second, or holds its roll ("noswing")');
+  const swung = portalView(cam(0), { x: 0, y: 100, z: 0, yaw: 270, pitch: 0, fov: 90 }, peak);
+  assert(Math.abs(Math.abs(swung.roll) - 94) < 1e-6, `the swing turns the view through the portal (${swung.roll.toFixed(1)})`);
 
   // a mirror: the same surface with no target (SP_misc_portal_surface); the eye and its axes reflected in its
   // plane, the picture read right to left, what lies behind the plane cut off, the PVS at the surface entity

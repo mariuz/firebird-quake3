@@ -421,7 +421,7 @@ async function frame() {
     t = performance.now();
     // the gun is put away past half-way into the zoom: drawn with the zoomed view it would fill the screen
     const noWeapon = curFov < (settings.fov + ZOOM_FOV) / 2;
-    const portal = await portalFrame(fr, fpv);
+    const portal = await portalFrame(fr, fpv, view.TIME_);
     const tint = drawScene(renderer, hud, res, map.bsp, view, fr, { fov: curFov, sqlProjected: fr.sqlProjected, state, dt, scoreboard, scores, view: fpv, noWeapon, portal });
     renderer.present(tint);
     perf.draw = performance.now() - t;
@@ -445,7 +445,7 @@ function updateStats(ticked) {
 }
 
 /** A portal or a mirror on screen and near enough to see through: what its camera sees (FRAME_PORTAL), as drawScene takes it */
-async function portalFrame(fr, fpv) {
+async function portalFrame(fr, fpv, time) {
   if (!map.portals?.length || settings.renderer === 'sql') return null;
   // the nearest on screen (one view a frame)
   const dist = (p) => { const c = p.center ?? p.origin; return Math.hypot(fpv.x - c[0], fpv.y - c[1], fpv.z - c[2]); };
@@ -453,7 +453,7 @@ async function portalFrame(fr, fpv) {
     if (!fr.faces.some((f) => p.faces.has(f[0]))) continue;
     const fade = portalFade(p, fpv);
     if (fade <= 0) return { faces: p.faces, fade: 0, frame: null };
-    const v = (p.mirror ? mirrorView : portalView)(p, { ...fpv, fov: curFov });
+    const v = (p.mirror ? mirrorView : portalView)(p, { ...fpv, fov: curFov }, time);
     const rows = (await db.query(`SELECT * FROM frame_portal(${v.x}, ${v.y}, ${v.z}, ${v.fwd.join(', ')}, ${v.right.join(', ')}, ${v.up.join(', ')}, ${curFov}, ${v.pvs.join(', ')}, ${(v.clip ?? [0, 0, 0, 0]).join(', ')})`, [], arr)).rows;
     const frame = portalState.parse(rows);
     return { faces: p.faces, fade, frame, view: v, brushAngles: portalState.brushAngles };

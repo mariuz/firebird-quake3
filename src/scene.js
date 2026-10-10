@@ -83,11 +83,13 @@ export function findPortals(bsp, look) {
     // the camera entity's axis (CG_Misc portal: the direction, its perpendicular negated, their cross), then
     // R_GetPortalOrientations turns it about the vertical (forward and left negated) and rolls it
     const e1 = perpendicular(dir).map((v) => -v), e2 = cross3(dir, e1);
-    const fwd = dir.map((v) => -v);
-    let left = e1.map((v) => -v), up = e2;
-    const roll = Number(cam.roll) || 0;
-    if (roll) { left = rotateAround(fwd, left, roll); up = cross3(fwd, left); }
-    out.push({ faces: new Set(faces.map((p) => p.i)), origin: o, plane: [faces[0].n, faces[0].d], center: centre(faces), camera: { origin: co, axis: [fwd, left, up] }, range: faces[0].range });
+    const fwd = dir.map((v) => -v), left = e1.map((v) => -v), up = e2;
+    // locateCamera: the roll as a byte (clientNum), the rotation speed by spawnflags 1 (25 a second) and 2 (75),
+    // and a camera swings about its roll unless spawnflags 4 ("noswing")
+    const sf = Number(cam.spawnflags) || 0;
+    const roll = ((Math.trunc(((Number(cam.roll) || 0) / 360) * 256) & 255) / 256) * 360;
+    const camera = { origin: co, axis: [fwd, left, up], roll, speed: sf & 1 ? 25 : sf & 2 ? 75 : 0, swing: !(sf & 4) };
+    out.push({ faces: new Set(faces.map((p) => p.i)), origin: o, plane: [faces[0].n, faces[0].d], center: centre(faces), camera, range: faces[0].range });
   }
   return out;
 }
@@ -97,11 +99,11 @@ export function findPortals(bsp, look) {
  * camera's (R_MirrorPoint, R_MirrorVector). Returns the view as the painters take it, with the clip plane
  * at the camera and the PVS at the camera.
  */
-export function portalView(portal, view) {
+export function portalView(portal, view, time = 0) {
   let [n, d] = portal.plane;
   const eye = [view.x, view.y, view.z];
   if (dot3(n, eye) - d < 0) { n = n.map((v) => -v); d = -d; }   // the side the viewer is on is the front
-  const s1 = perpendicular(n), s2 = cross3(n, s1), S = [n, s1, s2], C = portal.camera.axis;
+  const s1 = perpendicular(n), s2 = cross3(n, s1), S = [n, s1, s2], C = cameraAxis(portal.camera, time);
   const carry = (v) => [0, 1, 2].map((k) => dot3(v, S[0]) * C[0][k] + dot3(v, S[1]) * C[1][k] + dot3(v, S[2]) * C[2][k]);
   const yaw = (view.yaw * Math.PI) / 180, pitch = (view.pitch * Math.PI) / 180;
   const f = [Math.cos(pitch) * Math.cos(yaw), Math.cos(pitch) * Math.sin(yaw), -Math.sin(pitch)];
@@ -117,6 +119,23 @@ export function portalView(portal, view) {
     ...viewFromAxes([c[0] + off[0], c[1] + off[1], c[2] + off[2]], F, L, U, view.fov),
     clip: [look[0], look[1], look[2], dot3(look, c)], pvs: c,
   };
+}
+
+/**
+ * R_GetPortalOrientations' turn of the camera about its forward axis, in degrees, at a time in seconds: a
+ * rotating camera turns at its speed, a swinging one sways 4 degrees either side of its roll (sin of the
+ * time in ms × 0.003), a still one keeps its roll
+ */
+export function cameraRoll(camera, time) {
+  if (!camera.swing) return camera.roll ?? 0;
+  if (camera.speed) return time * camera.speed;
+  return (camera.roll ?? 0) + Math.sin(time * 1000 * 0.003) * 4;
+}
+function cameraAxis(camera, time) {
+  const [fwd, left0] = camera.axis, r = cameraRoll(camera, time);
+  if (!r) return camera.axis;
+  const left = rotateAround(fwd, left0, r);
+  return [fwd, left, cross3(fwd, left)];
 }
 
 /**
