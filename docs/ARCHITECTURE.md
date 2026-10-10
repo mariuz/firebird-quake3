@@ -98,7 +98,7 @@ those shaders' stages draw and its sky box, the sounds and music its entities pl
 note of the source. A texture OpenArena draws plainly but the demo scripts (`concretefloor1`) gets a
 plain shader there, so the demo's does not take its place. `index.json` lists them (map, long name,
 pack, file, size) for the Arena menu; `scripts/maps-test.mjs` loads each on top of the demo pak and
-checks its pictures, its spawns and a second of play. Three pictures are missing from OpenArena itself
+checks its pictures, its spawns and a second of play, and where a map has them its `target_push`es and shooters. Three pictures are missing from OpenArena itself
 (`e6trim_basic128`, `moss2`, `e8_mtlwall3`); a sky box named `full` is none (ioq3 draws no box then).
 The maps keep the demo's items, weapons and player models.
 
@@ -430,7 +430,13 @@ auto-spawned `door_trigger` box (`Think_SpawnNewDoorTrigger`), `func_plat` with 
 `func_rotating`, `func_static`, `func_timer`, `trigger_multiple`/`once`/`hurt`/`push`/`teleport`
 (a jump pad computes its launch velocity from its `target_position` the way `AimAtTarget` does and
 stores it in `p1x..p1z`), `target_speaker`, `target_print`, `target_give`, `target_kill`,
-`target_delay`, `target_relay`, `target_teleporter`, `target_remove_powerups`, `target_score`, the
+`target_delay`, `target_relay`, `target_teleporter`, `target_remove_powerups`, `target_score`,
+`target_push` (`push_use`: the activator takes its velocity, its movedir × speed or `AimAtTarget`'s
+throw at its target, and the wind or the pad sounds at most every 1.5 s; OpenArena's jump pads aim at
+them), `shooter_rocket`/`_grenade`/`_plasma` (`shooter_use`: a missile toward the target's current
+origin or along the movedir, spread by `random` degrees on two axes square to it; the shooter owns
+it, so `killed` makes a kill by it, as by any entity that is not a player, the world's: "died", a frag
+lost, the bot's suicide chat), the
 items, `info_player_deathmatch` (`select_spawn` picks one not within 128 units of anyone, as
 `SelectRandomDeathmatchSpawnPoint` does); `use_targets` and `trigger_fire` are `G_UseTargets` with
 delays and the `wait`/`random` timing.

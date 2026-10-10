@@ -27,7 +27,7 @@ has no ladders.
 | --- | --- |
 | **Gametypes** | free-for-all, tournament and team deathmatch. Capture the flag (`team_CTF_*`, flags, `target_score`, the team overlay) is absent; the demo pak has no CTF maps, the full pak does. Teammates have no friend marker over their heads (`cg_drawFriend`: the demo pak lacks `sprites/friend1.tga`) |
 | **`misc_model`** | skipped at spawn (q3map bakes the demo's into the BSP); the portal entities are read by the page from the map's entities, not spawned |
-| **`shooter_*`, `target_laser`** | not spawned (none in the demo maps) |
+| **`target_laser`** | not spawned (none in the demo maps nor the hosted arenas); `shooter_*` and `target_push` are here (OpenArena's oa_dm2 fires its shooters) |
 | **Grappling hook** | not in Quake III's arenas; nothing to do |
 | **Holdables** | medkit and the personal teleporter are picked up and used; the teleporter's destination is a random spawn, as in the game |
 | **Powerups** | quad, haste, invisibility, regeneration, battle suit, flight are here, for the bots too but flight (they would float off); the powerups' sounds are the regeneration's pulse, the flight's loop, the quad's fire, the battle suit's hit and the last five seconds' ticks; the battle suit's hum is not played. The dead drop the gun in hand and their powerups (`toss_client_items`) |

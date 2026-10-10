@@ -33,6 +33,46 @@ const pak = new PakSet([demo]);
 const res = await loadResources(db, pak);
 const q = async (s) => (await db.query(s)).rows;
 
+// target_push (Use_target_push): the activator takes its velocity, and its sound plays once in 1.5 s
+async function targetPushes(map) {
+  const pushes = await q("SELECT e.id, e.p1x, e.p1y, e.p1z, e.noise1 FROM ents e WHERE e.classname = 'target_push'");
+  if (!pushes.length) return;
+  const pe = (await q('SELECT player_ent() pe FROM rdb$database'))[0].PE;
+  await db.exec('UPDATE player SET flight_finished = 0 WHERE id = 1');
+  let ok = 0;
+  for (const p of pushes) {
+    await db.exec(`UPDATE ents SET fly_sound_time = 0 WHERE id = ${pe}`);
+    await db.exec('DELETE FROM sound_events');
+    await db.exec(`EXECUTE PROCEDURE push_use(${p.ID}, ${pe})`);
+    await db.exec(`EXECUTE PROCEDURE push_use(${p.ID}, ${pe})`);
+    const [v] = await q(`SELECT vx, vy, vz FROM ents WHERE id = ${pe}`);
+    const snds = (await q(`SELECT COUNT(*) n FROM sound_events WHERE snd = '${p.NOISE1}'`))[0].N;
+    if (Math.hypot(v.VX - p.P1X, v.VY - p.P1Y, v.VZ - p.P1Z) < 1e-6 && Math.hypot(p.P1X, p.P1Y, p.P1Z) > 0 && snds === 1) ok++;
+  }
+  assert(ok === pushes.length, `${map}: ${ok} of ${pushes.length} target_push give their activator their velocity, the sound once`);
+}
+
+// shooter_* (Use_Shooter): a missile of its kind toward its target; a kill by one is the world's ("died", a frag lost)
+async function shooters(map) {
+  const sh = await q("SELECT e.id, e.classname, e.weapon, e.target FROM ents e WHERE e.classname LIKE 'shooter%'");
+  if (!sh.length) return;
+  let ok = 0;
+  for (const s of sh) {
+    await db.exec(`EXECUTE PROCEDURE shooter_use(${s.ID})`);
+    const want = { 8: 'grenade', 16: 'rocket', 128: 'plasma' }[s.WEAPON];
+    const [mis] = await q(`SELECT e.vx, e.vy, e.vz, e.x, e.y, e.z FROM ents e WHERE e.owner_id = ${s.ID} AND e.classname = '${want}'`);
+    const [tg] = await q(`SELECT e.x, e.y, e.z FROM ents e WHERE e.targetname = '${s.TARGET}'`);
+    // the spread is at most 45 degrees a side here: the shot heads more toward the target than away
+    if (mis && tg && (tg.X - mis.X) * mis.VX + (tg.Y - mis.Y) * mis.VY + (tg.Z - mis.Z) * mis.VZ > 0) ok++;
+  }
+  assert(ok === sh.length, `${map}: ${ok} of ${sh.length} shooters fire a missile of their kind toward their target`);
+  const [b] = await q("SELECT FIRST 1 e.id, e.frags FROM ents e WHERE e.classname = 'bot'");
+  await db.exec(`EXECUTE PROCEDURE t_damage(${b.ID}, ${sh[0].ID}, ${sh[0].ID}, 1000, 0, 8, 7)`);
+  const [a] = await q(`SELECT e.frags, e.health FROM ents e WHERE e.id = ${b.ID}`);
+  const [msg] = await q("SELECT FIRST 1 msg FROM messages WHERE msg NOT CONTAINING ':' ORDER BY id DESC");   // not the bot's chat after it
+  assert(a.HEALTH <= 0 && a.FRAGS === b.FRAGS - 1 && /\bdied\.$/.test(msg?.MSG ?? ''), `${map}: a shooter's kill is the world's: "${msg?.MSG}", frags ${b.FRAGS} → ${a.FRAGS}`);
+}
+
 for (const m of index) {
   const pk3 = new Pk3(fs.readFileSync(path.join(dir, m.file)).buffer);
   pk3.label = m.pack;
@@ -56,6 +96,8 @@ for (const m of index) {
     const items = (await q("SELECT COUNT(*) n FROM ents WHERE classname = 'item'"))[0].N;
     assert(missing.size === 0 && alive === 2 && items > 0 && pak.mapSource(m.map) === m.pack,
       `${m.map} (${m.pack}, "${m.title}"): ${bsp.faces.length} faces, ${items} items, ${alive} players in the world, ${(performance.now() - t).toFixed(0)} ms${missing.size ? `; missing ${[...missing].slice(0, 4).join(', ')}` : ''}`);
+    await targetPushes(m.map);
+    await shooters(m.map);
   } catch (e) {
     assert(false, `${m.map}: ${e.message.split('\n')[0]}`);
   }

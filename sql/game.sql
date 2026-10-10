@@ -21,6 +21,10 @@ CREATE OR ALTER PROCEDURE trigger_fire (eid INTEGER, activator INTEGER) AS BEGIN
 CREATE OR ALTER PROCEDURE exit_level AS BEGIN END^
 CREATE OR ALTER PROCEDURE button_fire (eid INTEGER, activator INTEGER) AS BEGIN END^
 CREATE OR ALTER PROCEDURE train_next (eid INTEGER) AS BEGIN END^
+CREATE OR ALTER PROCEDURE launch_missile (owner INTEGER, cls VARCHAR(40), model VARCHAR(64), ox DOUBLE PRECISION, oy DOUBLE PRECISION, oz DOUBLE PRECISION,
+  dx DOUBLE PRECISION, dy DOUBLE PRECISION, dz DOUBLE PRECISION, spd DOUBLE PRECISION, dmg INTEGER, splash INTEGER, radius DOUBLE PRECISION, effect INTEGER, life DOUBLE PRECISION) AS BEGIN END^
+CREATE OR ALTER PROCEDURE launch_grenade (owner INTEGER, ox DOUBLE PRECISION, oy DOUBLE PRECISION, oz DOUBLE PRECISION,
+  dx DOUBLE PRECISION, dy DOUBLE PRECISION, dz DOUBLE PRECISION) AS BEGIN END^
 CREATE OR ALTER PROCEDURE t_radius_damage (inflictor INTEGER, attacker INTEGER, damage DOUBLE PRECISION, ignore INTEGER, radius DOUBLE PRECISION, mod_ SMALLINT) AS BEGIN END^
 CREATE OR ALTER PROCEDURE bot_think (eid INTEGER) AS BEGIN END^
 CREATE OR ALTER PROCEDURE player_fire (btn SMALLINT) AS BEGIN END^
@@ -589,6 +593,69 @@ BEGIN
   EXECUTE PROCEDURE fx(14, (SELECT e.x FROM ents e WHERE e.id = :trig), (SELECT e.y FROM ents e WHERE e.id = :trig), (SELECT e.z FROM ents e WHERE e.id = :trig), 0, 0, 0, 0);
 END^
 
+-- Use_target_push: the activator (a living player or bot, not flying) is given the push's velocity (p1); the
+-- wind or the pad sounds at most every 1.5 s (fly_sound_debounce_time)
+CREATE OR ALTER PROCEDURE push_use (trig INTEGER, activator INTEGER)
+AS
+DECLARE vx DOUBLE PRECISION; DECLARE vy DOUBLE PRECISION; DECLARE vz DOUBLE PRECISION; DECLARE n VARCHAR(64); DECLARE fst DOUBLE PRECISION;
+BEGIN
+  IF (NOT EXISTS (SELECT 1 FROM ents e WHERE e.id = :activator AND e.classname IN ('player', 'bot') AND e.health > 0)) THEN EXIT;
+  IF (activator = player_ent() AND EXISTS (SELECT 1 FROM player p WHERE p.id = 1 AND (p.flight_finished > now_() OR p.spectator = 1))) THEN EXIT;
+  SELECT e.p1x, e.p1y, e.p1z, e.noise1 FROM ents e WHERE e.id = :trig INTO vx, vy, vz, n;
+  SELECT e.fly_sound_time FROM ents e WHERE e.id = :activator INTO fst;
+  UPDATE ents e SET e.vx = :vx, e.vy = :vy, e.vz = :vz, e.flags = IIF(:vz > 0, BIN_AND(e.flags, BIN_NOT(512)), e.flags),
+         e.fly_sound_time = IIF(:fst < now_(), now_() + 1.5e0, e.fly_sound_time) WHERE e.id = :activator;
+  IF (fst < now_()) THEN EXECUTE PROCEDURE snd(activator, 0, n, 1, 1);
+END^
+
+-- Use_Shooter: a shooter_rocket, _grenade or _plasma fires along its direction (p1), or at its target's
+-- current origin, spread by crandom() * random on two axes square to it; the shooter is the missile's owner,
+-- no player, so whoever it kills just died (ClientObituary's world)
+CREATE OR ALTER PROCEDURE shooter_use (sh INTEGER)
+AS
+DECLARE w INTEGER; DECLARE rnd DOUBLE PRECISION; DECLARE tg VARCHAR(40);
+DECLARE ox DOUBLE PRECISION; DECLARE oy DOUBLE PRECISION; DECLARE oz DOUBLE PRECISION;
+DECLARE dx DOUBLE PRECISION; DECLARE dy DOUBLE PRECISION; DECLARE dz DOUBLE PRECISION; DECLARE l DOUBLE PRECISION;
+DECLARE ux DOUBLE PRECISION; DECLARE uy DOUBLE PRECISION; DECLARE uz DOUBLE PRECISION;
+DECLARE rx DOUBLE PRECISION; DECLARE ry DOUBLE PRECISION; DECLARE rz DOUBLE PRECISION; DECLARE a DOUBLE PRECISION; DECLARE b DOUBLE PRECISION;
+DECLARE g INTEGER;
+BEGIN
+  SELECT e.weapon, e.random_, e.target, e.x, e.y, e.z, e.p1x, e.p1y, e.p1z FROM ents e WHERE e.id = :sh INTO w, rnd, tg, ox, oy, oz, dx, dy, dz;
+  IF (w IS NULL) THEN EXIT;
+  IF (tg IS NOT NULL AND tg <> '') THEN
+    SELECT FIRST 1 t.x + (t.minx + t.maxx) / 2 - :ox, t.y + (t.miny + t.maxy) / 2 - :oy, t.z + (t.minz + t.maxz) / 2 - :oz
+      FROM ents t WHERE t.targetname = :tg AND t.id <> :sh INTO dx, dy, dz;
+  l = vlen(dx, dy, dz);
+  IF (l = 0) THEN EXIT;
+  dx = dx / l; dy = dy / l; dz = dz / l;
+  -- PerpendicularVector: the axis the direction is least along, made square to it; right = up × dir
+  IF (ABS(dx) <= ABS(dy) AND ABS(dx) <= ABS(dz)) THEN BEGIN ux = 1 - dx * dx; uy = -dx * dy; uz = -dx * dz; END
+  ELSE IF (ABS(dy) <= ABS(dz)) THEN BEGIN ux = -dy * dx; uy = 1 - dy * dy; uz = -dy * dz; END
+  ELSE BEGIN ux = -dz * dx; uy = -dz * dy; uz = 1 - dz * dz; END
+  l = vlen(ux, uy, uz); ux = ux / l; uy = uy / l; uz = uz / l;
+  rx = uy * dz - uz * dy; ry = uz * dx - ux * dz; rz = ux * dy - uy * dx;
+  a = (2 * RAND() - 1) * rnd; b = (2 * RAND() - 1) * rnd;
+  dx = dx + a * ux + b * rx; dy = dy + a * uy + b * ry; dz = dz + a * uz + b * rz;
+  IF (w = 8) THEN
+  BEGIN
+    EXECUTE PROCEDURE launch_grenade(sh, ox, oy, oz, dx, dy, dz);
+    -- fire_grenade throws along the direction alone (the player's lift is weapon_grenadelauncher_fire's)
+    SELECT MAX(e.id) FROM ents e WHERE e.owner_id = :sh AND e.classname = 'grenade' INTO g;
+    UPDATE ents e SET e.vz = e.vz - 200 WHERE e.id = :g;
+    EXECUTE PROCEDURE snd(sh, 1, 'sound/weapons/grenade/grenlf1a.wav', 1, 1);
+  END
+  ELSE IF (w = 16) THEN
+  BEGIN
+    EXECUTE PROCEDURE launch_missile(sh, 'rocket', 'models/ammo/rocket/rocket.md3', ox, oy, oz, dx, dy, dz, 900, 100, 100, 120, 16, 10);
+    EXECUTE PROCEDURE snd(sh, 1, 'sound/weapons/rocket/rocklf1a.wav', 1, 1);
+  END
+  ELSE IF (w = 128) THEN
+  BEGIN
+    EXECUTE PROCEDURE launch_missile(sh, 'plasma', 'sprites/plasmaa', ox, oy, oz, dx, dy, dz, 2000, 20, 15, 20, 8, 10);
+    EXECUTE PROCEDURE snd(sh, 1, 'sound/weapons/plasma/hyprbf1a.wav', 1, 1);
+  END
+END^
+
 -- trigger_hurt: dmg every tic (or every second with SLOW); 8 = NO_PROTECTION
 CREATE OR ALTER PROCEDURE hurt_touch (trig INTEGER, other INTEGER)
 AS
@@ -734,6 +801,8 @@ BEGIN
       SELECT e.target FROM ents e WHERE e.id = :t INTO tgt2;
       FOR SELECT e.id FROM ents e WHERE e.targetname = :tgt2 AND e.classname = 'item' INTO d DO EXECUTE PROCEDURE item_touch(d, activator);
     END
+    ELSE IF (tcls = 'target_push') THEN EXECUTE PROCEDURE push_use(t, activator);
+    ELSE IF (tcls IN ('shooter_rocket', 'shooter_grenade', 'shooter_plasma')) THEN EXECUTE PROCEDURE shooter_use(t);
     ELSE IF (tcls = 'target_remove_powerups') THEN
       UPDATE player p SET p.quad_finished = 0, p.haste_finished = 0, p.invis_finished = 0, p.regen_finished = 0, p.enviro_finished = 0, p.flight_finished = 0 WHERE p.id = 1 AND p.ent_id = :activator;
     ELSE IF (tcls = 'target_position' OR tcls = 'info_notnull' OR tcls = 'misc_teleporter_dest' OR tcls = 'path_corner' OR tcls = 'target_location') THEN BEGIN END
@@ -991,9 +1060,12 @@ BEGIN
   IF (attacker IS NULL OR attacker <= 0 OR attacker = victim) THEN
   BEGIN
     s = CASE mod_ WHEN 14 THEN ' does a back flip into the lava' WHEN 15 THEN ' melted' WHEN 13 THEN ' cratered' WHEN 21 THEN ' sank like a rock'
-          WHEN 12 THEN ' was squished' WHEN 5 THEN ' tripped on ' || TRIM(IIF(:v = 'You', 'your', 'its')) || ' own grenade' WHEN 7 THEN ' blew ' || TRIM(IIF(:v = 'You', 'yourself', 'itself')) || ' up'
-          WHEN 9 THEN ' melted ' || TRIM(IIF(:v = 'You', 'yourself', 'itself')) WHEN 19 THEN ' should have used a smaller gun' WHEN 20 THEN ' killed ' || TRIM(IIF(:v = 'You', 'yourself', 'itself'))
-          ELSE ' was in the wrong place' END;
+          WHEN 12 THEN ' was squished' WHEN 11 THEN ' was in the wrong place' END;
+    IF (s IS NULL AND attacker = victim) THEN
+      s = CASE mod_ WHEN 5 THEN ' tripped on ' || TRIM(IIF(:v = 'You', 'your', 'its')) || ' own grenade' WHEN 7 THEN ' blew ' || TRIM(IIF(:v = 'You', 'yourself', 'itself')) || ' up'
+            WHEN 9 THEN ' melted ' || TRIM(IIF(:v = 'You', 'yourself', 'itself')) WHEN 19 THEN ' should have used a smaller gun'
+            ELSE ' killed ' || TRIM(IIF(:v = 'You', 'yourself', 'itself')) END;
+    s = COALESCE(s, ' died');
     IF (v = 'You') THEN s = REPLACE(s, ' was ', ' were ');
     RETURN v || ' ' || TRIM(s) || '.';
   END
@@ -1014,6 +1086,9 @@ DECLARE cls VARCHAR(40); DECLARE hp INTEGER;
 BEGIN
   SELECT e.classname, e.health FROM ents e WHERE e.id = :targ INTO cls, hp;
   IF (hp < -999) THEN UPDATE ents e SET e.health = -999 WHERE e.id = :targ;
+  -- player_die: an attacker that is no client (a trigger_hurt, a shooter) is the world's: no frag, "died"
+  IF (cls IN ('player', 'bot') AND attacker IS NOT NULL AND NOT EXISTS (SELECT 1 FROM ents e WHERE e.id = :attacker AND e.classname IN ('player', 'bot'))) THEN
+    attacker = NULL;
   IF (cls = 'player') THEN
   BEGIN
     EXECUTE PROCEDURE player_die(attacker, mod_);
@@ -1670,6 +1745,38 @@ BEGIN
     BEGIN
       UPDATE ents e SET e.solid = 0, e.model_id = NULL WHERE e.id = :eid;
       IF (cls = 'trigger_always') THEN UPDATE ents e SET e.think = 'always_fire', e.nextthink = 0.2e0 + MAXVALUE(e.delay, 0), e.delay = 0 WHERE e.id = :eid;
+    END
+    ELSE IF (cls IN ('target_push', 'shooter_rocket', 'shooter_grenade', 'shooter_plasma')) THEN
+    BEGIN
+      -- G_SetMovedir: angle -1 up, -2 down, else the angles' forward
+      IF (ang = -1) THEN BEGIN dx = 0; dy = 0; dz = 1; END
+      ELSE IF (ang = -2) THEN BEGIN dx = 0; dy = 0; dz = -1; END
+      ELSE
+      BEGIN
+        dx = COS(COALESCE(ap, 0) * 0.0174532925e0) * COS(COALESCE(ang, 0) * 0.0174532925e0);
+        dy = COS(COALESCE(ap, 0) * 0.0174532925e0) * SIN(COALESCE(ang, 0) * 0.0174532925e0);
+        dz = -SIN(COALESCE(ap, 0) * 0.0174532925e0);
+      END
+      UPDATE ents e SET e.solid = 0, e.model_id = NULL, e.p1x = :dx, e.p1y = :dy, e.p1z = :dz WHERE e.id = :eid;
+      IF (cls = 'target_push') THEN
+      BEGIN
+        -- SP_target_push: movedir × speed (1000), or with a target AimAtTarget from its own origin
+        IF (COALESCE(spd, 0) = 0) THEN spd = 1000;
+        UPDATE ents e SET e.p1x = :dx * :spd, e.p1y = :dy * :spd, e.p1z = :dz * :spd,
+               e.noise1 = TRIM(IIF(BIN_AND(:sf, 1) <> 0, 'sound/world/jumppad.wav', 'sound/misc/windfly.wav')) WHERE e.id = :eid;
+        tx = NULL;
+        IF (tg IS NOT NULL) THEN SELECT FIRST 1 m.ox, m.oy, m.oz FROM map_ents m WHERE m.targetname = :tg INTO tx, ty, tz;
+        IF (tx IS NOT NULL) THEN
+        BEGIN
+          d = tz - oz;
+          IF (d <= 0) THEN d = 1;
+          t2 = SQRT(d / 400e0);
+          UPDATE ents e SET e.p1x = (:tx - :ox) / :t2, e.p1y = (:ty - :oy) / :t2, e.p1z = :t2 * 800 WHERE e.id = :eid;
+        END
+      END
+      ELSE   -- InitShooter: random is the spread's angle in degrees (1), kept as its sine
+        UPDATE ents e SET e.weapon = CASE :cls WHEN 'shooter_rocket' THEN 16 WHEN 'shooter_grenade' THEN 8 ELSE 128 END,
+               e.random_ = SIN(PI() * COALESCE(NULLIF(:rnd, 0), 1) / 180) WHERE e.id = :eid;
     END
     ELSE IF (cls = 'target_speaker') THEN
     BEGIN

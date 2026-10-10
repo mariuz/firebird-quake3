@@ -353,6 +353,7 @@ CREATE TABLE ents (
   acc_msg    DOUBLE PRECISION DEFAULT 0 NOT NULL,
   acc_arrived SMALLINT DEFAULT 0 NOT NULL,
   teleport_time DOUBLE PRECISION DEFAULT 0 NOT NULL,
+  fly_sound_time DOUBLE PRECISION DEFAULT 0 NOT NULL,   -- fly_sound_debounce_time: a target_push's sound at most every 1.5 s
   spawn_x DOUBLE PRECISION DEFAULT 0 NOT NULL, spawn_y DOUBLE PRECISION DEFAULT 0 NOT NULL, spawn_z DOUBLE PRECISION DEFAULT 0 NOT NULL,
   alpha      SMALLINT DEFAULT 0 NOT NULL,  -- 1 = not drawn (a picked-up item waiting to respawn)
   viewheight DOUBLE PRECISION DEFAULT 0 NOT NULL,
