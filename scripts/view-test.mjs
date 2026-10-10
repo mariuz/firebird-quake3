@@ -8,7 +8,7 @@
 import fs from 'node:fs';
 import { FrameState, firstPersonView, zoomedFov, fovY, mapTorsoToWeaponFrame, viewTorsoFrame, underwaterFov, sceneLights, litByDlights, MAX_DLIGHTS, drawRail, drawBolt, findPortals, portalView, portalFade, perpendicular, floorBelow, drawShadows } from '../src/scene.js';
 import { Renderer, tagTransform, autospriteQuads, fogST, fogFactor } from '../src/renderer.js';
-import { parseDeform, waveValue, deformVertex, envTexCoords, parseShaderScript, surfaceLook, shellMesh, eyeInModel } from '../src/shader.js';
+import { parseDeform, waveValue, deformVertex, envTexCoords, parseShaderScript, surfaceLook, shellMesh, eyeInModel, stageBrightness } from '../src/shader.js';
 import { Md3, parseAnimationCfg } from '../src/md3.js';
 import { postgameMedals } from '../src/hud.js';
 import { parseWeights, preprocess, weightOf } from '../src/itemweights.js';
@@ -240,6 +240,19 @@ const markBsp = {
   assert(shiny.image === 'textures/x/shiny.tga' && shiny.env?.image === 'textures/fx/tin.tga' && shiny.env.mode === 'under' && shiny.blend === 'opaque' && shiny.lightmapped,
     'a picture over a chrome: the picture on top, the chrome under it, opaque and lightmapped');
   assert(flag.deforms?.length === 2 && near(flag.deforms[0].spread, 1 / 30), 'both of a banner\'s waves are kept');
+  // the stages drawn one by one when a look loses some (skullarch_b: a picture with holes over scrolling fire, then
+  // the lightmap; a jump pad's glows pulsing on their own waves); a chrome stays a look
+  const staged = parseShaderScript(`textures/x/arch { { map textures/sfx/fire.tga tcMod scroll 0 1 } { map textures/x/arch.tga blendFunc blend } { map $lightmap blendFunc filter } }
+    textures/x/pad { { map textures/x/pad.tga } { map $lightmap blendfunc gl_dst_color gl_zero } { map textures/x/glow.tga blendfunc add rgbGen wave sin .5 .5 0 1.5 } { map textures/x/arrow.tga blendfunc add rgbGen wave square .5 .5 .25 1.5 } }`);
+  const arch = surfaceLook(staged, 'textures/x/arch'), pad = surfaceLook(staged, 'textures/x/pad');
+  assert(arch.image === 'textures/x/arch.tga' && arch.blend === 'opaque' && arch.stages?.length === 3 && arch.stagesOpaque
+    && arch.stages[1].src === 'GL_SRC_ALPHA' && arch.stages[1].dst === 'GL_ONE_MINUS_SRC_ALPHA' && arch.stages[2].lightmap && arch.stages[2].src === 'GL_DST_COLOR',
+    `a picture over scrolling fire: the picture is the look, and all ${arch.stages?.length} stages are drawn (fire, picture blended, lightmap filtered)`);
+  const glow = pad.stages?.[2];
+  assert(pad.stages?.length === 4 && glow.rgb.kind === 'wave' && near(stageBrightness(glow.rgb, 0), 0.5) && near(stageBrightness(glow.rgb, 1 / 6), 1)
+    && near(stageBrightness(pad.stages[3].rgb, 0), 1) && stageBrightness(pad.stages[0].rgb, 3) === 1,
+    `a jump pad's glows pulse on their own waves (sin at a sixth of a second: ${stageBrightness(glow.rgb, 1 / 6).toFixed(2)}; the square's phase starts it bright)`);
+  assert(!shiny.stages && !flag.stages, 'a chrome under a picture and a plain banner keep their single look');
 }
 
 // fog volumes (RB_CalcFogTexCoords, R_FogFactor): a fog with its surface at z = 0, opaque at 400

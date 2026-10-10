@@ -9,6 +9,8 @@ const BLEND = {
   'GL_DST_COLOR,GL_ONE': 'filteradd', 'GL_ONE,GL_ONE_MINUS_SRC_ALPHA': 'premul',
 };
 
+const BLEND_WORDS = { ADD: ['GL_ONE', 'GL_ONE'], FILTER: ['GL_DST_COLOR', 'GL_ZERO'], BLEND: ['GL_SRC_ALPHA', 'GL_ONE_MINUS_SRC_ALPHA'] };
+
 function tokenize(text) {
   const out = [];
   const re = /\/\/[^\n]*|\/\*[\s\S]*?\*\/|"([^"]*)"|[{}]|[^\s{}"]+/g;
@@ -32,7 +34,7 @@ export function parseShaderScript(text, into = new Map()) {
     while (i < t.length && t[i] !== '}') {
       if (t[i] === '{') {
         i++;
-        const st = { map: null, anim: null, animFps: 0, blend: 'opaque', alphaFunc: null, scroll: null, scale: null, turb: null, rotate: 0, clamp: false, lightmap: false, rgbGen: null, depthWrite: false, tcGen: null };
+        const st = { map: null, anim: null, animFps: 0, blend: 'opaque', src: 'GL_ONE', dst: 'GL_ZERO', alphaFunc: null, scroll: null, scale: null, turb: null, rotate: 0, clamp: false, lightmap: false, rgbGen: null, depthWrite: false, tcGen: null };
         while (i < t.length && t[i] !== '}') {
           const key = t[i++].toLowerCase();
           const args = [];
@@ -49,6 +51,8 @@ export function parseShaderScript(text, into = new Map()) {
               const a = args.map((x) => x.toUpperCase());
               if (a.length === 1) st.blend = a[0] === 'ADD' ? 'add' : a[0] === 'FILTER' ? 'filter' : a[0] === 'BLEND' ? 'blend' : 'opaque';
               else st.blend = BLEND[`${a[0]},${a[1]}`] ?? (a[1] === 'GL_ONE' ? 'add' : 'blend');
+              // the factors themselves, for the painter that draws every stage (NameToSrcBlendMode)
+              [st.src, st.dst] = a.length === 1 ? (BLEND_WORDS[a[0]] ?? ['GL_ONE', 'GL_ZERO']) : [a[0], a[1]];
               break;
             }
             case 'alphafunc': st.alphaFunc = (args[0] ?? '').toUpperCase(); break;
@@ -222,10 +226,13 @@ export function surfaceLook(shaders, name) {
   const hasLightmap = sh.stages.some((s) => s.lightmap);
   // the colour stage: the first stage with a picture that is not purely a filter over the lightmap; the
   // stages after it that add (glowing lights) are remembered as the `add` layer
-  let main = null;
+  let main = null, over = false;
   for (const s of sh.stages) {
     if (!s.map) continue;
     if (!main) { main = s; continue; }
+    // a picture with holes blended over an opaque layer (skullarch_b over its scrolling fire): the picture is
+    // what a single-look painter shows
+    if (!over && main.blend === 'opaque' && !main.tcGen && s.blend === 'blend' && !s.tcGen && !look.add) { main = s; over = true; continue; }
     // a chrome stage (tcGen environment) the main picture is blended over: the picture is the one on top
     // and the chrome shows where its alpha is low (pewter_shiney)
     if (main.tcGen === 'environment' && !look.env && s.blend === 'blend') { look.env = { image: main.map, mode: 'under' }; main = s; continue; }
@@ -249,5 +256,46 @@ export function surfaceLook(shaders, name) {
   else look.blend = 'opaque';
   if (sh.parms.has('trans') && look.blend === 'opaque' && main.alphaFunc) look.blend = 'opaque';
   if (look.env?.mode === 'under') look.blend = 'opaque';   // the chrome fills what the picture's alpha leaves
+  if (over) look.blend = 'opaque';
+  // what this look leaves out (a stage it drops, a stage's rgbGen wave, the added glow's own wave): the WebGL
+  // painter then draws the shader's stages one by one, as RB_StageIteratorGeneric does
+  if (!look.portal && !look.autosprite && !look.env && !look.tcGen) {
+    const shown = new Set([main.map, look.add?.image].filter(Boolean));
+    const lossy = !!look.add || over || sh.stages.some((s) => (s.map && !s.lightmap && !shown.has(s.map)) || s.rgbGen?.[0] === 'wave');
+    if (lossy) {
+      look.stages = shaderStages(sh);
+      const first = look.stages[0];
+      look.stagesOpaque = !!first && first.src === 'GL_ONE' && first.dst === 'GL_ZERO';
+    }
+  }
   return look;
+}
+
+/**
+ * A shader's stages as the WebGL painter draws them, each a pass over the surface: the picture (or the
+ * lightmap, or the view reflected for tcGen environment), its colour (identity, a wave, the vertex light),
+ * its texture motion, its alpha test and its blend factors. The first stage of an opaque shader writes the
+ * depth; the others only blend, unless the script says depthWrite.
+ */
+export function shaderStages(sh) {
+  const out = [];
+  for (const s of sh.stages) {
+    if (!s.map && !s.lightmap) continue;
+    const g = s.rgbGen ?? [];
+    let rgb = { kind: 'identity' };
+    if (g[0] === 'wave' && g[1] in WAVE_FUNCS) rgb = { kind: 'wave', func: WAVE_FUNCS[g[1]], base: Number(g[2]) || 0, amp: Number(g[3]) || 0, phase: Number(g[4]) || 0, freq: Number(g[5]) || 0 };
+    else if (g[0] === 'vertex' || g[0] === 'exactvertex') rgb = { kind: 'vertex' };
+    out.push({
+      image: s.lightmap ? null : s.map, lightmap: s.lightmap, anim: s.anim, animFps: s.animFps,
+      src: s.src, dst: s.dst, alphaFunc: s.alphaFunc, depthWrite: s.depthWrite,
+      scroll: s.scroll, scale: s.scale, turb: s.turb, rotate: s.rotate, tcGen: s.tcGen, rgb,
+    });
+  }
+  return out;
+}
+
+/** A stage's colour at a time: 1, or its wave clamped to 0..1 (RB_CalcWaveColor) */
+export function stageBrightness(rgb, time) {
+  if (rgb.kind !== 'wave') return 1;
+  return Math.min(1, Math.max(0, waveValue(rgb.func, rgb.base, rgb.amp, rgb.phase, rgb.freq, time)));
 }

@@ -10,7 +10,7 @@
 
 import { Renderer, yawAxis, anglesAxis, tagTransform, animFrame, autospriteQuads, fogDefs } from './renderer.js';
 import { loadImage, powerOfTwo } from './image.js';
-import { shellMesh, eyeInModel } from './shader.js';
+import { shellMesh, eyeInModel, stageBrightness } from './shader.js';
 
 const LIGHTMAP_SIZE = 128;
 
@@ -64,7 +64,13 @@ in vec3 vColor;
 in vec3 vWorld;
 uniform sampler2D uTex;
 uniform sampler2D uLightmap;
-uniform int uMode;        // 0 texture × lightmap, 1 texture × flat, 2 sky clouds, 3 the view through a portal
+uniform int uMode;        // 0 texture × lightmap, 1 texture × flat, 2 sky clouds, 3 the view through a portal,
+                          // 4 one stage of a shader, 5 the dynamic lights' pass, 6 the fog's pass
+uniform vec3 uRgb;        // a stage's colour (rgbGen identity or wave)
+uniform int uVColor;      // a stage's rgbGen vertex: times the vertex light
+uniform int uStageTc;     // a stage's coordinates: 0 the texture's, 1 tcGen environment, 2 the lightmap's
+uniform float uRotate;    // tcMod rotate, degrees a second
+uniform float uLightScale;
 uniform sampler2D uPortal;
 uniform vec2 uScreen;
 uniform float uPortalK;
@@ -112,7 +118,52 @@ vec3 dlights() {
   }
   return sum;
 }
+// RB_CalcEnvironmentTexCoords: the view reflected in the surface (the face's normal, towards the eye)
+vec2 envCoords() {
+  vec3 n = normalize(cross(dFdx(vWorld), dFdy(vWorld)));
+  vec3 viewer = normalize(uEye - vWorld);
+  if (dot(n, viewer) < 0.0) n = -n;
+  vec3 r = n * 2.0 * dot(n, viewer) - viewer;
+  return vec2(0.5 + r.y * 0.5, 0.5 - r.z * 0.5);
+}
+// RB_CalcFogTexCoords and R_FogFactor: the depth along the view over the distance to opaque, times the share
+// of the sight line under the fog's surface; the fog table is the square root
+float fogAmount() {
+  float s = dot(vWorld - uEye, uFwd) / uFogOpaque, t = 31.0 / 32.0;
+  if (uFogHasPlane == 1) {
+    float tP = uFogPlane.w - dot(vWorld, uFogPlane.xyz), tE = uFogPlane.w - dot(uEye, uFogPlane.xyz);
+    if (tE < 0.0) t = tP < 1.0 ? 1.0 / 32.0 : 1.0 / 32.0 + 30.0 / 32.0 * tP / (tP - tE);
+    else t = tP < 0.0 ? 1.0 / 32.0 : 31.0 / 32.0;
+  }
+  float f = 0.0;
+  if (t > 1.0 / 32.0 + 1e-6 && s > 0.0) { if (t < 31.0 / 32.0) s *= (t - 1.0 / 32.0) / (30.0 / 32.0); f = sqrt(min(1.0, s)); }
+  return f;
+}
 void main() {
+  if (uMode == 5) { fragColor = vec4(dlights(), 1.0); return; }
+  if (uMode == 6) { fragColor = vec4(uFogColor, fogAmount()); return; }
+  if (uMode == 4) {
+    // a shader's stage (RB_IterateStagesGeneric): its coordinates through scale, rotate (about the middle) and
+    // scroll, its picture times its colour; alphaFunc GE128 (1), GT0 (2), LT128 (3)
+    vec2 tc;
+    if (uStageTc == 2) tc = vLm;
+    else if (uStageTc == 1) tc = envCoords();
+    else {
+      tc = vSt * uScale;
+      if (uRotate != 0.0) {
+        float a = radians(-uRotate * uTime), cs = cos(a), sn = sin(a);
+        tc = vec2(cs * (tc.x - 0.5) - sn * (tc.y - 0.5), sn * (tc.x - 0.5) + cs * (tc.y - 0.5)) + 0.5;
+      }
+      tc += uScroll;
+      if (uTurb > 0.0) tc += vec2(sin(vSt.y * 12.0 + uTime * 2.0), sin(vSt.x * 12.0 + uTime * 2.0)) * 0.015;
+    }
+    vec4 c = texture(uTex, tc);
+    if ((uAlphaTest == 1 && c.a < 0.5) || (uAlphaTest == 2 && c.a <= 0.0) || (uAlphaTest == 3 && c.a >= 0.5)) discard;
+    vec3 rgb = c.rgb * uRgb;
+    if (uVColor == 1) rgb *= min(vColor * uLightScale / 255.0, vec3(1.0));
+    fragColor = vec4(min(rgb, 1.0), c.a);
+    return;
+  }
   if (uMode == 3) { fragColor = vec4(texture(uPortal, gl_FragCoord.xy / uScreen).rgb * uPortalK, 1.0); return; }
   if (uMode == 2) {
     vec3 d = normalize(vWorld - uEye);
@@ -126,14 +177,7 @@ void main() {
   vec2 st = vSt * uScale + uScroll;
   if (uTurb > 0.0) st += vec2(sin(vSt.y * 12.0 + uTime * 2.0), sin(vSt.x * 12.0 + uTime * 2.0)) * 0.015;
   // RB_CalcEnvironmentTexCoords: the view reflected in the surface (the face's normal, towards the eye)
-  vec2 envSt = vec2(0.0);
-  if (uEnvMode > 0) {
-    vec3 n = normalize(cross(dFdx(vWorld), dFdy(vWorld)));
-    vec3 viewer = normalize(uEye - vWorld);
-    if (dot(n, viewer) < 0.0) n = -n;
-    vec3 r = n * 2.0 * dot(n, viewer) - viewer;
-    envSt = vec2(0.5 + r.y * 0.5, 0.5 - r.z * 0.5);
-  }
+  vec2 envSt = uEnvMode > 0 ? envCoords() : vec2(0.0);
   vec4 c = texture(uTex, uEnvMode == 1 ? envSt : st);
   // over a chrome the lightmap stage is GL_DST_COLOR GL_ONE_MINUS_DST_ALPHA: the frame's alpha after the picture
   // blended over the opaque chrome is a² + 1 - a, so a - a² of the unlit colour shows through the shadow
@@ -143,19 +187,7 @@ void main() {
   if (uAlphaTest == 1 && c.a < 0.5) discard;
   vec3 lit = uMode == 0 ? c.rgb * (texture(uLightmap, vLm).rgb + shine) : c.rgb * uFlat;
   if (uDlCount > 0) lit *= 1.0 + dlights();
-  if (uFogOn == 1) {
-    // RB_CalcFogTexCoords and R_FogFactor: the depth along the view over the distance to opaque, times the
-    // share of the sight line under the fog's surface; the fog table is the square root
-    float s = dot(vWorld - uEye, uFwd) / uFogOpaque, t = 31.0 / 32.0;
-    if (uFogHasPlane == 1) {
-      float tP = uFogPlane.w - dot(vWorld, uFogPlane.xyz), tE = uFogPlane.w - dot(uEye, uFogPlane.xyz);
-      if (tE < 0.0) t = tP < 1.0 ? 1.0 / 32.0 : 1.0 / 32.0 + 30.0 / 32.0 * tP / (tP - tE);
-      else t = tP < 0.0 ? 1.0 / 32.0 : 31.0 / 32.0;
-    }
-    float f = 0.0;
-    if (t > 1.0 / 32.0 + 1e-6 && s > 0.0) { if (t < 31.0 / 32.0) s *= (t - 1.0 / 32.0) / (30.0 / 32.0); f = sqrt(min(1.0, s)); }
-    lit = mix(lit, uFogColor, f);
-  }
+  if (uFogOn == 1) lit = mix(lit, uFogColor, fogAmount());
   fragColor = vec4(min(lit, 1.0), c.a);
 }`;
 
@@ -496,7 +528,7 @@ export class GLRenderer {
     gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, idx.subarray(0, total), gl.DYNAMIC_DRAW);
     this.bindWorld();
     for (const g of groups.values()) {
-      if (g.look.blend !== 'opaque' && !g.look.sky) { this.alphaGroups.push(g); continue; }
+      if ((g.look.stages ? !g.look.stagesOpaque : g.look.blend !== 'opaque') && !g.look.sky) { this.alphaGroups.push(g); continue; }
       this.drawGroup(g);
     }
   }
@@ -589,6 +621,7 @@ export class GLRenderer {
       defs.forEach((d, i) => { A.set([d.kind, d.spread, d.func, d.base], i * 4); B.set([d.amp, d.phase, d.freq, 0], i * 4); M.set(d.move, i * 3); });
       gl.uniform4fv(u['uDefA[0]'], A); gl.uniform4fv(u['uDefB[0]'], B); gl.uniform3fv(u['uDefMove[0]'], M);
     }
+    if (look.stages) { this.drawStages(g); return; }
     const envMode = look.tcGen === 'environment' ? 1 : look.env?.mode === 'under' ? 2 : look.env?.mode === 'add' ? 3 : 0;
     gl.uniform1i(u.uEnvMode, envMode);
     if (envMode > 1) { gl.activeTexture(gl.TEXTURE3); gl.bindTexture(gl.TEXTURE_2D, this.texture(look.env.image).tex); }
@@ -650,6 +683,83 @@ export class GLRenderer {
     }
     gl.disable(gl.BLEND);
     gl.depthMask(true);
+  }
+
+  /**
+   * A shader drawn stage by stage (RB_StageIteratorGeneric): each stage a pass with its own picture, colour,
+   * coordinates and blend factors; on an opaque shader then the dynamic lights (ProjectDlightTexture: the
+   * frame times one plus the light) and the fog (RB_FogPass) as passes of their own.
+   */
+  drawStages(g) {
+    const gl = this.gl, u = this.world.u, look = g.look;
+    gl.disable(gl.CULL_FACE);
+    if (!look.twoSided) gl.enable(gl.CULL_FACE);
+    const lit = g.lm >= 0 && g.lm < this.bsp.numLightmaps;
+    gl.uniform1i(u.uEnvMode, 0); gl.uniform1i(u.uFogOn, 0); gl.uniform1i(u.uDlCount, 0);
+    gl.uniform1f(u.uLightScale, this.lightScale);
+    gl.uniform1i(u.uMode, 4);
+    gl.activeTexture(gl.TEXTURE0);
+    look.stages.forEach((s, i) => {
+      let rgb = stageBrightness(s.rgb, this.time);
+      if (s.lightmap) {
+        gl.bindTexture(gl.TEXTURE_2D, lit ? this.lightmap(this.bsp, g.lm) : this.white());
+        // a surface q3map lit by its vertices instead: the average of its faces' vertex light
+        if (!lit) rgb *= Math.min(1, (g.flat / g.faces.length) * this.lightScale / 255);
+      } else gl.bindTexture(gl.TEXTURE_2D, this.texture(this.animImage(s.image, s.anim, s.animFps)).tex);
+      gl.uniform1i(u.uStageTc, s.lightmap ? (lit ? 2 : 0) : s.tcGen === 'environment' ? 1 : 0);
+      gl.uniform3f(u.uRgb, rgb, rgb, rgb);
+      gl.uniform1i(u.uVColor, s.rgb.kind === 'vertex' ? 1 : 0);
+      gl.uniform2f(u.uScroll, s.scroll ? s.scroll[0] * this.time : 0, s.scroll ? s.scroll[1] * this.time : 0);
+      gl.uniform2f(u.uScale, s.scale ? s.scale[0] : 1, s.scale ? s.scale[1] : 1);
+      gl.uniform1f(u.uRotate, s.rotate || 0);
+      gl.uniform1f(u.uTurb, s.turb ? 1 : 0);
+      gl.uniform1i(u.uAlphaTest, s.alphaFunc === 'GE128' ? 1 : s.alphaFunc === 'GT0' ? 2 : s.alphaFunc === 'LT128' ? 3 : 0);
+      if (s.src === 'GL_ONE' && s.dst === 'GL_ZERO') gl.disable(gl.BLEND);
+      else { gl.enable(gl.BLEND); gl.blendFunc(this.factor(s.src), this.factor(s.dst)); }
+      gl.depthMask((i === 0 && look.stagesOpaque) || !!s.depthWrite);
+      gl.drawElements(gl.TRIANGLES, g.count, gl.UNSIGNED_INT, g.first * 4);
+    });
+    gl.uniform1f(u.uRotate, 0);
+    if (look.stagesOpaque) {
+      gl.depthMask(false);
+      gl.enable(gl.BLEND);
+      const dl = this.dlights?.length ?? 0;
+      if (dl) {
+        gl.uniform1i(u.uDlCount, dl);
+        gl.uniform1i(u.uMode, 5);
+        gl.blendFunc(gl.DST_COLOR, gl.ONE);
+        gl.drawElements(gl.TRIANGLES, g.count, gl.UNSIGNED_INT, g.first * 4);
+        gl.uniform1i(u.uDlCount, 0);
+      }
+      const fog = g.fog >= 0 ? this.fogs[g.fog] : null;
+      if (fog) {
+        gl.uniform1i(u.uMode, 6);
+        gl.uniform3f(u.uFogColor, fog.color[0], fog.color[1], fog.color[2]);
+        gl.uniform1f(u.uFogOpaque, fog.opaque);
+        gl.uniform1i(u.uFogHasPlane, fog.plane ? 1 : 0);
+        if (fog.plane) gl.uniform4f(u.uFogPlane, fog.plane.nx, fog.plane.ny, fog.plane.nz, fog.plane.dist);
+        gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+        gl.drawElements(gl.TRIANGLES, g.count, gl.UNSIGNED_INT, g.first * 4);
+      }
+    }
+    gl.disable(gl.BLEND);
+    gl.depthMask(true);
+  }
+
+  /** A blendFunc factor's name (GL_DST_COLOR …) as the WebGL constant */
+  factor(name) {
+    const gl = this.gl;
+    return {
+      GL_ONE: gl.ONE, GL_ZERO: gl.ZERO, GL_DST_COLOR: gl.DST_COLOR, GL_ONE_MINUS_DST_COLOR: gl.ONE_MINUS_DST_COLOR, GL_SRC_ALPHA: gl.SRC_ALPHA,
+      GL_ONE_MINUS_SRC_ALPHA: gl.ONE_MINUS_SRC_ALPHA, GL_SRC_COLOR: gl.SRC_COLOR, GL_ONE_MINUS_SRC_COLOR: gl.ONE_MINUS_SRC_COLOR,
+      GL_DST_ALPHA: gl.DST_ALPHA, GL_ONE_MINUS_DST_ALPHA: gl.ONE_MINUS_DST_ALPHA, GL_SRC_ALPHA_SATURATE: gl.SRC_ALPHA_SATURATE,
+    }[name] ?? gl.ONE;
+  }
+
+  /** A 1×1 white texture (a lightmap stage on a surface without a lightmap: the colour does the lighting) */
+  white() {
+    if (!this.whiteTex) this.whiteTex = this.makeTexture(new Uint8Array([255, 255, 255, 255]), 1, 1, false);
+    return this.whiteTex;
   }
 
   setBlend(mode) {

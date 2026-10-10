@@ -766,6 +766,16 @@ wave` (along the vertex normal, the phase spread over x + y + z by 1 / div) or `
 each an `EvalWaveForm` of the time (`waveValue`); the faces now keep their vertex normals (`f.norms`,
 the plane's for a polygon, the vertices' for a mesh), the WebGL world buffer carries them (52 bytes a
 vertex) and its vertex shader moves the vertex, the software painter moves it before the projection.
+`stages`: when the look would lose part of the shader (a stage it does not keep, a stage's `rgbGen wave`,
+an added glow), `surfaceLook` also gives the shader's stages (`shaderStages`: picture or `$lightmap`,
+`rgbGen` identity, wave or vertex, tcMods, `alphaFunc`, the `blendFunc` factors themselves) and whether
+the first is opaque. The WebGL painter then draws them as `RB_StageIteratorGeneric` does (`drawStages`):
+a pass a stage with its factors, the first of an opaque shader writing the depth, each stage's colour its
+wave clamped to 0..1 (`stageBrightness`), and after them the dynamic lights as a pass of their own
+(`GL_DST_COLOR GL_ONE`: the frame times one plus the light) and the fog (`RB_FogPass`). So the flames
+cross-fade their two animations on their saw waves, the jump pads' arrows and the lights pulse, and
+q3dm1's skull arches show their carving over the scrolling fire behind the holes. The software painter
+keeps the look, whose picture for such a shader is the one blended over the opaque layer.
 `autosprite`: each four vertices of the face become a sprite facing the eye (`autospriteQuads`, the
 size from the middle to a corner as RB_CalcAutoSprite has it), drawn with the translucent surfaces.
 
@@ -869,8 +879,8 @@ directed × normal) and drawn through the same span code. Particles are points w
 
 **WebGL 2** (`src/renderer-gl.js`): the world's vertices go into one static buffer at `setResources`;
 each frame builds an index buffer from the face list grouped by shader and lightmap page and draws
-each group with the `WORLD` program (texture × lightmap page, the glow stages added with the stage's
-blendFunc and tcMods, the sky by pixel direction), the `MODEL` program for MD3s (light grid colour in
+each group with the `WORLD` program (texture × lightmap page, or the shader's stages one by one, the sky
+by pixel direction), the `MODEL` program for MD3s (light grid colour in
 the vertex shader) and the `SPRITE` program. The HUD, messages and the 2D pictures are drawn by a
 software `Renderer` with `alpha: true` onto an overlay canvas on top; `#screen` (2D) and `#glscreen`
 (WebGL) are separate canvases because a canvas can hold only one kind of context.
