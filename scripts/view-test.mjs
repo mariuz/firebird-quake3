@@ -203,6 +203,13 @@ const markBsp = {
   assert(many.length === MAX_DLIGHTS && many[0].x === 450 && many.every((l) => l.radius === 200), `twelve rockets: the ${MAX_DLIGHTS} nearest, at 200`);
   const firing = sceneLights(st, { ents: [] }, row({ WEAPON: 64, ATTACK_START: 19.95, TIME_: 20 }), view, 20);
   assert(firing.length === 1 && firing[0].radius >= 300 && firing[0].color.join() === '1,0.5,0', 'the railgun\'s muzzle flash lights orange at 300 and more');
+  // a bot firing (its torso's attack animation restarted under a tenth of a second ago): its gun's light ahead
+  // of it; not later, not a corpse
+  const bot = (torso, tt, cls = 'bot') => ({ pmodel: 'sarge/default', anims: `15,${torso},100,${cls}`, torsoTime: tt, weapon: 16, effects: 0, x: 500, y: 0, z: 0, yaw: 90 });
+  const shot = at(20, [bot(7, 19.95)]);
+  assert(shot.length === 1 && shot[0].color.join() === '1,0.75,0' && Math.abs(shot[0].y - 24) < 1e-6 && shot[0].radius >= 300
+    && at(20, [bot(7, 19.85)]).length === 0 && at(20, [bot(11, 19.95)]).length === 0 && at(20, [bot(7, 19.95, 'corpse')]).length === 0,
+    `a bot's rocket launcher flashes orange at 300 ahead of it, for a tenth of a second (${shot.map((l) => l.radius.toFixed(0)).join()})`);
   const grid = { ambient: [20, 20, 20], directed: [10, 10, 10], dir: [0, 0, 1] };
   const lit = litByDlights(grid, 0, 0, 0, [{ x: 100, y: 0, z: 0, radius: 200, color: [1, 0.75, 0] }]);
   assert(Math.abs(lit.directed[0] - 10 - 64) < 1e-6 && Math.abs(lit.directed[1] - 10 - 48) < 1e-6 && lit.dir[0] > 0.9, `a model 100 units from a 200 light: 16 r² / d² = 64 more directed light, from its side (${lit.directed.map((v) => v.toFixed(0)).join(' ')})`);

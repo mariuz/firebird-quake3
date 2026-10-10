@@ -115,10 +115,24 @@ const FLASH_DLIGHT = { 1: [0.6, 0.6, 1], 2: [1, 1, 0], 4: [1, 1, 0], 8: [1, 0.7,
 export const MAX_DLIGHTS = 8;
 
 /** The frame's dynamic lights, nearest the eye first: [{ x, y, z, radius, color }] */
+/** Whether a player model fired within the last tenth of a second: its torso's attack animation (7, the
+ *  gauntlet's 8) restarts at each shot (set_anims), alive. */
+export function firing(e, time) {
+  if (!e.pmodel) return false;
+  const [, torso, hp, cls] = e.anims.split(',');
+  return (torso === '7' || torso === '8') && +hp > 0 && cls !== 'corpse' && time - e.torsoTime < 0.1;
+}
+
 export function sceneLights(state, frame, last, view, time) {
   const out = [];
   const add = (x, y, z, d, k = 1) => { if (d[0] * k > 0) out.push({ x, y, z, radius: d[0] * k, color: [d[1], d[2], d[3]] }); };
   for (const e of frame.ents) {
+    // a bot's muzzle flash (CG_AddPlayerWeapon: 300 + rand & 31 of the gun's colour), ahead of it at the gun
+    const fc = firing(e, time) && FLASH_DLIGHT[e.weapon];
+    if (fc && !(e.effects & 256)) {
+      const yaw = (e.yaw * Math.PI) / 180;
+      add(e.x + Math.cos(yaw) * 24, e.y + Math.sin(yaw) * 24, e.z + 16, [300 + Math.random() * 32, ...fc]);
+    }
     if (e.effects & 16) add(e.x, e.y, e.z, DL_ROCKET);
     else if (e.effects & 64) add(e.x, e.y, e.z, DL_BFG);
     if (e.effects & 512 && e.pmodel) add(e.x, e.y, e.z, [200 + Math.random() * 32, 0.2, 0.2, 1]);
@@ -664,7 +678,7 @@ export function drawScene(renderer, hud, res, bsp, last, frame, opts = {}) {
         if (e.pmodel) {
           const [pm, skin] = e.pmodel.split('/');
           const [legs, torso, , cls] = e.anims.split(',');
-          r.drawPlayer(pm, skin, +legs, e.legsTime, +torso, e.torsoTime, cls === 'corpse' ? 0 : e.weapon, [e.x, e.y, e.z], e.yaw, time, light, { powerups: e.effects & POWERUP_BITS });
+          r.drawPlayer(pm, skin, +legs, e.legsTime, +torso, e.torsoTime, cls === 'corpse' ? 0 : e.weapon, [e.x, e.y, e.z], e.yaw, time, light, { powerups: e.effects & POWERUP_BITS, flash: firing(e, time) });
           continue;
         }
         const m = res.models.get(e.model);
@@ -693,7 +707,7 @@ export function drawScene(renderer, hud, res, bsp, last, frame, opts = {}) {
       const [pm, skin] = e.pmodel.split('/');
       const [legs, torso, hp, cls] = e.anims.split(',');
       const isCorpse = cls === 'corpse';
-      r.drawPlayer(pm, skin, +legs, e.legsTime, +torso, e.torsoTime, isCorpse ? 0 : e.weapon, [e.x, e.y, e.z], e.yaw, time, light, { powerups: e.effects & POWERUP_BITS });
+      r.drawPlayer(pm, skin, +legs, e.legsTime, +torso, e.torsoTime, isCorpse ? 0 : e.weapon, [e.x, e.y, e.z], e.yaw, time, light, { powerups: e.effects & POWERUP_BITS, flash: firing(e, time) });
       // CG_PlayerPowerups: the haste's smoke behind a runner (LEGS_RUN, LEGS_BACK)
       if (e.effects & 2048 && (+legs === 15 || +legs === 16)) state.hasteTrail(e.id, [e.x, e.y, e.z], time);
       // a fresh reward floats over the head (CG_PlayerSprites, CG_PlayerFloatSprite)

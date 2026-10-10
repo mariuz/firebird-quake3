@@ -59,6 +59,9 @@ export function autospriteQuads(f, look, ox = 0, oy = 0, oz = 0) {
 const DLIGHT_LOOK = { blend: 'opaque' };
 const PORTAL_LOOK = { blend: 'opaque' };   // a dlight pass is drawn at once, never kept for the translucent pass
 
+// the weapons' models under models/weapons2/, by WP bit
+const WEAPON_DIRS = { 1: 'gauntlet/gauntlet', 2: 'machinegun/machinegun', 4: 'shotgun/shotgun', 8: 'grenadel/grenadel', 16: 'rocketl/rocketl', 32: 'lightning/lightning', 64: 'railgun/railgun', 128: 'plasma/plasma', 256: 'bfg/bfg' };
+
 export class Renderer {
   constructor(canvas, res, opts = {}) {
     this.canvas = canvas;
@@ -969,6 +972,13 @@ export class Renderer {
       const wm = this.weaponModel(weaponBit);
       const hand = tagTransform(p.upper, tf, 'tag_weapon', torso.origin, torso.axis);
       if (wm && hand) this.drawMd3Powered(wm, 0, hand.origin, hand.axis, null, light, opts, pw, time, true);
+      // CG_AddPlayerWeapon's muzzle flash, on the gun's tag_flash, while it fires (opts.flash; not the
+      // gauntlet's or the railgun's, as in our own view)
+      if (wm && hand && opts.flash && weaponBit !== 1 && weaponBit !== 64 && !(pw & 256)) {
+        const fid = this.res.byName.get(`models/weapons2/${WEAPON_DIRS[weaponBit]}_flash.md3`);
+        const t = fid && tagTransform(wm, 0, 'tag_flash', hand.origin, hand.axis);
+        if (t) this.drawMd3(this.res.models.get(fid).mdl, 0, t.origin, t.axis, null, null, { blend: 'add', twoSided: true });
+      }
     }
   }
 
@@ -992,8 +1002,7 @@ export class Renderer {
   }
 
   weaponModel(bit) {
-    const names = { 1: 'gauntlet/gauntlet', 2: 'machinegun/machinegun', 4: 'shotgun/shotgun', 8: 'grenadel/grenadel', 16: 'rocketl/rocketl', 32: 'lightning/lightning', 64: 'railgun/railgun', 128: 'plasma/plasma', 256: 'bfg/bfg' };
-    const id = this.res.byName.get(`models/weapons2/${names[bit]}.md3`);
+    const id = this.res.byName.get(`models/weapons2/${WEAPON_DIRS[bit]}.md3`);
     return id ? this.res.models.get(id).mdl : null;
   }
 
