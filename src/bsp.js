@@ -353,6 +353,32 @@ export class Bsp {
   }
 
   /** The leaf containing a point (Mod_PointInLeaf). */
+  /**
+   * SV_LinkEntity's areanum and areanum2: the areas of the leaves a box reaches (CM_BoxLeafnums down the
+   * world's tree, the box a unit wider), [first, another] or -1 for none
+   */
+  boxAreas(mins, maxs) {
+    const lo = mins.map((v) => v - 1), hi = maxs.map((v) => v + 1);
+    let a1 = -1, a2 = -1;
+    const stack = [0];
+    while (stack.length) {
+      const n = stack.pop();
+      if (n < 0) {
+        const area = this.leaves[-1 - n]?.area ?? -1;
+        if (area < 0 || area === a1) continue;
+        if (a1 < 0) a1 = area; else a2 = area;
+        continue;
+      }
+      const node = this.nodes[n], pl = this.planes[node.plane];
+      // BoxOnPlaneSide: the box's nearest and farthest corners along the normal
+      let dmin = -pl.dist, dmax = -pl.dist;
+      for (const [k, c] of [[0, pl.nx], [1, pl.ny], [2, pl.nz]]) { dmin += c * (c >= 0 ? lo[k] : hi[k]); dmax += c * (c >= 0 ? hi[k] : lo[k]); }
+      if (dmax >= 0) stack.push(node.children[0]);
+      if (dmin < 0) stack.push(node.children[1]);
+    }
+    return [a1, a2];
+  }
+
   pointLeaf(x, y, z) {
     let n = 0;
     while (n >= 0) {

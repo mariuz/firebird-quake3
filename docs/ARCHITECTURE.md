@@ -694,10 +694,22 @@ and the field of view instead of `viewcfg`'s (the zoom); the Node scripts leave 
 
 How the faces are found: `view_setup` reads the player's eye and angles into `viewcfg`;
 `mark_faces` runs once per cluster the eye enters and fills `vis_faces` with every face of every leaf
-whose cluster is in the eye's PVS (`R_MarkLeaves`), with its plane and bounding sphere; `frame_faces_fast`
+whose cluster is in the eye's PVS (`R_MarkLeaves`), with its plane and bounding sphere, but a leaf in an
+area the open area portals do not join to the eye's (the snapshot's areamask); `frame_faces_fast`
 then scans `vis_faces` with the back-face test (the eye in front of the plane, or two-sided) and the
 frustum test against the sphere as plain expressions, and `LIST()`s the ids into one row. Brush models
-add a row each at their own origin, with their own PVS test through `clusters_visible`. Mode 1
+add a row each at their own origin, with their own PVS test through `clusters_visible`.
+
+*Area portals.* q3map splits a map into areas at area portal brushes, which sit in doors (OpenArena's
+oa_dm5 has two; the demo's arenas have extra areas only as sealed-off parts nobody reaches). The loader
+finds the brush models between two areas down the BSP tree (`Bsp.boxAreas`, `CM_BoxLeafnums` as
+`SV_LinkEntity` uses it) into `models.area1`/`area2`; `spawn_map_ents` fills `areas` with every area shut
+off from the others and gives each door its two (`ent_areas`). A door leaving shut opens its portal and
+reaching shut again closes it (`adjust_area_portal`, the team master's, as `Use_BinaryMover` and
+`Reached_BinaryMover` call `trap_AdjustAreaPortalState`); `area_portals` counts the open ones and
+`area_flood` numbers the areas they join (`CM_FloodAreaConnections`) and forgets the marked faces.
+`mark_faces` leaves out the leaves of areas of another flood than the eye's, and `frame_all` the models
+and brush models there (`areas_connected`, the snapshot's `CM_AreasConnected` on an entity's areas). Mode 1
 (`frame_faces`) projects every vertex in SQL too (the "SQL projects every vertex" renderer option);
 it is slower and exists to make the point. `frame_ents` is the entity half: MD3 and sprite models and
 player models in the PVS (`pvs_visible` between the eye's cluster and the entity's cached clusters),

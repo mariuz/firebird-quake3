@@ -288,6 +288,9 @@ export async function loadMap(db, pak, res, name, { skill = 2, newGame = true, b
   await bulkLoad(db, 'leafbrushes', geo.leafbrushes);
   await bulkLoad(db, 'brushes', geo.brushes);
   await bulkLoad(db, 'brushsides', geo.brushsides);
+  // the brush models between two areas (doors over area portals), as SV_LinkEntity finds them
+  const twoAreas = bsp.models.map((m, mi) => [geo.modelIds[mi], ...bsp.boxAreas(m.mins, m.maxs)]).filter(([, a1, a2], mi) => mi > 0 && a2 >= 0);
+  if (twoAreas.length) await db.exec(`SET TERM ^ ;\nEXECUTE BLOCK AS BEGIN\n${twoAreas.map(([id, a1, a2]) => `UPDATE models SET area1 = ${a1}, area2 = ${a2} WHERE id = ${id};`).join('\n')}\nEND^\nSET TERM ; ^`);
 
   const entRows = bsp.entities.map((e, i) => {
     const o = parseVec(e.origin);

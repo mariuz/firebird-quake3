@@ -130,14 +130,17 @@ BEGIN
 END^
 
 -- mark_faces: R_MarkLeaves, once per view cluster: every face of every leaf
--- in the PVS goes into VIS_FACES (kept until the eye moves to another cluster)
-CREATE OR ALTER PROCEDURE mark_faces (pvs VARCHAR(2048) CHARACTER SET ASCII, vcluster INTEGER)
+-- in the PVS goes into VIS_FACES (kept until the eye moves to another cluster
+-- or an area portal opens or shuts), but a leaf in an area the open portals do
+-- not join to the eye's (the areamask)
+CREATE OR ALTER PROCEDURE mark_faces (pvs VARCHAR(2048) CHARACTER SET ASCII, vcluster INTEGER, vleaf INTEGER DEFAULT NULL)
 AS
-DECLARE cur INTEGER; DECLARE world INTEGER;
+DECLARE cur INTEGER; DECLARE world INTEGER; DECLARE vflood INTEGER;
 BEGIN
   SELECT c.vis_cluster FROM viewcfg c WHERE c.id = 1 INTO cur;
   IF (cur IS NOT DISTINCT FROM vcluster) THEN EXIT;
   SELECT g.world_model FROM game g WHERE g.id = 1 INTO world;
+  SELECT a.flood FROM leaves l JOIN areas a ON a.area = l.area WHERE l.id = :vleaf INTO vflood;
   DELETE FROM vis_faces;
   INSERT INTO vis_faces (face, nx, ny, nz, dist, twosided, cx, cy, cz, radius)
   SELECT f.id, f.nx, f.ny, f.nz, f.dist, f.twosided, f.cx, f.cy, f.cz, f.radius
@@ -147,7 +150,8 @@ BEGIN
                     FROM leaves l
                     JOIN leaffaces lf ON lf.id >= l.first_lf AND lf.id < l.first_lf + l.num_lf
                    WHERE l.cluster >= 0 AND l.num_lf > 0
-                     AND (:pvs = '' OR BIN_AND(POSITION(SUBSTRING(:pvs FROM BIN_SHR(l.cluster, 2) + 1 FOR 1), '0123456789abcdef') - 1, BIN_SHL(1, BIN_AND(l.cluster, 3))) <> 0));
+                     AND (:pvs = '' OR BIN_AND(POSITION(SUBSTRING(:pvs FROM BIN_SHR(l.cluster, 2) + 1 FOR 1), '0123456789abcdef') - 1, BIN_SHL(1, BIN_AND(l.cluster, 3))) <> 0)
+                     AND (:vflood IS NULL OR l.area < 0 OR (SELECT a.flood FROM areas a WHERE a.area = l.area) = :vflood));
   UPDATE viewcfg c SET c.vis_cluster = :vcluster WHERE c.id = 1;
 END^
 
@@ -174,7 +178,7 @@ BEGIN
   EXECUTE PROCEDURE view_setup(vx, vy, vz, vyaw, vpitch, vfov) RETURNING_VALUES ex, ey, ez, fx, fy, fz, rx, ry, rz, ux, uy, uz, w, h, sc, nearz, kx, ky, pvs, vcl, vleaf;
   hw = w / 2e0; hh = h / 2e0;
   qx = SQRT(1 + kx * kx); qy = SQRT(1 + ky * ky);
-  EXECUTE PROCEDURE mark_faces(pvs, vcl);
+  EXECUTE PROCEDURE mark_faces(pvs, vcl, vleaf);
 
   -- the faces that face the eye (or are two-sided) and whose sphere is in the frustum
   DELETE FROM sel_faces;
@@ -274,7 +278,7 @@ DECLARE w INTEGER; DECLARE h INTEGER; DECLARE sc DOUBLE PRECISION; DECLARE nearz
 DECLARE kx DOUBLE PRECISION; DECLARE ky DOUBLE PRECISION; DECLARE pvs VARCHAR(2048) CHARACTER SET ASCII; DECLARE vcl INTEGER; DECLARE vleaf INTEGER;
 DECLARE qx DOUBLE PRECISION; DECLARE qy DOUBLE PRECISION; DECLARE world INTEGER; DECLARE pe INTEGER;
 DECLARE eid INTEGER; DECLARE emid INTEGER; DECLARE cls VARCHAR(200) CHARACTER SET ASCII; DECLARE cl INTEGER; DECLARE rot SMALLINT;
-DECLARE vis SMALLINT; DECLARE vis_cl INTEGER;
+DECLARE vis SMALLINT; DECLARE vis_cl INTEGER; DECLARE varea INTEGER; DECLARE ea INTEGER;
 DECLARE pm VARCHAR(16); DECLARE ps VARCHAR(16); DECLARE la INTEGER; DECLARE ta INTEGER; DECLARE hp INTEGER; DECLARE cn VARCHAR(40); DECLARE alpha SMALLINT;
 DECLARE tn DOUBLE PRECISION; DECLARE fid INTEGER;
 BEGIN
@@ -282,6 +286,7 @@ BEGIN
   pe = player_ent();
   EXECUTE PROCEDURE view_setup(vx, vy, vz, vyaw, vpitch, vfov) RETURNING_VALUES ex, ey, ez, fx, fy, fz, rx, ry, rz, ux, uy, uz, w, h, sc, nearz, kx, ky, pvs, vcl, vleaf;
   qx = SQRT(1 + kx * kx); qy = SQRT(1 + ky * ky);
+  SELECT l.area FROM leaves l WHERE l.id = :vleaf INTO varea;
   -- the eye this frame was culled for (a predicted one may have been clamped): the page paints from it
   kind = 10; d1 = ex; d2 = ey; d3 = ez;
   SUSPEND;
@@ -294,7 +299,7 @@ BEGIN
   END
   ELSE
   BEGIN
-    EXECUTE PROCEDURE mark_faces(pvs, vcl);
+    EXECUTE PROCEDURE mark_faces(pvs, vcl, vleaf);
     kind = 1; i2 = 0; d1 = 0; d2 = 0; d3 = 0;
     SELECT LIST(v.face, ',')
       FROM vis_faces v
@@ -312,6 +317,7 @@ BEGIN
     FOR SELECT e.id, e.model_id, e.x, e.y, e.z, e.clusters, e.cluster, IIF(e.pitch <> 0 OR e.yaw <> 0 OR e.roll <> 0, 1, 0), e.vis_cl, e.vis
           FROM ents e JOIN models m ON m.id = e.model_id
          WHERE m.kind = 'B' AND e.model_id <> :world AND e.solid <> 1 AND e.alpha = 0
+           AND (e.area1 IS NULL OR areas_connected(:varea, e.area1) = 1 OR areas_connected(:varea, e.area2) = 1)
           INTO eid, emid, d1, d2, d3, cls, cl, rot, vis_cl, vis
     DO
     BEGIN
@@ -354,16 +360,17 @@ BEGIN
                        + IIF(e.pmodel IS NOT NULL AND e.health > 0 AND e.invis_finished > :tn, 256, 0) + IIF(e.pmodel IS NOT NULL AND e.health > 0 AND e.regen_finished > :tn, 1024, 0)
                        + IIF(e.pmodel IS NOT NULL AND e.health > 0 AND e.haste_finished > :tn, 2048, 0) + IIF(e.pmodel IS NOT NULL AND e.health > 0 AND e.enviro_finished > :tn, 4096, 0),
              e.x, e.y, e.z, e.pitch, e.yaw, e.roll, e.legs_time, e.torso_time,
-             e.pmodel, e.pskin, e.legs_anim, e.torso_anim, e.health, e.classname, e.cluster, e.clusters
+             e.pmodel, e.pskin, e.legs_anim, e.torso_anim, e.health, e.classname, e.cluster, e.clusters, (SELECT l.area FROM leaves l WHERE l.id = e.leaf)
         FROM ents e LEFT JOIN models m ON m.id = e.model_id
        WHERE (m.kind IN ('M', 'S') OR e.pmodel IS NOT NULL) AND e.id <> :pe AND e.id <> :fid AND e.alpha = 0
          AND (e.x - :ex) * :fx + (e.y - :ey) * :fy + (e.z - :ez) * :fz + COALESCE(m.radius, 0) + 64 >= :nearz
          AND ABS((e.x - :ex) * :rx + (e.y - :ey) * :ry + (e.z - :ez) * :rz)
              <= ((e.x - :ex) * :fx + (e.y - :ey) * :fy + (e.z - :ez) * :fz + COALESCE(m.radius, 0) + 64) * :kx + COALESCE(m.radius, 0) + 64
-        INTO i1, i2, i3, i4, i5, d1, d2, d3, d4, d5, d6, d7, d8, pm, ps, la, ta, hp, cn, cl, cls
+        INTO i1, i2, i3, i4, i5, d1, d2, d3, d4, d5, d6, d7, d8, pm, ps, la, ta, hp, cn, cl, cls, ea
   DO
   BEGIN
     IF (clusters_visible(pvs, cls, COALESCE(cl, (SELECT l.cluster FROM leaves l WHERE l.id = point_leaf(:d1, :d2, :d3)))) = 0) THEN CONTINUE;
+    IF (areas_connected(varea, ea) = 0) THEN CONTINUE;   -- behind a shut door
     s = IIF(pm IS NULL, NULL, pm || '/' || COALESCE(ps, 'default'));
     lst = la || ',' || ta || ',' || hp || ',' || cn;
     SUSPEND;

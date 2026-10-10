@@ -50,6 +50,21 @@ CREATE TABLE game (
   speakers_on    SMALLINT DEFAULT 1 NOT NULL
 );
 
+-- The map's areas (cm.areas): the parts q3map split at area portal brushes, which sit in doors. An
+-- area portal is open while a door over it is (CM_AdjustAreaPortalState counts them); flood numbers the
+-- areas the open portals join (CM_FloodAreaConnections), and what is in an area of another flood than
+-- the eye's is not drawn (R_MarkLeaves' areamask, the snapshot's CM_AreasConnected)
+CREATE TABLE areas (
+  area   INTEGER NOT NULL PRIMARY KEY,
+  flood  INTEGER NOT NULL
+);
+CREATE TABLE area_portals (
+  a1     INTEGER NOT NULL,
+  a2     INTEGER NOT NULL,
+  cnt    INTEGER DEFAULT 0 NOT NULL,
+  PRIMARY KEY (a1, a2)
+);
+
 CREATE TABLE viewcfg (
   id     SMALLINT NOT NULL PRIMARY KEY,
   w      INTEGER NOT NULL,
@@ -73,7 +88,9 @@ CREATE TABLE models (
   first_face INTEGER, num_faces INTEGER,
   nframes   INTEGER DEFAULT 1 NOT NULL,
   flags     INTEGER DEFAULT 0 NOT NULL,
-  radius    DOUBLE PRECISION DEFAULT 0 NOT NULL
+  radius    DOUBLE PRECISION DEFAULT 0 NOT NULL,
+  area1     INTEGER,                     -- a brush model between two areas (a door over an area portal): both
+  area2     INTEGER
 );
 CREATE INDEX models_name ON models (name);
 
@@ -354,6 +371,8 @@ CREATE TABLE ents (
   acc_arrived SMALLINT DEFAULT 0 NOT NULL,
   teleport_time DOUBLE PRECISION DEFAULT 0 NOT NULL,
   fly_sound_time DOUBLE PRECISION DEFAULT 0 NOT NULL,   -- fly_sound_debounce_time: a target_push's sound at most every 1.5 s
+  area1      INTEGER,                    -- a brush model's areas (areanum, areanum2): a door between two holds their portal
+  area2      INTEGER,
   spawn_x DOUBLE PRECISION DEFAULT 0 NOT NULL, spawn_y DOUBLE PRECISION DEFAULT 0 NOT NULL, spawn_z DOUBLE PRECISION DEFAULT 0 NOT NULL,
   alpha      SMALLINT DEFAULT 0 NOT NULL,  -- 1 = not drawn (a picked-up item waiting to respawn)
   viewheight DOUBLE PRECISION DEFAULT 0 NOT NULL,

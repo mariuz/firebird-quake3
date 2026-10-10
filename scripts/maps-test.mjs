@@ -72,6 +72,41 @@ async function mirrors(map, bsp) {
   assert(faces > 0 && me && behind === 0, `${map}: ${ms.length} mirrors; before one, its view has ${faces} faces, ${me ? 'the player\'s body' : 'NOT the player\'s body'}, ${behind} models behind the glass`);
 }
 
+// area portals (CM_AdjustAreaPortalState): a door between two areas keeps the far one's faces out of the
+// view while it is shut, lets them in while it is open, and shuts them out again when it closes
+async function areaPortals(map) {
+  const [door] = await q('SELECT FIRST 1 e.id, e.area1, e.area2, e.x + (e.minx + e.maxx) / 2 cx, e.y + (e.miny + e.maxy) / 2 cy, e.z + (e.minz + e.maxz) / 2 cz FROM ents e WHERE e.classname = \'func_door\' AND e.area2 IS NOT NULL AND e.linked_id IS NULL ORDER BY e.id');
+  if (!door) return;
+  const pe = (await q('SELECT player_ent() pe FROM rdb$database'))[0].PE;
+  // the others hold still, out of the way
+  await db.exec("UPDATE ents SET think = NULL, nextthink = NULL, solid = 0, x = -99999, y = -99999, z = -99999, vx = 0, vy = 0, vz = 0 WHERE classname = 'bot'");
+  // stand in the near area, by the door: the middle of the nearest leaf of that area the door reaches
+  const [spot] = await q(`SELECT FIRST 1 (l.minx + l.maxx) / 2 x, (l.miny + l.maxy) / 2 y, l.minz + 40 z FROM leaves l
+     WHERE l.area = ${door.AREA1} AND l.cluster >= 0 AND (SELECT a.area FROM leaves a WHERE a.id = point_leaf((l.minx + l.maxx) / 2, (l.miny + l.maxy) / 2, l.minz + 40)) = ${door.AREA1}
+     ORDER BY ABS((l.minx + l.maxx) / 2 - ${door.CX}) + ABS((l.miny + l.maxy) / 2 - ${door.CY}) + ABS(l.minz + 40 - ${door.CZ})`);
+  await db.exec(`UPDATE ents SET x = ${spot.X}, y = ${spot.Y}, z = ${spot.Z}, vx = 0, vy = 0, vz = 0, flags = BIN_OR(flags, 16) WHERE id = ${pe}`);
+  await db.exec(`EXECUTE PROCEDURE link_ent(${pe})`);
+  const farFaces = async () => {
+    await q(`SELECT kind FROM frame_all(0, 0, 0, 0, ${spot.X}, ${spot.Y}, ${spot.Z + 20}, 0, 0, 90)`);
+    const lf = (a) => `SELECT lf.face FROM leaves l JOIN leaffaces lf ON lf.id >= l.first_lf AND lf.id < l.first_lf + l.num_lf WHERE l.area = ${a}`;
+    return (await q(`SELECT COUNT(*) n FROM vis_faces v WHERE v.face IN (${lf(door.AREA2)}) AND v.face NOT IN (${lf(door.AREA1)})`))[0].N;
+  };
+  const conn = async () => (await q(`SELECT areas_connected(${door.AREA1}, ${door.AREA2}) c FROM rdb$database`))[0].C;
+  const shut = [await conn(), await farFaces()];
+  await db.exec(`EXECUTE PROCEDURE door_use(${door.ID}, ${pe})`);
+  const open = [await conn(), await farFaces()];
+  // out of its trigger and its way, so it shuts after its wait
+  await db.exec(`UPDATE ents SET solid = 0 WHERE classname = 'door_trigger' AND owner_id = ${door.ID}`);
+  await db.exec(`UPDATE ents SET solid = 0, movetype = 0, x = -99999, y = -99999, z = -99999 WHERE id = ${pe}`);
+  let tics = 0;
+  while (tics < 400 && (await q(`SELECT mv_state FROM ents WHERE id = ${door.ID}`))[0].MV_STATE !== 1) { await q('SELECT * FROM q3_tic(1, 0, 0, 0, 0, 0, 0, 1, 0)'); tics++; }
+  await db.exec(`UPDATE ents SET solid = 3, movetype = 3, x = ${spot.X}, y = ${spot.Y}, z = ${spot.Z} WHERE id = ${pe}`);
+  await db.exec(`EXECUTE PROCEDURE link_ent(${pe})`);
+  const again = [await conn(), await farFaces()];
+  assert(shut[0] === 0 && shut[1] === 0 && open[0] === 1 && open[1] > 0 && again[0] === 0 && again[1] === 0,
+    `${map}: the door between areas ${door.AREA1} and ${door.AREA2}: shut ${shut[1]} faces of the far area marked (connected ${shut[0]}), open ${open[1]} (${open[0]}), shut again after ${tics} tics ${again[1]} (${again[0]})`);
+}
+
 // shooter_* (Use_Shooter): a missile of its kind toward its target; a kill by one is the world's ("died", a frag lost)
 async function shooters(map) {
   const sh = await q("SELECT e.id, e.classname, e.weapon, e.target FROM ents e WHERE e.classname LIKE 'shooter%'");
@@ -118,6 +153,7 @@ for (const m of index) {
       `${m.map} (${m.pack}, "${m.title}"): ${bsp.faces.length} faces, ${items} items, ${alive} players in the world, ${(performance.now() - t).toFixed(0)} ms${missing.size ? `; missing ${[...missing].slice(0, 4).join(', ')}` : ''}`);
     await targetPushes(m.map);
     await mirrors(m.map, bsp);
+    await areaPortals(m.map);
     await shooters(m.map);
   } catch (e) {
     assert(false, `${m.map}: ${e.message.split('\n')[0]}`);

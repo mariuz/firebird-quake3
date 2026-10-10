@@ -77,7 +77,6 @@ fuzzy logic from the botfiles. What that leaves out:
 | **Networking** | none, by design: one player, local bots. Snapshots, prediction, delta compression, the master server do not apply |
 | **Console commands and cvars** | the SQL console replaces them; there is no `bind`, `cg_fov` and friends are settings in `localStorage` |
 | **Demos** | not recorded. The database *is* the state: recording the `q3_tic` inputs per tic (one table) would replay a match deterministically; dumping the tables would be a save game |
-| **Area portals** | a closed door does not block the PVS on its far side (`CM_AdjustAreaPortalState`); the port draws through closed doors' areas |
 | **Light styles** | not in the demo maps |
 | **File system** | the page stacks the demo's pak, the pk3s picked from disk and one hosted map pack (`PakSet`); the game searches every `pak*.pk3` in `baseq3` and a mod directory at once, and a picked pk3's models, sounds and bot files are not read again (its maps and shaders are) |
 | **Capsule traces** | players use a box; Quake III traces players as capsules against other players (`cm_trace.c` with `capsule`) |
@@ -134,7 +133,8 @@ impressive, excellent, gauntlet, frags, perfect); damage, knockback, gibs, obitu
 limits with the time warnings and sudden death, the intermission at the map's intermission point,
 the map rotation; bots with
 five skill levels, weapon choice, strafing, health runs, item pickup, and the waypoint graph with pad
-and teleporter edges; the PVS, frustum and back-face culling in SQL for the view actually painted, frames interpolated
+and teleporter edges; the PVS, frustum and back-face culling in SQL for the view actually painted, the area portals (a shut
+door hides the areas behind it: `CM_AdjustAreaPortalState`, the areamask), frames interpolated
 between tics with live mouse look and the local player predicted (extrapolated, clamped by a trace);
 the impact marks (`CG_ImpactMark`, `R_MarkFragments`: bullet holes, the
 lightning gun's holes, burns, the plasma's and the rail's energy marks, gibs' blood, clipped to the world's faces and

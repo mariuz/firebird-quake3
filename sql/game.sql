@@ -317,6 +317,57 @@ BEGIN
    WHERE e.id = :eid;
 END^
 
+-- ── area portals (cm_test.c) ──────────────────────────────────────────────
+-- CM_FloodAreaConnections: each area takes the lowest number of the areas an open portal joins it to.
+-- The marked faces are kept per view cluster, so a change forgets them (and the portal camera's).
+CREATE OR ALTER PROCEDURE area_flood
+AS
+DECLARE n INTEGER = 1;
+BEGIN
+  UPDATE areas a SET a.flood = a.area;
+  WHILE (n > 0) DO
+  BEGIN
+    UPDATE areas a SET a.flood = (SELECT MIN(b.flood) FROM area_portals p JOIN areas b ON b.area = IIF(p.a1 = a.area, p.a2, p.a1)
+                                   WHERE p.cnt > 0 AND (p.a1 = a.area OR p.a2 = a.area))
+     WHERE (SELECT MIN(b.flood) FROM area_portals p JOIN areas b ON b.area = IIF(p.a1 = a.area, p.a2, p.a1)
+             WHERE p.cnt > 0 AND (p.a1 = a.area OR p.a2 = a.area)) < a.flood;
+    n = ROW_COUNT;
+  END
+  UPDATE viewcfg c SET c.vis_cluster = NULL, c.portal_cluster = NULL WHERE c.id = 1;
+END^
+
+-- CM_AreasConnected: no area (outside the map, a brush model's own leaf) is connected to everything
+CREATE OR ALTER FUNCTION areas_connected (a INTEGER, b INTEGER) RETURNS SMALLINT
+AS
+BEGIN
+  IF (a IS NULL OR b IS NULL OR a < 0 OR b < 0 OR a = b) THEN RETURN 1;
+  RETURN IIF((SELECT x.flood FROM areas x WHERE x.area = :a) = (SELECT y.flood FROM areas y WHERE y.area = :b), 1, 0);
+END^
+
+-- SV_LinkEntity's areanum and areanum2 for a door: its brush model's, found down the BSP tree at load
+-- (Bsp.boxAreas); a door rests where it was built, so they are its areas while it is shut
+CREATE OR ALTER PROCEDURE ent_areas (eid INTEGER)
+AS
+BEGIN
+  UPDATE ents e SET e.area1 = (SELECT m.area1 FROM models m WHERE m.id = e.model_id), e.area2 = (SELECT m.area2 FROM models m WHERE m.id = e.model_id)
+   WHERE e.id = :eid;
+END^
+
+-- trap_AdjustAreaPortalState: a door opening from shut opens the portal between its two areas, reaching
+-- shut again closes it (the team master's only, as Use_BinaryMover and Reached_BinaryMover do)
+CREATE OR ALTER PROCEDURE adjust_area_portal (eid INTEGER, open_ SMALLINT)
+AS
+DECLARE a1 INTEGER; DECLARE a2 INTEGER;
+BEGIN
+  SELECT e.area1, e.area2 FROM ents e WHERE e.id = :eid AND e.linked_id IS NULL INTO a1, a2;
+  IF (a1 IS NULL OR a2 IS NULL OR a1 = a2) THEN EXIT;
+  UPDATE OR INSERT INTO area_portals (a1, a2, cnt)
+    VALUES (MINVALUE(:a1, :a2), MAXVALUE(:a1, :a2),
+            MAXVALUE(0, COALESCE((SELECT p.cnt FROM area_portals p WHERE p.a1 = MINVALUE(:a1, :a2) AND p.a2 = MAXVALUE(:a1, :a2)), 0) + IIF(:open_ = 1, 1, -1)))
+    MATCHING (a1, a2);
+  EXECUTE PROCEDURE area_flood;
+END^
+
 -- ── doors (g_mover.c) ─────────────────────────────────────────────────────
 -- A door's "team" moves together: linked_id is the team master.
 CREATE OR ALTER PROCEDURE door_go_down (eid INTEGER)
@@ -343,6 +394,7 @@ BEGIN
   END
   EXECUTE PROCEDURE snd(eid, 0, n1, 1, 1);
   UPDATE ents e SET e.mv_state = 2 WHERE e.id = :eid;
+  IF (st = 1) THEN EXECUTE PROCEDURE adjust_area_portal(eid, 1);   -- leaving shut: its area portal opens
   EXECUTE PROCEDURE calc_move(eid, (SELECT e.p2x FROM ents e WHERE e.id = :eid), (SELECT e.p2y FROM ents e WHERE e.id = :eid),
     (SELECT e.p2z FROM ents e WHERE e.id = :eid), spd, 'door_hit_top');
   EXECUTE PROCEDURE use_targets(eid, activator);
@@ -365,6 +417,7 @@ BEGIN
   SELECT e.noise3 FROM ents e WHERE e.id = :eid INTO n3;
   EXECUTE PROCEDURE snd(eid, 0, n3, 1, 1);
   UPDATE ents e SET e.mv_state = 1 WHERE e.id = :eid;
+  EXECUTE PROCEDURE adjust_area_portal(eid, 0);   -- shut again: its area portal closes
 END^
 
 -- door_use: fire the whole team
@@ -1809,6 +1862,12 @@ BEGIN
       UPDATE ents m SET m.targetname = COALESCE(m.targetname, (SELECT e.targetname FROM ents e WHERE e.id = :eid)) WHERE m.id = :mid;
     END
   END
+  -- the areas, all portals shut (cm.areaPortals cleared at CM_LoadMap), and the doors' areas
+  DELETE FROM area_portals;
+  DELETE FROM areas;
+  INSERT INTO areas (area, flood) SELECT DISTINCT l.area, l.area FROM leaves l WHERE l.area >= 0;
+  FOR SELECT e.id FROM ents e WHERE e.classname = 'func_door' INTO eid DO EXECUTE PROCEDURE ent_areas(eid);
+  EXECUTE PROCEDURE area_flood;
   -- Think_SpawnNewDoorTrigger: an untargeted door (team) opens when something comes within 120 units along its thinnest axis
   FOR SELECT e.id, MIN(e.x + e.minx), MIN(e.y + e.miny), MIN(e.z + e.minz), MAX(e.x + e.maxx), MAX(e.y + e.maxy), MAX(e.z + e.maxz)
         FROM ents e WHERE e.classname = 'func_door' AND e.linked_id IS NULL AND (e.targetname IS NULL OR e.targetname = '') AND e.max_health = 0

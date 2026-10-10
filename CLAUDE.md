@@ -71,6 +71,7 @@ explosion sprites, beams) and nothing else. The renderers never query the databa
 | bot navigation (nodes, edges, routing, incremental build) | `sql/waypoints.sql`, `bot_follow_route` in `sql/bots.sql`; the edge kinds' tests (`wp_walkable`, `wp_jump`, `wp_rocket_jump`, `wp_pad_steer`) |
 | the tic entry point, think/physics dispatch, scoring, `init_map` | the end of `sql/bots.sql` |
 | what a frame returns | `sql/render.sql` (`frame_all`), read in `src/scene.js` `FrameState.parse` |
+| area portals (a shut door hides the areas behind it) | `area_flood`, `areas_connected`, `ent_areas`, `adjust_area_portal` in `sql/game.sql` (called by `door_go_up`/`door_hit_bottom`); `Bsp.boxAreas` in `src/bsp.js`; `mark_faces` in `sql/render.sql` |
 | interpolation between tics, local prediction | `src/main.js`: `viewRow`, `interpolateFrame`, `poseOf`; the eye clamp in `view_setup` |
 | view kicks, landing dips, bob, gun sway, zoom | `src/scene.js` `firstPersonView`, `zoomedFov`; the zoom key and sensitivity in `src/main.js` (tested by `npm run test:view`); the hit's source in `t_damage`, the fall's size in `impact` |
 | shader features (chrome, deforms, autosprite) | `surfaceLook`, `parseDeform`, `deformVertex`, `envTexCoords` in `src/shader.js`; the world shaders in `src/renderer-gl.js`; `chromeFace` and `autospriteQuads` in `src/renderer.js` |
