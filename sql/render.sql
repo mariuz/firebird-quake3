@@ -388,15 +388,19 @@ BEGIN
   END
 END^
 
--- FRAME_PORTAL: what a portal's camera sees (R_MirrorViewBySurface's second view), for the page to paint
--- behind the portal surface. The eye and its axes come from the page (the camera's, turned as the viewer
--- turns; roll included, so no trace or clamp as VIEW_SETUP does); the PVS is the camera's, its faces kept
--- in PORTAL_FACES while the camera stays in its cluster. Rows as FRAME_ALL's: the world faces (kind 1) and
--- the models in the frustum (kind 2).
+-- FRAME_PORTAL: what a portal's camera or a mirror sees (R_MirrorViewBySurface's second view), for the page to
+-- paint behind the surface. The eye and its axes come from the page (the camera's, turned as the viewer
+-- turns, or the eye reflected in the mirror; roll included, so no trace or clamp as VIEW_SETUP does); the PVS
+-- is the one at px..pz (the camera, the mirror's surface entity), its faces kept in PORTAL_FACES while that
+-- stays in its cluster. A mirror's clip plane (cnx..cd, zero for none) leaves out the faces wholly behind it
+-- and the models whose origin is (the painters cut what straddles it).
+-- Rows as FRAME_ALL's: the world faces (kind 1) and the models in the frustum (kind 2).
 CREATE OR ALTER PROCEDURE frame_portal (ex DOUBLE PRECISION, ey DOUBLE PRECISION, ez DOUBLE PRECISION,
                                         fx DOUBLE PRECISION, fy DOUBLE PRECISION, fz DOUBLE PRECISION,
                                         rx DOUBLE PRECISION, ry DOUBLE PRECISION, rz DOUBLE PRECISION,
-                                        ux DOUBLE PRECISION, uy DOUBLE PRECISION, uz DOUBLE PRECISION, vfov DOUBLE PRECISION)
+                                        ux DOUBLE PRECISION, uy DOUBLE PRECISION, uz DOUBLE PRECISION, vfov DOUBLE PRECISION,
+                                        px DOUBLE PRECISION, py DOUBLE PRECISION, pz DOUBLE PRECISION,
+                                        cnx DOUBLE PRECISION, cny DOUBLE PRECISION, cnz DOUBLE PRECISION, cd DOUBLE PRECISION)
 RETURNS (kind SMALLINT, i1 INTEGER, i2 INTEGER, i3 INTEGER, i4 INTEGER, i5 INTEGER,
          d1 DOUBLE PRECISION, d2 DOUBLE PRECISION, d3 DOUBLE PRECISION, d4 DOUBLE PRECISION, d5 DOUBLE PRECISION,
          d6 DOUBLE PRECISION, d7 DOUBLE PRECISION, d8 DOUBLE PRECISION, d9 DOUBLE PRECISION, s VARCHAR(200),
@@ -412,7 +416,7 @@ BEGIN
   SELECT c.w, c.h, c.near_z, c.portal_cluster FROM viewcfg c WHERE c.id = 1 INTO w, h, nearz, cur;
   kx = TAN(vfov * 0.5e0 * 0.0174532925e0); ky = kx * h / w;
   qx = SQRT(1 + kx * kx); qy = SQRT(1 + ky * ky);
-  leaf = point_leaf(ex, ey, ez);
+  leaf = point_leaf(px, py, pz);
   SELECT l.pvs, l.cluster FROM leaves l WHERE l.id = :leaf INTO pvs, vcl;
   IF (pvs IS NULL) THEN pvs = '';
   IF (vcl IS NULL) THEN vcl = -1;
@@ -434,6 +438,7 @@ BEGIN
   SELECT LIST(v.face, ',')
     FROM portal_faces v
    WHERE (v.twosided = 1 OR v.nx * :ex + v.ny * :ey + v.nz * :ez - v.dist > 0)
+     AND v.cx * :cnx + v.cy * :cny + v.cz * :cnz - :cd >= -v.radius
      AND (v.cx - :ex) * :fx + (v.cy - :ey) * :fy + (v.cz - :ez) * :fz + v.radius >= :nearz
      AND ABS((v.cx - :ex) * :rx + (v.cy - :ey) * :ry + (v.cz - :ez) * :rz)
          <= ((v.cx - :ex) * :fx + (v.cy - :ey) * :fy + (v.cz - :ez) * :fz) * :kx + v.radius * :qx
@@ -442,12 +447,16 @@ BEGIN
     INTO lst;
   IF (lst IS NOT NULL) THEN SUSPEND;
   lst = NULL; d1 = NULL; d2 = NULL; d3 = NULL; i2 = NULL;
-  -- the models the camera sees (everyone, the player too: it may walk into its own view)
+  -- the models the camera sees (everyone, the player too: it may walk into its own view; and in a mirror, the
+  -- player's body, which only mirror views draw: RF_THIRD_PERSON)
   kind = 2;
   FOR SELECT e.id, e.model_id, e.frame, e.weapon, e.effects, e.x, e.y, e.z, e.pitch, e.yaw, e.roll, e.legs_time, e.torso_time,
              e.pmodel, e.pskin, e.legs_anim, e.torso_anim, e.health, e.classname, e.cluster, e.clusters
         FROM ents e LEFT JOIN models m ON m.id = e.model_id
-       WHERE (m.kind IN ('M', 'S') OR e.pmodel IS NOT NULL) AND e.alpha = 0
+       WHERE (m.kind IN ('M', 'S') OR e.pmodel IS NOT NULL)
+         AND (e.alpha = 0 OR (e.classname = 'player' AND e.health > 0 AND (:cnx <> 0 OR :cny <> 0 OR :cnz <> 0)
+                              AND EXISTS (SELECT 1 FROM player p WHERE p.id = 1 AND p.spectator = 0)))
+         AND e.x * :cnx + e.y * :cny + e.z * :cnz - :cd >= 0
          AND (e.x - :ex) * :fx + (e.y - :ey) * :fy + (e.z - :ez) * :fz + COALESCE(m.radius, 0) + 64 >= :nearz
          AND ABS((e.x - :ex) * :rx + (e.y - :ey) * :ry + (e.z - :ez) * :rz)
              <= ((e.x - :ex) * :fx + (e.y - :ey) * :fy + (e.z - :ez) * :fz + COALESCE(m.radius, 0) + 64) * :kx + COALESCE(m.radius, 0) + 64

@@ -74,6 +74,8 @@ uniform float uLightScale;
 uniform sampler2D uPortal;
 uniform vec2 uScreen;
 uniform float uPortalK;
+uniform int uPortalFlip;  // a mirror's view, painted upright, is read right to left
+uniform vec4 uClip;       // a mirror's clip plane: what lies behind it (dot < w) is not drawn; 0 0 0 0 none
 uniform float uFlat;
 uniform vec2 uScroll;
 uniform vec2 uScale;
@@ -140,6 +142,7 @@ float fogAmount() {
   return f;
 }
 void main() {
+  if (dot(vWorld, uClip.xyz) < uClip.w) discard;
   if (uMode == 5) { fragColor = vec4(dlights(), 1.0); return; }
   if (uMode == 6) { fragColor = vec4(uFogColor, fogAmount()); return; }
   if (uMode == 4) {
@@ -164,7 +167,12 @@ void main() {
     fragColor = vec4(min(rgb, 1.0), c.a);
     return;
   }
-  if (uMode == 3) { fragColor = vec4(texture(uPortal, gl_FragCoord.xy / uScreen).rgb * uPortalK, 1.0); return; }
+  if (uMode == 3) {
+    vec2 sc = gl_FragCoord.xy / uScreen;
+    if (uPortalFlip == 1) sc.x = 1.0 - sc.x;
+    fragColor = vec4(texture(uPortal, sc).rgb * uPortalK, 1.0);
+    return;
+  }
   if (uMode == 2) {
     vec3 d = normalize(vWorld - uEye);
     float nz = max(0.12, abs(d.z));
@@ -229,8 +237,10 @@ uniform int uFogHasPlane;
 uniform float uFogOpaque;
 uniform vec3 uEye;
 uniform vec3 uFwd;
+uniform vec4 uClip;
 out vec4 fragColor;
 void main() {
+  if (dot(vWorld, uClip.xyz) < uClip.w) discard;
   vec4 c = texture(uTex, vSt);
   if (uAlphaTest == 1 && c.a < 0.5) discard;
   vec3 rgb = c.rgb * vLight * uTint;
@@ -585,6 +595,8 @@ export class GLRenderer {
     gl.uniformMatrix4fv(u.uView, false, this.viewM);
     gl.uniform1i(u.uTex, 0); gl.uniform1i(u.uLightmap, 1); gl.uniform1i(u.uSky2, 2); gl.uniform1i(u.uEnv, 3); gl.uniform1i(u.uPortal, 4);
     gl.uniform2f(u.uScreen, this.canvas.width, this.canvas.height);
+    const cp = this.clipPlane ?? [0, 0, 0, 0];
+    gl.uniform4f(u.uClip, cp[0], cp[1], cp[2], cp[3]);
     gl.uniform3f(u.uEye, this.view.x, this.view.y, this.view.z);
     gl.uniform3f(u.uFwd, this.view.fwd[0], this.view.fwd[1], this.view.fwd[2]);
     gl.uniform1f(u.uTime, this.time);
@@ -596,8 +608,10 @@ export class GLRenderer {
     }
   }
 
-  /** The view through a portal is painted into a texture of the canvas's size (R_MirrorViewBySurface's view) */
-  beginPortalView() {
+  /** The view through a portal is painted into a texture of the canvas's size (R_MirrorViewBySurface's view);
+   *  a mirror's clip plane [nx, ny, nz, d] cuts off what lies behind it while it is painted */
+  beginPortalView(clip = null) {
+    this.clipPlane = clip;
     const gl = this.gl, w = this.canvas.width, h = this.canvas.height;
     if (!this.portalFb || this.portalW !== w || this.portalH !== h) {
       if (this.portalFb) { gl.deleteFramebuffer(this.portalFb); gl.deleteTexture(this.portalTex); gl.deleteRenderbuffer(this.portalDepth); }
@@ -621,9 +635,9 @@ export class GLRenderer {
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.portalFb);
     this.portalFaces = null;
   }
-  endPortalView(k, faces) {
+  endPortalView(k, faces, flip = false) {
     this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, null);
-    this.portalK = k; this.portalFaces = faces;
+    this.portalK = k; this.portalFaces = faces; this.portalFlip = flip; this.clipPlane = null;
   }
 
   /** The frame's dynamic lights: [{ x, y, z, radius, color: [r, g, b] }], at most 8 */
@@ -637,6 +651,7 @@ export class GLRenderer {
       gl.activeTexture(gl.TEXTURE4); gl.bindTexture(gl.TEXTURE_2D, this.portalTex ?? null);
       gl.uniform1i(u.uMode, 3);
       gl.uniform1f(u.uPortalK, this.portalTex ? this.portalK ?? 0 : 0);
+      gl.uniform1i(u.uPortalFlip, this.portalFlip ? 1 : 0);
       gl.disable(gl.CULL_FACE);
       this.setBlend('opaque');
       gl.drawElements(gl.TRIANGLES, g.count, gl.UNSIGNED_INT, g.first * 4);
@@ -869,6 +884,8 @@ export class GLRenderer {
     const tint = opts.tint ?? [1, 1, 1];
     gl.uniform3f(u.uTint, tint[0], tint[1], tint[2]);
     gl.uniform1i(u.uTex, 0);
+    const cp = this.clipPlane ?? [0, 0, 0, 0];
+    gl.uniform4f(u.uClip, cp[0], cp[1], cp[2], cp[3]);
     const blend = opts.blend ?? 'opaque';
     // in a fog volume (an opaque model, not the view weapon): fogged per pixel as the world is
     const fog = blend === 'opaque' && !opts.near && !opts.shell ? entityFog(this.fogs, origin, mdl.frames[fr]?.radius ?? 0) : null;

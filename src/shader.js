@@ -67,6 +67,7 @@ export function parseShaderScript(text, into = new Map()) {
             case 'tcgen': st.tcGen = (args[0] ?? '').toLowerCase(); break;
             case 'rgbgen': st.rgbGen = args.map((x) => x.toLowerCase()); break;
             case 'depthwrite': st.depthWrite = true; break;
+            case 'alphagen': st.alphaGen = args.map((x) => x.toLowerCase()); break;
             default: break;
           }
         }
@@ -213,6 +214,11 @@ export function surfaceLook(shaders, name) {
   if (!sh) { look.image = name; return look; }
   look.autosprite = sh.deforms.some((d) => d[0] === 'autosprite' || d[0] === 'autosprite2');
   look.portal = !!sh.portal;
+  // alphaGen portal [range]: the view fades into the stage over that many units (256); without it, never
+  if (look.portal) {
+    const ag = sh.stages.find((s) => s.alphaGen?.[0] === 'portal');
+    look.portalRange = ag ? Number(ag.alphaGen[1]) || 256 : 0;
+  }
   const deforms = sh.deforms.map(parseDeform).filter(Boolean);
   if (deforms.length) look.deforms = deforms.slice(0, 2);
   look.twoSided = sh.cull === 'none';

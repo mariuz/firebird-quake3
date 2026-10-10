@@ -34,7 +34,8 @@ explosion sprites, beams) and nothing else. The renderers never query the databa
   `PORT=8085 node scripts/build.mjs --serve --coi`; 8080 and 8081 are usually busy. A background tab
   throttles the loop to about one frame a second, so override `document.hidden` and, for anything
   heavy, run SQL through the page's console (`#sql`, `#run-sql`, `#sql-out`). Close the tab and stop
-  the server (it is a `node scripts/build.mjs --serve` process) when done. Without Chrome, headless
+  the server (it is a `node scripts/build.mjs --serve` process) when done. The server serves `dist/`, built
+  when it starts: restart it after editing `src/` or `sql/`, or the page runs the old code. Without Chrome, headless
   Chromium runs the page, WebGL and Firebird WASM included: `playwright-core` with
   `executablePath` the `headless_shell` under `/opt/pw-browsers/chromium_headless_shell-*` and
   `--use-angle=swiftshader --enable-unsafe-swiftshader`; seed `localStorage` (`firebird-quake3:settings`)
@@ -73,7 +74,7 @@ explosion sprites, beams) and nothing else. The renderers never query the databa
 | interpolation between tics, local prediction | `src/main.js`: `viewRow`, `interpolateFrame`, `poseOf`; the eye clamp in `view_setup` |
 | view kicks, landing dips, bob, gun sway, zoom | `src/scene.js` `firstPersonView`, `zoomedFov`; the zoom key and sensitivity in `src/main.js` (tested by `npm run test:view`); the hit's source in `t_damage`, the fall's size in `impact` |
 | shader features (chrome, deforms, autosprite) | `surfaceLook`, `parseDeform`, `deformVertex`, `envTexCoords` in `src/shader.js`; the world shaders in `src/renderer-gl.js`; `chromeFace` and `autospriteQuads` in `src/renderer.js` |
-| portals (q3dm7's teleporter view) | `findPortals`, `portalView`, `portalFade` in `src/scene.js` and its portal pass in `drawScene`; `portalFrame` in `src/main.js`; `FRAME_PORTAL` in `sql/render.sql`; `beginPortalView`/`endPortalView` in both painters |
+| portals (q3dm7's teleporter view), mirrors | `findPortals`, `portalView`, `mirrorView`, `portalFade` in `src/scene.js`; `clipFace` in `src/renderer.js`, `uClip` in `src/renderer-gl.js` and its portal pass in `drawScene`; `portalFrame` in `src/main.js`; `FRAME_PORTAL` in `sql/render.sql`; `beginPortalView`/`endPortalView` in both painters |
 | fog volumes | `fogparms` in `src/shader.js`, the fogs lump in `src/bsp.js`; `fogDefs`, `fogST`, `fogFactor`, `fogFace` in `src/renderer.js`, the world shader's fog in `src/renderer-gl.js` |
 | dynamic lights | `sceneLights`, `litByDlights` in `src/scene.js`; `setDlights` and the world shader's `dlights()` in `src/renderer-gl.js`, `dlightFace`/`dlightSpans` in `src/renderer.js` |
 | smoke trails, brass | `missileTrail`, `ejectBrass`, `moveBrass` in `src/scene.js` (brass collides through `Bsp.pointContents`); kind 17 from `fire_weapon` |

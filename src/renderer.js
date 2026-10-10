@@ -94,6 +94,41 @@ export function md3Lod(mdl, frame, origin, view, tanY) {
 // the weapons' models under models/weapons2/, by WP bit
 const WEAPON_DIRS = { 1: 'gauntlet/gauntlet', 2: 'machinegun/machinegun', 4: 'shotgun/shotgun', 8: 'grenadel/grenadel', 16: 'rocketl/rocketl', 32: 'lightning/lightning', 64: 'railgun/railgun', 128: 'plasma/plasma', 256: 'bfg/bfg' };
 
+/**
+ * A world face cut by a plane [nx, ny, nz, d]: itself when wholly in front, null when wholly behind, else a
+ * copy of what is in front (a polygon clipped as one, a triangle list triangle by triangle), its vertices'
+ * attributes interpolated.
+ */
+export function clipFace(f, [nx, ny, nz, d]) {
+  const V = f.verts, m = f.nverts, dist = new Float64Array(m);
+  let front = 0;
+  for (let k = 0; k < m; k++) { dist[k] = V[k * 10] * nx + V[k * 10 + 1] * ny + V[k * 10 + 2] * nz - d; if (dist[k] >= 0) front++; }
+  if (front === m) return f;
+  if (front === 0) return null;
+  const clipRing = (ring) => {
+    const out = [];
+    for (let i = 0; i < ring.length; i++) {
+      const a = ring[i], b = ring[(i + 1) % ring.length];
+      if (dist[a] >= 0) out.push([a]);
+      if ((dist[a] >= 0) !== (dist[b] >= 0)) out.push([a, b, dist[a] / (dist[a] - dist[b])]);
+    }
+    return out;
+  };
+  const pieces = [];
+  if (f.fan !== false) pieces.push(clipRing([...Array(m).keys()]));
+  else for (let k = 0; k + 2 < f.tris.length; k += 3) pieces.push(clipRing([f.tris[k], f.tris[k + 1], f.tris[k + 2]]));
+  const verts = [], tris = [];
+  for (const p of pieces) {
+    if (p.length < 3) continue;
+    const base = verts.length / 10;
+    for (const [a, b, t] of p) for (let j = 0; j < 10; j++) verts.push(b === undefined ? V[a * 10 + j] : V[a * 10 + j] + (V[b * 10 + j] - V[a * 10 + j]) * t);
+    for (let j = 1; j + 1 < p.length; j++) tris.push(base, base + j, base + j + 1);
+  }
+  if (!tris.length) return null;
+  const single = pieces.length === 1;
+  return { ...f, verts: new Float32Array(verts), nverts: verts.length / 10, tris, fan: single, norms: null };
+}
+
 export class Renderer {
   constructor(canvas, res, opts = {}) {
     this.canvas = canvas;
@@ -279,9 +314,10 @@ export class Renderer {
   setDlights(lights) { this.dlights = lights ?? []; }
 
   /** The view through a portal is painted into the frame like any other, then kept: */
-  beginPortalView() { this.portalFaces = null; }
+  beginPortalView(clip = null) { this.portalFaces = null; this.clipPlane = clip; }
   /** ... its pixels for the portal's faces, k of them through the portal's fog (none without a view) */
-  endPortalView(k, faces) {
+  endPortalView(k, faces, flip = false) {
+    this.portalFlip = flip; this.clipPlane = null;
     if (faces && k > 0) {
       if (!this.portalImg || this.portalImg.length !== this.fb.length) this.portalImg = new Uint32Array(this.fb.length);
       this.portalImg.set(this.fb);
@@ -304,7 +340,7 @@ export class Renderer {
         if (iz <= zb[idx]) continue;
         zb[idx] = iz * 0.99998;
         if (!img || k <= 0) { fb[idx] = 0xff000000; continue; }
-        const c = img[idx];
+        const c = this.portalFlip ? img[y * w + w - 1 - x] : img[idx];
         fb[idx] = (0xff000000 | ((((c >> 16) & 255) * k) << 16) | ((((c >> 8) & 255) * k) << 8) | ((c & 255) * k)) >>> 0;
       }
     }
@@ -405,8 +441,14 @@ export class Renderer {
     for (let ri = 0; ri < rows.length; ri++) {
       const row = rows[ri];
       const face = row[0], ent = row[1], ox = row[2], oy = row[3], oz = row[4];
-      const info = this.faceInfo.get(face);
+      let info = this.faceInfo.get(face);
       if (!info) continue;
+      if (this.clipPlane && !ent && !info.look.deforms) {
+        // a mirror's view: what lies behind the mirror is cut off (the clip plane R_MirrorViewBySurface sets)
+        const cf = clipFace(info.f, this.clipPlane);
+        if (!cf) continue;
+        if (cf !== info.f) info = { ...info, f: cf };
+      }
       const { f, look } = info;
       if (look.nodraw || !f.nverts) continue;
       const lx = view.x - ox, ly = view.y - oy, lz = view.z - oz;

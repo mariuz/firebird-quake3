@@ -39,7 +39,9 @@ const parseVec3 = (s) => (s ?? '0 0 0').trim().split(/\s+/).map(Number);
 /**
  * The map's portals: each misc_portal_surface, the camera it targets (looking at its own target, rolled by
  * "roll") and the faces whose shader is a portal within 64 units of the surface's plane. { faces: Set,
- * origin, plane: [n, d] (unoriented), camera: { origin, axis: [fwd, left, up] } }
+ * origin, plane: [n, d] (unoriented), camera: { origin, axis: [fwd, left, up] }, range } A surface with no
+ * target is a mirror (SP_misc_portal_surface: origin2 = origin): { mirror: true, faces, origin, plane, range }.
+ * range is the shader's alphaGen portal (0: none, the view never fades).
  */
 export function findPortals(bsp, look) {
   const ents = bsp.entities ?? [], out = [];
@@ -50,13 +52,30 @@ export function findPortals(bsp, look) {
     const at = (k) => [V[k * 10], V[k * 10 + 1], V[k * 10 + 2]];
     const a = at(T[0]), b = at(T[1]), c = at(T[2]);
     const n = norm3(cross3(sub3(c, a), sub3(b, a)));   // PlaneFromPoints
-    portalFaces.push({ i, n, d: dot3(n, a), center: f.center });
+    portalFaces.push({ i, n, d: dot3(n, a), center: f.center, range: look(bsp.textures[f.texture]?.name ?? '').portalRange });
   });
-  for (const s of ents) {
-    if (s.classname !== 'misc_portal_surface' || !s.target) continue;
+  // each face belongs to a surface entity within 64 units of its plane (R_GetPortalOrientations), the nearest
+  // one when several are (OpenArena's mirror floors share a plane)
+  const surfs = ents.filter((e) => e.classname === 'misc_portal_surface').map((e) => ({ e, o: parseVec3(e.origin), faces: [] }));
+  for (const p of portalFaces) {
+    let best = null, bd = Infinity;
+    for (const sf of surfs) {
+      if (Math.abs(dot3(p.n, sf.o) - p.d) > 64) continue;
+      const dd = Math.hypot(sf.o[0] - p.center[0], sf.o[1] - p.center[1], sf.o[2] - p.center[2]);
+      if (dd < bd) { bd = dd; best = sf; }
+    }
+    best?.faces.push(p);
+  }
+  const centre = (faces) => [0, 1, 2].map((k) => faces.reduce((a, p) => a + p.center[k], 0) / faces.length);
+  for (const { e: s, o, faces } of surfs) {
+    if (!faces.length) continue;
+    if (!s.target) {
+      out.push({ mirror: true, faces: new Set(faces.map((p) => p.i)), origin: o, plane: [faces[0].n, faces[0].d], center: centre(faces), range: faces[0].range });
+      continue;
+    }
     const cam = ents.find((e) => e.classname === 'misc_portal_camera' && e.targetname === s.target);
-    if (!cam) continue;   // a mirror (no camera): not drawn
-    const o = parseVec3(s.origin), co = parseVec3(cam.origin);
+    if (!cam) continue;   // G_Printf "Couldn't find target", freed
+    const co = parseVec3(cam.origin);
     const tgt = cam.target ? ents.find((e) => e.targetname === cam.target) : null;
     let dir;
     if (tgt) dir = norm3(sub3(parseVec3(tgt.origin), co));
@@ -68,9 +87,7 @@ export function findPortals(bsp, look) {
     let left = e1.map((v) => -v), up = e2;
     const roll = Number(cam.roll) || 0;
     if (roll) { left = rotateAround(fwd, left, roll); up = cross3(fwd, left); }
-    const faces = portalFaces.filter((p) => Math.abs(dot3(p.n, o) - p.d) <= 64);
-    if (!faces.length) continue;
-    out.push({ faces: new Set(faces.map((p) => p.i)), origin: o, plane: [faces[0].n, faces[0].d], center: faces[0].center, camera: { origin: co, axis: [fwd, left, up] } });
+    out.push({ faces: new Set(faces.map((p) => p.i)), origin: o, plane: [faces[0].n, faces[0].d], center: centre(faces), camera: { origin: co, axis: [fwd, left, up] }, range: faces[0].range });
   }
   return out;
 }
@@ -90,20 +107,48 @@ export function portalView(portal, view) {
   const f = [Math.cos(pitch) * Math.cos(yaw), Math.cos(pitch) * Math.sin(yaw), -Math.sin(pitch)];
   const left = [-Math.sin(yaw), Math.cos(yaw), 0], up = cross3(f, left);
   const F = norm3(carry(f)), L = norm3(carry(left)), U = norm3(carry(up));
+  return { ...viewFromAxes(portal.camera.origin, F, L, U, view.fov), pvs: portal.camera.origin };
+}
+
+/**
+ * R_MirrorViewBySurface for a mirror: the eye and its axes reflected in the mirror's plane (R_MirrorPoint,
+ * R_MirrorVector with the camera's forward the surface's negated). The reflection turns the view inside out;
+ * the painters take only upright frames, so the left axis is turned back and the picture is read
+ * right to left (flip). clip: the plane (normal toward the viewer, dist) whatever lies behind is cut off at, as
+ * the mirror's clip plane does; pvs: the surface entity's origin (pvsOrigin).
+ */
+export function mirrorView(portal, view) {
+  let [n, d] = portal.plane;
+  const eye = [view.x, view.y, view.z];
+  if (dot3(n, eye) - d < 0) { n = n.map((v) => -v); d = -d; }
+  const refl = (v) => { const k = 2 * dot3(n, v); return [v[0] - k * n[0], v[1] - k * n[1], v[2] - k * n[2]]; };
+  const yaw = (view.yaw * Math.PI) / 180, pitch = (view.pitch * Math.PI) / 180;
+  const f = [Math.cos(pitch) * Math.cos(yaw), Math.cos(pitch) * Math.sin(yaw), -Math.sin(pitch)];
+  const left = [-Math.sin(yaw), Math.cos(yaw), 0], up = cross3(f, left);
+  const e = dot3(n, eye) - d;
+  const o = [eye[0] - 2 * e * n[0], eye[1] - 2 * e * n[1], eye[2] - 2 * e * n[2]];
+  return { ...viewFromAxes(o, refl(f), refl(left).map((v) => -v), refl(up), view.fov), flip: true, clip: [n[0], n[1], n[2], d], pvs: portal.origin };
+}
+
+/** A view as the painters take it (yaw, pitch, roll and the axes) from an eye and upright axes forward, left, up */
+function viewFromAxes(origin, F, L, U, fov) {
   // as yaw, pitch and roll (beginFrame builds right = R0 cos r + U0 sin r from them)
   const py = Math.atan2(F[1], F[0]), pp = -Math.asin(Math.max(-1, Math.min(1, F[2])));
   const R0 = [Math.sin(py), -Math.cos(py), 0], U0 = [Math.sin(pp) * Math.cos(py), Math.sin(pp) * Math.sin(py), Math.cos(pp)];
   const right = L.map((v) => -v);
   const roll = Math.atan2(dot3(right, U0), dot3(right, R0));
-  const [x, y, z] = portal.camera.origin;
-  return { x, y, z, yaw: (py * 180) / Math.PI, pitch: (pp * 180) / Math.PI, roll: (roll * 180) / Math.PI, fov: view.fov, fwd: F, right, up: U };
+  const [x, y, z] = origin;
+  return { x, y, z, yaw: (py * 180) / Math.PI, pitch: (pp * 180) / Math.PI, roll: (roll * 180) / Math.PI, fov, fwd: F, right, up: U };
 }
 
-/** How much of the portal's view shows through: alphaGen portal 256 fogs it over in 256 units */
+/** How much of the portal's view shows through: alphaGen portal 256 fogs it over in 256 units; a shader without
+ *  it (OpenArena's mirrors) shows it at any distance */
 export const PORTAL_RANGE = 256;
 export function portalFade(portal, view) {
+  const range = portal.range ?? PORTAL_RANGE;
+  if (!range) return 1;
   const c = portal.center ?? portal.origin;
-  return Math.max(0, 1 - Math.hypot(view.x - c[0], view.y - c[1], view.z - c[2]) / PORTAL_RANGE);
+  return Math.max(0, 1 - Math.hypot(view.x - c[0], view.y - c[1], view.z - c[2]) / range);
 }
 
 // The dynamic lights (trap_R_AddLightToScene): radius and colour. A rocket and a BFG ball in flight (CG_Missile's
@@ -669,7 +714,7 @@ export function drawScene(renderer, hud, res, bsp, last, frame, opts = {}) {
     // the view through the portal first, painted off screen; the portal's faces show it (R_MirrorViewBySurface)
     const p = opts.portal;
     r.setDlights([]);
-    r.beginPortalView();
+    r.beginPortalView(p.view?.clip ?? null);
     if (p.frame) {
       r.beginFrame({ ...p.view });
       r.drawFaceList(p.frame.faces, time, p.brushAngles ?? new Map());
@@ -687,7 +732,7 @@ export function drawScene(renderer, hud, res, bsp, last, frame, opts = {}) {
       }
       r.drawAlphaPolys();
     }
-    r.endPortalView(p.frame ? p.fade : 0, p.faces);
+    r.endPortalView(p.frame ? p.fade : 0, p.faces, !!p.view?.flip);
   } else r.endPortalView?.(0, null);
   r.beginFrame(view);
   const lights = opts.dlights === false ? [] : sceneLights(state, frame, last, view, time);

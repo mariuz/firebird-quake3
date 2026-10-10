@@ -6,8 +6,8 @@
 //   node scripts/view-test.mjs
 
 import fs from 'node:fs';
-import { FrameState, firstPersonView, zoomedFov, fovY, mapTorsoToWeaponFrame, viewTorsoFrame, underwaterFov, sceneLights, litByDlights, MAX_DLIGHTS, drawRail, drawBolt, findPortals, portalView, portalFade, perpendicular, floorBelow, drawShadows } from '../src/scene.js';
-import { Renderer, tagTransform, autospriteQuads, fogST, fogFactor, md3Lod, entityFog } from '../src/renderer.js';
+import { FrameState, firstPersonView, zoomedFov, fovY, mapTorsoToWeaponFrame, viewTorsoFrame, underwaterFov, sceneLights, litByDlights, MAX_DLIGHTS, drawRail, drawBolt, findPortals, portalView, mirrorView, portalFade, perpendicular, floorBelow, drawShadows } from '../src/scene.js';
+import { Renderer, tagTransform, autospriteQuads, fogST, fogFactor, md3Lod, entityFog, clipFace } from '../src/renderer.js';
 import { parseDeform, waveValue, deformVertex, envTexCoords, parseShaderScript, surfaceLook, shellMesh, eyeInModel, stageBrightness } from '../src/shader.js';
 import { Md3, parseAnimationCfg, parseSkin } from '../src/md3.js';
 import { postgameMedals } from '../src/hud.js';
@@ -300,6 +300,38 @@ const markBsp = {
   const rolled = findPortals({ ...bsp, entities: bsp.entities.map((e) => (e.classname === 'misc_portal_camera' ? { ...e, roll: '180' } : e)) }, (n) => ({ portal: n === 'portal' }));
   const upside = portalView(rolled[0], { x: 0, y: 100, z: 0, yaw: 270, pitch: 0, fov: 90 });
   assert(Math.abs(upside.up[2] + 1) < 1e-6 && Math.abs(Math.abs(upside.roll) - 180) < 1e-6, 'a camera rolled 180 turns the view over');
+
+  // a mirror: the same surface with no target (SP_misc_portal_surface); the eye and its axes reflected in its
+  // plane, the picture read right to left, what lies behind the plane cut off, the PVS at the surface entity
+  const mirrors = findPortals({ ...bsp, entities: [{ classname: 'misc_portal_surface', origin: '0 4 0' }] }, (n) => ({ portal: n === 'portal', portalRange: 0 }));
+  assert(mirrors.length === 1 && mirrors[0].mirror && mirrors[0].faces.has(0), 'a portal surface without a target is a mirror');
+  const mv = mirrorView(mirrors[0], { x: 30, y: 100, z: 10, yaw: 240, pitch: 20, fov: 90 });
+  const yaw = (240 * Math.PI) / 180, pit = (20 * Math.PI) / 180;
+  const f = [Math.cos(pit) * Math.cos(yaw), Math.cos(pit) * Math.sin(yaw), -Math.sin(pit)];
+  assert(Math.abs(mv.x - 30) < 1e-9 && Math.abs(mv.y + 100) < 1e-9 && Math.abs(mv.z - 10) < 1e-9
+    && Math.abs(mv.fwd[0] - f[0]) < 1e-6 && Math.abs(mv.fwd[1] + f[1]) < 1e-6 && Math.abs(mv.fwd[2] - f[2]) < 1e-6 && Math.abs(mv.up[2] - Math.cos(pit)) < 1e-6,
+    `the mirror's eye is the eye reflected in its plane, looking along the reflected sight line, upright (${[mv.x, mv.y, mv.z].join()}, forward ${mv.fwd.map((x) => x.toFixed(2)).join(' ')})`);
+  const c = [mv.fwd[1] * mv.right[2] - mv.fwd[2] * mv.right[1], mv.fwd[2] * mv.right[0] - mv.fwd[0] * mv.right[2], mv.fwd[0] * mv.right[1] - mv.fwd[1] * mv.right[0]];
+  assert(mv.flip && Math.hypot(c[0] + mv.up[0], c[1] + mv.up[1], c[2] + mv.up[2]) < 1e-6 && mv.clip.join() === '0,1,0,0' && mv.pvs.join() === '0,4,0',
+    'the mirror\'s view is an upright frame read right to left, clipped at the mirror\'s plane on the viewer\'s side, its PVS the surface entity\'s');
+  const back = mirrorView(mirrors[0], { x: 0, y: -50, z: 0, yaw: 90, pitch: 0, fov: 90 });
+  assert(Math.abs(back.y - 50) < 1e-9 && back.clip.join() === '0,-1,0,0', 'from the other side the mirror reflects the other way');
+  assert(portalFade(mirrors[0], { x: 0, y: 5000, z: 0 }) === 1 && portalFade({ ...portals[0], range: 128 }, { x: 0, y: 64, z: 0 }) === 0.5,
+    'a portal shader without alphaGen portal shows the view at any distance; alphaGen portal 128 halves it at 64');
+  const shaders = parseShaderScript('textures/a/mirror\n{\n portal\n {\n  map textures/common/invisible.tga\n  blendfunc gl_one gl_one_minus_src_alpha\n }\n}\ntextures/a/gate\n{\n portal\n {\n  map textures/sfx/portalfog.tga\n  alphagen portal 128\n }\n}\n');
+  assert(surfaceLook(shaders, 'textures/a/mirror').portalRange === 0 && surfaceLook(shaders, 'textures/a/gate').portalRange === 128, 'the shader\'s alphaGen portal range is read (none: 0)');
+
+  // the software painter cuts a mirror's view at its plane itself: a face wholly in front kept, wholly behind
+  // dropped, straddling cut with its attributes carried
+  const quad = { ...face, fan: true };
+  assert(clipFace(quad, [0, 1, 0, -1]) === quad && clipFace(quad, [0, 1, 0, 1]) === null, 'a face wholly in front of the plane is kept, one wholly behind is dropped');
+  const half = clipFace({ ...quad, verts: Float32Array.from(quad.verts, (x, i) => (i % 10 === 3 ? quad.verts[i - 3] : x)) }, [1, 0, 0, 0]);
+  const xs = [], ss = [];
+  for (let k = 0; k < half.nverts; k++) { xs.push(half.verts[k * 10]); ss.push(half.verts[k * 10 + 3]); }
+  assert(half.fan && half.nverts === 4 && Math.min(...xs) === 0 && Math.max(...xs) === 32 && xs.every((x, k) => x === ss[k]) && half.tris.length === 6,
+    `a polygon across the plane keeps the part in front, its texture coordinates carried (x ${xs.join(' ')})`);
+  const tri = clipFace({ ...quad, fan: false }, [1, 0, 0, 0]);
+  assert(!tri.fan && tri.tris.length === 3 * 3, `a triangle list is cut triangle by triangle (${tri.tris.length / 3} triangles)`);
 }
 
 // the blob shadows (CG_PlayerShadow): the floor found within 128 units, the shadow darker the nearer it is

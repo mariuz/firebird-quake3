@@ -20,7 +20,7 @@ import { loadShaders } from './shader.js';
 import { Renderer } from './renderer.js';
 import { GLRenderer } from './renderer-gl.js';
 import { Hud } from './hud.js';
-import { FrameState, drawScene, firstPersonView, zoomedFov, fovY, ZOOM_FOV, underwaterFov, findPortals, portalView, portalFade } from './scene.js';
+import { FrameState, drawScene, firstPersonView, zoomedFov, fovY, ZOOM_FOV, underwaterFov, findPortals, portalView, mirrorView, portalFade } from './scene.js';
 import { Q3Audio } from './audio.js';
 
 const $ = (id) => document.getElementById(id);
@@ -444,15 +444,17 @@ function updateStats(ticked) {
   statsEl.textContent = `${fps.toFixed(1)} fps · ${tps.toFixed(0)} tics/s · q3_tic ${perf.tic.toFixed(0)} ms · frame query ${perf.faces.toFixed(0)} ms (${perf.rows} faces) · paint ${perf.draw.toFixed(0)} ms · ${renderer.particles.length} particles${map?.unlinked > 0 ? ` · bots mapping the arena (${map.unlinked} to go, ${perf.graph.toFixed(0)} ms)` : ''}`;
 }
 
-/** A portal on screen and near enough to see through: what its camera sees (FRAME_PORTAL), as drawScene takes it */
+/** A portal or a mirror on screen and near enough to see through: what its camera sees (FRAME_PORTAL), as drawScene takes it */
 async function portalFrame(fr, fpv) {
   if (!map.portals?.length || settings.renderer === 'sql') return null;
-  for (const p of map.portals) {
+  // the nearest on screen (one view a frame)
+  const dist = (p) => { const c = p.center ?? p.origin; return Math.hypot(fpv.x - c[0], fpv.y - c[1], fpv.z - c[2]); };
+  for (const p of [...map.portals].sort((a, b) => dist(a) - dist(b))) {
     if (!fr.faces.some((f) => p.faces.has(f[0]))) continue;
     const fade = portalFade(p, fpv);
     if (fade <= 0) return { faces: p.faces, fade: 0, frame: null };
-    const v = portalView(p, { ...fpv, fov: curFov });
-    const rows = (await db.query(`SELECT * FROM frame_portal(${v.x}, ${v.y}, ${v.z}, ${v.fwd.join(', ')}, ${v.right.join(', ')}, ${v.up.join(', ')}, ${curFov})`, [], arr)).rows;
+    const v = (p.mirror ? mirrorView : portalView)(p, { ...fpv, fov: curFov });
+    const rows = (await db.query(`SELECT * FROM frame_portal(${v.x}, ${v.y}, ${v.z}, ${v.fwd.join(', ')}, ${v.right.join(', ')}, ${v.up.join(', ')}, ${curFov}, ${v.pvs.join(', ')}, ${(v.clip ?? [0, 0, 0, 0]).join(', ')})`, [], arr)).rows;
     const frame = portalState.parse(rows);
     return { faces: p.faces, fade, frame, view: v, brushAngles: portalState.brushAngles };
   }

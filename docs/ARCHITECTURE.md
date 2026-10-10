@@ -875,7 +875,20 @@ paints that view first, off screen (a framebuffer texture in WebGL, a copy of th
 painter), then the main view, where the portal's faces show the off-screen pixels at their own screen
 places, darkened by the distance's fog, under the portal's own stages. The eye stays at the camera:
 Quake III mirrors it behind the camera by the viewer's offset and clips what lies behind the camera's
-plane, which neither painter can.
+plane.
+
+*Mirrors.* A `misc_portal_surface` with no target is a mirror (OpenArena's oa_dm1 has one on a wall, oa_dm2
+mirror floors). Each portal face belongs to the surface entity within 64 units of its plane, the nearest
+when several are. `mirrorView` reflects the eye and its axes in the plane (`R_MirrorPoint`,
+`R_MirrorVector` with the camera's forward the surface's negated); the reflected frame is inside out,
+which neither painter takes, so its left axis is turned back and the picture is read right to left where
+the mirror's faces show it. `FRAME_PORTAL` takes the PVS from the surface entity (`pvsOrigin`) and the
+mirror's plane: it leaves out the faces wholly behind it and the models whose origin is, and in a mirror
+it draws the player's own body (`RF_THIRD_PERSON`, drawn only in mirror views). What straddles the plane
+is cut at it: per pixel in the WebGL painter (`uClip`, the clip plane Quake III sets), by `clipFace` in the
+software one. A portal shader's `alphaGen portal` range (`look.portalRange`) sets how far its view fades
+(none, as OpenArena's mirrors have: never). One portal or mirror is seen through a frame, the nearest on
+screen.
 
 *Dynamic lights* are `trap_R_AddLightToScene`'s, gathered each frame by `sceneLights` from what the
 frame already has: a rocket (effects 16) or a BFG ball (64) in flight at 200, a rocket's or a grenade's

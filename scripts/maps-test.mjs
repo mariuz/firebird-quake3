@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { FirebirdBrowser, DirectTransport } from 'firebird-wasm/browser';
 import { Pk3, PakSet } from '../src/pk3.js';
 import { loadShaders, surfaceLook } from '../src/shader.js';
+import { findPortals, mirrorView } from '../src/scene.js';
 import { createSchema, loadResources, loadMap, SQL_FILES } from '../src/loader.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -50,6 +51,25 @@ async function targetPushes(map) {
     if (Math.hypot(v.VX - p.P1X, v.VY - p.P1Y, v.VZ - p.P1Z) < 1e-6 && Math.hypot(p.P1X, p.P1Y, p.P1Z) > 0 && snds === 1) ok++;
   }
   assert(ok === pushes.length, `${map}: ${ok} of ${pushes.length} target_push give their activator their velocity, the sound once`);
+}
+
+// mirrors (a misc_portal_surface without a target): from 96 units before one, FRAME_PORTAL gives the reflected
+// view's faces and the player's own body, and nothing whose origin is behind the glass
+async function mirrors(map, bsp) {
+  const ms = findPortals(bsp, (n) => surfaceLook(res.shaders, n)).filter((p) => p.mirror);
+  if (!ms.length) return;
+  const p = ms[0], [n, d] = p.plane, c = p.center, side = Math.sign(n[0] * p.origin[0] + n[1] * p.origin[1] + n[2] * p.origin[2] - d) || 1;
+  const eye = [c[0] + n[0] * 96 * side, c[1] + n[1] * 96 * side, c[2] + n[2] * 96 * side];
+  const feet = Math.abs(n[2]) > 0.7 ? [eye[0], eye[1], c[2] + 24 * side] : [eye[0], eye[1], eye[2] - 26];
+  await db.exec(`UPDATE ents SET x = ${feet[0]}, y = ${feet[1]}, z = ${feet[2]}, health = 100 WHERE id = (SELECT ent_id FROM player)`);
+  await db.exec('EXECUTE PROCEDURE link_ent((SELECT ent_id FROM player))');   // its clusters, for the PVS test
+  const yaw = (Math.atan2(-n[1] * side, -n[0] * side) * 180) / Math.PI;
+  const v = mirrorView(p, { x: eye[0], y: eye[1], z: eye[2], yaw: Math.abs(n[2]) > 0.7 ? 0 : yaw, pitch: Math.abs(n[2]) > 0.7 ? 60 * side : 0, fov: 90 });
+  const rows = await q(`SELECT kind, lst, s, d1, d2, d3 FROM frame_portal(${v.x}, ${v.y}, ${v.z}, ${v.fwd.join(', ')}, ${v.right.join(', ')}, ${v.up.join(', ')}, 90, ${v.pvs.join(', ')}, ${v.clip.join(', ')})`);
+  const faces = rows.filter((r) => r.KIND === 1).flatMap((r) => String(r.LST).split(',')).length;
+  const me = rows.some((r) => r.KIND === 2 && String(r.LST).endsWith(',player'));
+  const behind = rows.filter((r) => r.KIND === 2 && r.D1 * v.clip[0] + r.D2 * v.clip[1] + r.D3 * v.clip[2] < v.clip[3]).length;
+  assert(faces > 0 && me && behind === 0, `${map}: ${ms.length} mirrors; before one, its view has ${faces} faces, ${me ? 'the player\'s body' : 'NOT the player\'s body'}, ${behind} models behind the glass`);
 }
 
 // shooter_* (Use_Shooter): a missile of its kind toward its target; a kill by one is the world's ("died", a frag lost)
@@ -97,6 +117,7 @@ for (const m of index) {
     assert(missing.size === 0 && alive === 2 && items > 0 && pak.mapSource(m.map) === m.pack,
       `${m.map} (${m.pack}, "${m.title}"): ${bsp.faces.length} faces, ${items} items, ${alive} players in the world, ${(performance.now() - t).toFixed(0)} ms${missing.size ? `; missing ${[...missing].slice(0, 4).join(', ')}` : ''}`);
     await targetPushes(m.map);
+    await mirrors(m.map, bsp);
     await shooters(m.map);
   } catch (e) {
     assert(false, `${m.map}: ${e.message.split('\n')[0]}`);
