@@ -59,6 +59,27 @@ export function autospriteQuads(f, look, ox = 0, oy = 0, oz = 0) {
 const DLIGHT_LOOK = { blend: 'opaque' };
 const PORTAL_LOOK = { blend: 'opaque' };   // a dlight pass is drawn at once, never kept for the translucent pass
 
+/**
+ * R_ComputeLOD: the level of detail of an MD3 at a place, by the share of the screen's height its frame's
+ * radius covers (ProjectRadius) times r_lodscale (5): (1 - 5 × that) × the levels, so a player's legs go to
+ * their second level at about 320 units and their third at 640 at a 90 degree view. `tanY` is tan(fovY / 2).
+ */
+export const LOD_SCALE = 5;
+export function md3Lod(mdl, frame, origin, view, tanY) {
+  const lods = mdl.lods;
+  if (!lods || lods.length < 2 || !view?.fwd) return mdl;
+  const f = mdl.frames[Math.min(Math.max(frame | 0, 0), mdl.numFrames - 1)];
+  if (!f) return mdl;
+  // RadiusFromBounds
+  let r2 = 0;
+  for (let i = 0; i < 3; i++) { const a = Math.max(Math.abs(f.mins[i]), Math.abs(f.maxs[i])); r2 += a * a; }
+  const fw = view.fwd;
+  const dist = (origin[0] - view.x) * fw[0] + (origin[1] - view.y) * fw[1] + (origin[2] - view.z) * fw[2];
+  const pr = dist > 0 ? Math.min(1, Math.sqrt(r2) / (dist * tanY)) : 0;
+  const flod = pr ? (1 - pr * LOD_SCALE) * lods.length : 0;
+  return lods[Math.min(lods.length - 1, Math.max(0, Math.trunc(flod)))];
+}
+
 // the weapons' models under models/weapons2/, by WP bit
 const WEAPON_DIRS = { 1: 'gauntlet/gauntlet', 2: 'machinegun/machinegun', 4: 'shotgun/shotgun', 8: 'grenadel/grenadel', 16: 'rocketl/rocketl', 32: 'lightning/lightning', 64: 'railgun/railgun', 128: 'plasma/plasma', 256: 'bfg/bfg' };
 
@@ -791,6 +812,7 @@ export class Renderer {
    */
   drawMd3(mdl, frame, origin, axis, skin, light, opts = {}) {
     const view = this.view;
+    mdl = md3Lod(mdl, frame, origin, view, Math.tan((view.fov * Math.PI) / 360) * this.h / this.w);
     const fr = Math.min(Math.max(frame | 0, 0), mdl.numFrames - 1);
     const near = opts.near ?? 4;
     const ox = origin[0] - view.x, oy = origin[1] - view.y, oz = origin[2] - view.z;

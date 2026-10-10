@@ -106,6 +106,18 @@ export async function loadResources(db, pak, { width = 320, height = 240, fov = 
     const f0 = m.frames[0] ?? { mins: [-8, -8, -8], maxs: [8, 8, 8] };
     modelRows.push([id, name, 'M', f0.mins[0], f0.mins[1], f0.mins[2], f0.maxs[0], f0.maxs[1], f0.maxs[2], null, null, null, m.numFrames, m.flags, m.radius]);
   }
+  // the levels of detail (RE_RegisterModel): NAME_1.md3 and NAME_2.md3 beside NAME.md3, kept on the full model,
+  // which alone carries the tags the others are drawn by
+  for (const [name, id] of res.byName) {
+    if (/_\d\.md3$/.test(name)) continue;
+    const lods = [res.models.get(id).mdl];
+    for (let k = 1; k <= 2; k++) {
+      const lid = res.byName.get(name.replace(/\.md3$/, `_${k}.md3`));
+      if (!lid) break;
+      lods.push(res.models.get(lid).mdl);
+    }
+    if (lods.length > 1) lods[0].lods = lods;
+  }
   // sprites: a picture drawn facing the camera (the plasma ball)
   for (const name of pak.list('sprites/')) {
     if (!/.(tga|jpg)$/.test(name)) continue;

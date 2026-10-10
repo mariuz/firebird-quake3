@@ -8,7 +8,7 @@
 // vertex shader; the player parts hang on their tags as before. The HUD is
 // drawn by the software painter onto a transparent canvas laid over this one.
 
-import { Renderer, yawAxis, anglesAxis, tagTransform, animFrame, autospriteQuads, fogDefs } from './renderer.js';
+import { Renderer, yawAxis, anglesAxis, tagTransform, animFrame, autospriteQuads, fogDefs, md3Lod } from './renderer.js';
 import { loadImage, powerOfTwo } from './image.js';
 import { shellMesh, eyeInModel, stageBrightness } from './shader.js';
 
@@ -821,6 +821,7 @@ export class GLRenderer {
 
   drawMd3(mdl, frame, origin, axis, skin, light, opts = {}) {
     const gl = this.gl, u = this.model.u;
+    mdl = md3Lod(mdl, frame, origin, this.view, Math.tan((this.view.fov * Math.PI) / 360) * this.canvas.height / this.canvas.width);
     const fr = Math.min(Math.max(frame | 0, 0), mdl.numFrames - 1);
     gl.useProgram(this.model.p);
     gl.uniformMatrix4fv(u.uProj, false, this.proj);

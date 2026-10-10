@@ -51,7 +51,10 @@ export class Md3 {
     this.surfaces = [];
     let p = ofsSurfaces;
     for (let s = 0; s < numSurfaces; s++) {
-      const sname = cstr(bytes, p + 4, 64);
+      // R_LoadMD3 lowercases the name and strips a trailing _1 or _2 ("a crutch for q3data being a mess"): a
+      // level of detail's surfaces (l_legs_1) then find the skin's entries (l_legs)
+      let sname = cstr(bytes, p + 4, 64).toLowerCase();
+      if (sname.length > 2 && sname[sname.length - 2] === '_') sname = sname.slice(0, -2);
       const nf = dv.getInt32(p + 72, true), ns = dv.getInt32(p + 76, true), nv = dv.getInt32(p + 80, true), nt = dv.getInt32(p + 84, true);
       const ofsTris = dv.getInt32(p + 88, true), ofsShaders = dv.getInt32(p + 92, true), ofsSt = dv.getInt32(p + 96, true), ofsXyz = dv.getInt32(p + 100, true), ofsEnd = dv.getInt32(p + 104, true);
       const shaders = [];

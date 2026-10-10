@@ -834,14 +834,11 @@ function drawViewWeapon(r, res, bsp, last, time, view, lights = []) {
   // CG_AddWeaponWithPowerups: our own powerups on the gun
   const pw = (last.INVIS > 0 ? 256 : 0) | (last.QUAD > 0 ? 512 : 0) | (last.ENVIRO > 0 ? 4096 : 0);
   r.drawMd3Powered(gun, 0, gunOrigin, gunAxis, null, light, { near: 1 }, pw, time, true);
-  // the barrel of the machinegun and the extra parts (rocketl_1, …) hang on tag_barrel / tag_weapon of the gun
-  for (const part of ['_barrel', '_1', '_2']) {
-    const pid = res.byName.get(`models/weapons2/${dir}/${dir}${part}.md3`);
-    if (!pid) continue;
-    const tag = part === '_barrel' ? 'tag_barrel' : 'tag_weapon';
-    const t = tagTransform(gun, 0, tag, gunOrigin, gunAxis);
-    if (t) r.drawMd3Powered(res.models.get(pid).mdl, 0, t.origin, t.axis, null, light, { near: 1 }, pw, time, true);
-  }
+  // the barrel (the machinegun's, the gauntlet's) hangs on the gun's tag_barrel (CG_AddPlayerWeapon). The
+  // gun's _1 and _2 are not parts but its lower levels of detail (machinegun_2 is a rough box)
+  const pid = res.byName.get(`models/weapons2/${dir}/${dir}_barrel.md3`);
+  const bt = pid && tagTransform(gun, 0, 'tag_barrel', gunOrigin, gunAxis);
+  if (bt) r.drawMd3Powered(res.models.get(pid).mdl, 0, bt.origin, bt.axis, null, light, { near: 1 }, pw, time, true);
   // the muzzle flash for a tenth of a second
   if (last.ATTACK_START > 0 && time - last.ATTACK_START < 0.1 && last.WEAPON !== 1 && last.WEAPON !== 64) {
     const fid = res.byName.get(`models/weapons2/${dir}/${dir}_flash.md3`);

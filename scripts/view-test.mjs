@@ -7,9 +7,9 @@
 
 import fs from 'node:fs';
 import { FrameState, firstPersonView, zoomedFov, fovY, mapTorsoToWeaponFrame, viewTorsoFrame, underwaterFov, sceneLights, litByDlights, MAX_DLIGHTS, drawRail, drawBolt, findPortals, portalView, portalFade, perpendicular, floorBelow, drawShadows } from '../src/scene.js';
-import { Renderer, tagTransform, autospriteQuads, fogST, fogFactor } from '../src/renderer.js';
+import { Renderer, tagTransform, autospriteQuads, fogST, fogFactor, md3Lod } from '../src/renderer.js';
 import { parseDeform, waveValue, deformVertex, envTexCoords, parseShaderScript, surfaceLook, shellMesh, eyeInModel, stageBrightness } from '../src/shader.js';
-import { Md3, parseAnimationCfg } from '../src/md3.js';
+import { Md3, parseAnimationCfg, parseSkin } from '../src/md3.js';
 import { postgameMedals } from '../src/hud.js';
 import { parseWeights, preprocess, weightOf } from '../src/itemweights.js';
 import { Pk3 } from '../src/pk3.js';
@@ -375,6 +375,20 @@ const markBsp = {
   assert(at === '10,10.05,10.1,10.2' && st.puffs.every((p) => p.p[2] === 8 && p.dur === 0.5 && p.alpha === 1), `the haste: a puff every 100 ms, 16 under the origin (at ${at})`);
 }
 
+// R_ComputeLOD: a model with two lower levels of detail (a player's legs, 30 units across), seen at a 90 degree
+// view on a 4:3 screen: the full model up close, the second level from 400 units, the third from 800; none
+// behind the eye or for a model without levels
+{
+  const mk = (n) => ({ name: n, numFrames: 1, frames: [{ mins: [-15, -15, -24], maxs: [15, 15, 8] }] });
+  const m = mk('l'), l1 = mk('l1'), l2 = mk('l2');
+  m.lods = [m, l1, l2];
+  const view = { x: 0, y: 0, z: 0, fwd: [1, 0, 0] }, tanY = Math.tan(Math.PI / 4) * 0.75;
+  const at = (d) => md3Lod(m, 0, [d, 0, 0], view, tanY).name;
+  const r = Math.hypot(15, 15, 24), edge1 = (r * 5) / (tanY * (2 / 3)), edge2 = (r * 5) / (tanY * (1 / 3));
+  assert(at(100) === 'l' && at(edge1 - 5) === 'l' && at(edge1 + 5) === 'l1' && at(edge2 + 5) === 'l2' && at(-50) === 'l' && md3Lod(l1, 0, [5000, 0, 0], view, tanY) === l1,
+    `the legs' level of detail: full to ${edge1.toFixed(0)} units, the second to ${edge2.toFixed(0)}, then the third`);
+}
+
 // the end of the match (UI_SPPostgameMenu): the accuracy, the awards earned, the frags, perfect for a win
 // without dying
 {
@@ -419,6 +433,10 @@ if (fs.existsSync('public/pak/pak0.pk3')) {
   assert(z(0) - lowest > 5, `the machinegun's hand lowers the gun while switching (${(z(0) - lowest).toFixed(1)} units at the bottom)`);
   const anims = parseAnimationCfg(pak.text('models/players/sarge/animation.cfg'));
   assert(anims[9].first + anims[9].count === anims[10].first && anims[9].count + anims[10].count === 9, 'sarge\'s drop and raise are the nine frames in a row the mapping expects');
+  // the levels of detail's surfaces lose their _1 and _2 (R_LoadMD3), so they find the skin's entries
+  const legs2 = new Md3(pak.buffer('models/players/sarge/lower_2.md3'), 'lower_2');
+  const skin = parseSkin(pak.text('models/players/sarge/lower_default.skin'));
+  assert(legs2.surfaces.length && legs2.surfaces.every((s) => skin.has(s.name)), `sarge's farthest legs (${legs2.surfaces.map((s) => s.name).join()}) wear the default skin`);
 }
 
 console.log(failed ? `${failed} FAILED` : 'all good');

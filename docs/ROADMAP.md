@@ -48,7 +48,6 @@ the order a player notices them on the demo maps:
 | **Portals and mirrors, the rest** | mirrors (a portal surface without a camera) are not drawn; the view through a portal is seen from the camera itself, not from the viewer's offset behind it (that needs the clip plane at the camera Quake III uses); rotating and bobbing cameras; a portal inside a portal's view | `scene.js` `portalView`, the painters' portal pass |
 | **Flares** | `flare` shaders on lights (the BSP's type 4 surfaces) | off by default in Quake III 1.32 (`r_flares 0`), so not drawn here either |
 | **Entity shadows, the rest** | the stencil shadows (`cg_shadows 2`) and the projected ones (3); the blob is traced down by a point, not the 30-unit box | `scene.js` `drawShadows` |
-| **MD3 LOD** | `_1.md3`, `_2.md3` picked by screen size | `md3.js`/`loader.js`; the demo models have them |
 | **Curved surface LOD** | `r_lodCurveError` | the patches are tessellated once at level 4 |
 | **Rail and lightning, the rest** | each shooter's `color1` for the rail (one colour here); `cg_oldRail 0`'s particle spiral; the lightning's impact flash model and its beam bending with the shooter's aim between tics | `scene.js` `drawRail`, `drawBolt` |
 | **Texture quality** | trilinear/anisotropic filtering, `r_picmip` | the WebGL painter samples the mip chain nearest; the software one picks one mip per polygon |
@@ -131,7 +130,7 @@ powerups and two holdables; the nine weapons with Quake III's spreads, speeds, d
 times; accuracy as `FireWeapon` and `LogAccuracyHit` count it and the postgame medals at the intermission (accuracy,
 impressive, excellent, gauntlet, frags, perfect); damage, knockback, gibs, obituaries; the body queue (8 corpses, each lying until its owner respawns,
 5 s more, then sinking into the floor); the player model animation system with
-`animation.cfg`, tags and skins; the HUD, scoreboard, announcer, lead state; the frag and time
+`animation.cfg`, tags and skins, and every MD3's levels of detail picked by screen size (`R_ComputeLOD`); the HUD, scoreboard, announcer, lead state; the frag and time
 limits with the time warnings and sudden death, the intermission at the map's intermission point,
 the map rotation; bots with
 five skill levels, weapon choice, strafing, health runs, item pickup, and the waypoint graph with pad

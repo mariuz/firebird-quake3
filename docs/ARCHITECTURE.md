@@ -108,7 +108,14 @@ once and reduces each shader to a *look*: the image to draw, how to blend it (op
 filter), whether it is lightmapped, its tcMods (scroll, scale, turb), its animation frames, and for
 skies the cloud layers. `src/loader.js`'s `loadResources` loads every MD3 the items, weapons and
 players need, the sprites (as models of kind `S`), the player models with their animations and skins,
-and inserts `item_defs` (from `src/gamedata.js`'s copy of `bg_itemlist`) and `bot_defs`.
+and inserts `item_defs` (from `src/gamedata.js`'s copy of `bg_itemlist`) and `bot_defs`. A model's
+levels of detail (`NAME_1.md3`, `NAME_2.md3`, 71 files in the demo pak) hang on the full model as
+`lods`; its surfaces' names lose a trailing `_1` or `_2` at load (`R_LoadMD3`'s crutch), so they find
+the skin's entries. Both painters' `drawMd3` draws the level `md3Lod` picks (`R_ComputeLOD`: the
+frame's radius projected at the model's distance along the view, times `r_lodscale` 5, gives
+`(1 − that) × levels`); the tags always come from the full model. A player's legs drop a level at
+about 320 and 640 units; the view weapon is always whole. (A gun's `_1` and `_2` were drawn as extra
+parts on its tag until then: `machinegun_2` is a rough box.)
 
 **Bulk loading.** The `TABLES` spec in `loader.js` generates a `LOAD_<table>` procedure per geometry
 table that takes a packed text blob and inserts rows in one call. `loadMap` runs `geometryRows` over
