@@ -14,8 +14,9 @@ import playerSql from '../sql/player.sql';
 import waypointsSql from '../sql/waypoints.sql';
 import botsSql from '../sql/bots.sql';
 import renderSql from '../sql/render.sql';
-import { Pk3 } from './pk3.js';
-import { createSchema, loadResources, loadMap, buildWaypoints, setView } from './loader.js';
+import { Pk3, PakSet } from './pk3.js';
+import { createSchema, loadResources, loadMap, buildWaypoints, setView, setRotation } from './loader.js';
+import { loadShaders } from './shader.js';
 import { Renderer } from './renderer.js';
 import { GLRenderer } from './renderer-gl.js';
 import { Hud } from './hud.js';
@@ -170,8 +171,69 @@ function readInput(tics) {
 }
 
 // ── maps ─────────────────────────────────────────────────────────────────
+// The arenas: the base pak's, the map packs the site hosts (pak/maps/index.json: OpenArena's and the
+// OpenArena Community Map-Pack's arenas, one small pk3 each, fetched when picked: scripts/fetch-maps.mjs)
+// and the maps of the pk3s picked from disk. Each pk3 goes on top of the others (PakSet).
+let catalog = [];          // [{ map, title, pack, file, bytes }] from pak/maps/index.json
+const local = new Map();   // map → the pk3 file it came from (picked from disk)
+let basePak = null;        // the game's pak (the demo's pak0.pk3)
+const localPaks = [];      // the pk3s picked from disk, in the order picked
+const fetchedPaks = new Map();   // a hosted map pack's file → its Pk3, kept once fetched
+
+/** The paks as a map needs them: the base, the picked ones, and the map's own pack on top (one hosted pack at
+ *  a time, so one arena's shaders never dress another's). The shaders are read again (a later file wins) and
+ *  the painters forget the pictures they have, which may be another pak's now. */
+function stackPaks(top = null) {
+  const layers = [basePak, ...localPaks, ...(top ? [top] : [])];
+  if (layers.length === pak.paks.length && layers.every((p, i) => p === pak.paks[i])) return;
+  pak.reset(layers);
+  const shaders = loadShaders(pak);
+  res.shaders.clear();
+  for (const [k, v] of shaders) res.shaders.set(k, v);
+  renderer?.resetCaches?.();
+}
+
+/** The Arena menu: the base pak's maps, then each pack's, then the picked files' */
+function fillMapMenu() {
+  const base = basePak.mapNames();
+  const opt = (m, title) => `<option value="${m}">${title && title !== m ? `${m} – ${title}` : m}</option>`;
+  const groups = [[basePak.label ?? 'pak0.pk3', base.map((m) => opt(m))]];
+  const packs = new Map();
+  for (const c of catalog) {
+    if (!packs.has(c.pack)) packs.set(c.pack, []);
+    packs.get(c.pack).push(opt(c.map, c.title));
+  }
+  for (const [p, opts] of packs) groups.push([`${p} (fetched when picked)`, opts]);
+  if (local.size) groups.push(['Your pk3s', [...local.keys()].map((m) => opt(m))]);
+  $('map').innerHTML = groups.map(([label, opts]) => `<optgroup label="${label.replace(/"/g, '')}">${opts.join('')}</optgroup>`).join('');
+}
+
+/** Have a map's files: a hosted pack's pk3 is fetched once and put on top; the rotation goes through the
+ *  arenas of the same source */
+async function ensureMap(name) {
+  const c = basePak.has(`maps/${name}.bsp`) || local.has(name) ? null : catalog.find((m) => m.map === name) ?? null;
+  let top = null;
+  if (c) {
+    top = fetchedPaks.get(c.file);
+    if (!top) {
+      setStatus(`Downloading ${name} (${c.pack}, ${(c.bytes / 1048576).toFixed(1)} MB)…`);
+      const resp = await fetch(new URL(`./pak/maps/${c.file}`, location.href));
+      if (!resp.ok) throw new Error(`could not fetch ${c.file} (${resp.status})`);
+      top = new Pk3(await resp.arrayBuffer());
+      top.label = c.pack;
+      fetchedPaks.set(c.file, top);
+    }
+  }
+  stackPaks(top);
+  if (!pak.has(`maps/${name}.bsp`)) throw new Error(`no map ${name}`);
+  const rotation = c ? catalog.filter((m) => m.pack === c.pack).map((m) => m.map)
+    : local.has(name) ? [...local.keys()] : basePak.mapNames();
+  await setRotation(db, rotation);
+}
+
 async function startMap(name) {
   running = false;
+  await ensureMap(name);
   setStatus(`Loading ${name} into Firebird…`);
   const t0 = performance.now();
   const bsp = await loadMap(db, pak, res, name, { skill: settings.skill, bots: settings.bots, link: false, fraglimit: settings.fraglimit, timelimit: settings.timelimit, warmup: 4,
@@ -461,7 +523,10 @@ function makeRenderer() {
 async function usePak(buffer, label) {
   running = false;
   setStatus(`Opening ${label}…`);
-  pak = new Pk3(buffer);
+  basePak = new Pk3(buffer);
+  basePak.label = label;
+  pak = new PakSet([basePak]);
+  local.clear(); localPaks.length = 0;
   const maps = pak.mapNames();
   if (!maps.length) throw new Error(`${label} has no maps`);
   pak.inflateAll((n) => !/^(demos|video|vm|botfiles|menu|levelshots)\//.test(n) && !n.endsWith('.aas'));
@@ -469,9 +534,9 @@ async function usePak(buffer, label) {
   res = await loadResources(db, pak, { width: viewWidth(), height: viewHeight(), fov: settings.fov });
   makeRenderer();
   audio.setPak(pak);
-  $('map').innerHTML = maps.map((m) => `<option>${m}</option>`).join('');
+  fillMapMenu();
   $('pakname').textContent = label;
-  const first = maps.includes(settings.map) ? settings.map : maps.includes('q3dm1') ? 'q3dm1' : maps[0];
+  const first = maps.includes(settings.map) || catalog.some((c) => c.map === settings.map) ? settings.map : maps.includes('q3dm1') ? 'q3dm1' : maps[0];
   await startMap(first);
 }
 
@@ -479,6 +544,11 @@ async function boot() {
   try {
     db = await openDatabase();
     window.quake3 = { db, audio, sql: (q, p) => db.query(q, p).then((r) => r.rows) };
+    // the map packs the site hosts, if it does (none in a checkout without npm run fetch-maps)
+    try {
+      const ix = await fetch(new URL('./pak/maps/index.json', location.href));
+      if (ix.ok) catalog = await ix.json();
+    } catch { catalog = []; }
     setStatus('Downloading pak0.pk3 (the Quake III Arena demo, 45 MB)…');
     const resp = await fetch(new URL('./pak/pak0.pk3', location.href));
     if (!resp.ok) throw new Error(`could not fetch pak0.pk3 (${resp.status}); pick a PK3 file instead`);
@@ -490,10 +560,25 @@ async function boot() {
   }
 }
 
+// pk3s from disk: a game's base pak (it has player models: the full game's pak0) replaces the demo; any other
+// (map packs: OpenArena's, the Community Map-Pack, any Quake III map) goes on top and its maps join the menu
 $('pakfile').addEventListener('change', async (e) => {
-  const f = e.target.files[0];
-  if (!f || !db) return;
-  try { await usePak(await f.arrayBuffer(), f.name); } catch (err) { setStatus(err.message, true); }
+  const files = [...e.target.files];
+  if (!files.length || !db) return;
+  try {
+    let firstNew = null;
+    for (const f of files) {
+      const pk3 = new Pk3(await f.arrayBuffer());
+      pk3.label = f.name;
+      if (pk3.list('models/players/').length && pk3.mapNames().length) { await usePak(await f.arrayBuffer(), f.name); continue; }
+      localPaks.push(pk3);
+      for (const m of pk3.mapNames()) { local.set(m, f.name); firstNew ??= m; }
+    }
+    stackPaks();
+    $('pakname').textContent = localPaks.length ? `${basePak.label} + ${localPaks.length} of yours` : basePak.label;
+    fillMapMenu();
+    if (firstNew) { settings.map = firstNew; saveSettings(); await startMap(firstNew); }
+  } catch (err) { setStatus(err.message, true); }
 });
 $('map').addEventListener('change', (e) => { settings.map = e.target.value; saveSettings(); startMap(e.target.value).catch((err) => setStatus(err.message, true)); });
 $('detail').value = settings.detail;

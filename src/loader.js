@@ -28,7 +28,7 @@ const TABLES = {
   face_verts: 'face:i seq:i x:d y:d z:d s:d t:d u:d v:d',
   textures: 'id:i name:s flags:i contents:i',
   models: 'id:i name:s kind:s minx:d miny:d minz:d maxx:d maxy:d maxz:d headnode:i first_face:i num_faces:i nframes:i flags:i radius:d',
-  map_ents: 'id:i classname:s targetname:s target:s team:s model:s ox:d oy:d oz:d angle:d apitch:d ayaw:d aroll:d spawnflags:i message:s wait_:d delay:d random_:d speed:d lip:d height:d health:i light:i dmg:i count_:i noise:s phase:d gravity:d music:s notfree:i nobots:i',
+  map_ents: 'id:i classname:s targetname:s target:s team:s model:s ox:d oy:d oz:d angle:d apitch:d ayaw:d aroll:d spawnflags:i message:s wait_:d delay:d random_:d speed:d lip:d height:d health:i light:i dmg:i count_:i noise:s phase:d gravity:d music:s notfree:i nobots:i notteam:i gametype:s',
 };
 
 const SQL_TYPE = { i: 'INTEGER', d: 'DOUBLE PRECISION', s: 'VARCHAR(2048) CHARACTER SET ASCII' };
@@ -74,6 +74,14 @@ export async function bulkLoad(db, table, rows) {
     chunk += line + '\n';
   }
   await flush();
+}
+
+/** The arenas the match rotation goes through (map_list), in natural order (q3dm1, q3dm7, q3dm17, q3tourney2) */
+export async function setRotation(db, names) {
+  const maps = names.slice().sort((a, b) => a.localeCompare(b, 'en', { numeric: true }));
+  const lit = (v) => `'${String(v).replace(/'/g, "''")}'`;
+  await db.exec('DELETE FROM map_list');
+  if (maps.length) await db.exec(`SET TERM ^ ;\nEXECUTE BLOCK AS BEGIN\n${maps.map((m, i) => `INSERT INTO map_list (ord, name) VALUES (${i}, ${lit(m)});`).join('\n')}\nEND^\nSET TERM ; ^`);
 }
 
 export const SQL_FILES = ['schema', 'physics', 'game', 'waypoints', 'player', 'bots', 'render'];
@@ -165,9 +173,7 @@ export async function loadResources(db, pak, { width = 320, height = 240, fov = 
   // (200 at a time: one statement may name tables at most 256 times)
   for (let i = 0; i < stmts.length; i += 200) await db.exec(`SET TERM ^ ;\nEXECUTE BLOCK AS BEGIN\n${stmts.slice(i, i + 200).join('\n')}\nEND^\nSET TERM ; ^`);
   // the rotation: the pak's arenas in natural order (q3dm1, q3dm7, q3dm17, q3tourney2)
-  const maps = pak.mapNames().slice().sort((a, b) => a.localeCompare(b, 'en', { numeric: true }));
-  await db.exec('DELETE FROM map_list');
-  if (maps.length) await db.exec(`SET TERM ^ ;\nEXECUTE BLOCK AS BEGIN\n${maps.map((m, i) => `INSERT INTO map_list (ord, name) VALUES (${i}, ${lit(m)});`).join('\n')}\nEND^\nSET TERM ; ^`);
+  await setRotation(db, pak.mapNames());
   await setView(db, width, height, fov);
   res.items = ITEMS;
   return res;
@@ -289,7 +295,7 @@ export async function loadMap(db, pak, res, name, { skill = 2, newGame = true, b
     const n = (k) => (e[k] === undefined || e[k] === '' || Number.isNaN(Number(e[k])) ? null : Number(e[k]));
     return [i, e.classname ?? 'unknown', e.targetname ?? null, e.target ?? null, e.team ?? null, e.model ?? null, o[0], o[1], o[2], n('angle'), angles[0], angles[1], angles[2],
       n('spawnflags') ?? 0, e.message ?? null, n('wait'), n('delay'), n('random'), n('speed'), n('lip'), n('height'), n('health'), n('light'), n('dmg'), n('count'),
-      e.noise ?? null, n('phase'), n('gravity'), e.music ?? null, n('notfree'), n('nobots')];
+      e.noise ?? null, n('phase'), n('gravity'), e.music ?? null, n('notfree'), n('nobots'), n('notteam'), e.gametype ?? null];
   });
   await bulkLoad(db, 'map_ents', entRows);
 

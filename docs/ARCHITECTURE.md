@@ -83,7 +83,24 @@ works the same.
 **The zip.** `src/pk3.js` reads the central directory and inflates entries on demand with its own
 inflate, because esbuild's es2020 target rejects the top-level `await import('node:zlib')` that the
 Node fallback needed. `inflateAll(filter)` inflates everything the game needs up front;
-`imageName(name)` tries `.tga` then `.jpg` for a shader's image.
+`imageName(name)` tries `.tga` then `.jpg` for a shader's image. `PakSet` is several paks searched as
+one (`FS_FOpenFileRead`'s search path): a later pak's file hides the same name in an earlier one, and it
+has a pak's interface, so the loaders, painters, HUD and sound take either. The page stacks the base pak
+(the demo's pak0.pk3), the pk3s picked from disk, and on top the hosted map pack of the arena being
+played (`stackPaks`, which also reads the shaders again and makes the painters forget their pictures).
+
+**The map packs.** `scripts/fetch-maps.mjs` takes OpenArena 0.8.8 (its `baseoa/pak*.pk3` read out of the
+release zip) and the OpenArena Community Map-Pack (`z_oacmp-volume1-v3.pk3`), and for every arena their
+arena lists (`scripts/arenas.txt`, `*.arena`) give for free for all or the tournament writes
+`public/pak/maps/<map>.pk3`. It holds the BSP, every shader its faces and fogs name (their blocks copied
+into one `scripts/zz_<map>.shader`, so they win over the demo's shaders of the same name), every picture
+those shaders' stages draw and its sky box, the sounds and music its entities play, its levelshot, and a
+note of the source. A texture OpenArena draws plainly but the demo scripts (`concretefloor1`) gets a
+plain shader there, so the demo's does not take its place. `index.json` lists them (map, long name,
+pack, file, size) for the Arena menu; `scripts/maps-test.mjs` loads each on top of the demo pak and
+checks its pictures, its spawns and a second of play. Three pictures are missing from OpenArena itself
+(`e6trim_basic128`, `moss2`, `e8_mtlwall3`); a sky box named `full` is none (ioq3 draws no box then).
+The maps keep the demo's items, weapons and player models.
 
 **The BSP.** `src/bsp.js` reads the 17 lumps of IBSP version 46. Beyond copying arrays it does four
 things:
@@ -95,7 +112,11 @@ things:
   is `cross(n, edge)`.
 - *Builds the faces* as convex polygons in vertex order (planar faces) or triangle lists (patches,
   meshes), each with a plane, a bounding sphere, a `twoSided` flag and its lightmap index; vertices are
-  `Float32Array` with stride 10: `x y z s t u v r g b`.
+  `Float32Array` with stride 10: `x y z s t u v r g b`. A planar face is a polygon (`fan`) only when its
+  vertices in order turn one way round its normal and cover the area of its own triangles (`isFan`):
+  id's q3map writes faces so, q3map2's merged surfaces (OpenArena's maps) are triangle lists in no such
+  order and are drawn by their triangles, as the game always draws them. A vertex-lit face's lightmap
+  coordinates may be NaN in q3map2's maps; they are read as 0.
 - *Decompresses the PVS* into one hex string per cluster, so the SQL can test visibility with
   `SUBSTRING` and `BIN_AND` on a `VARCHAR`.
 - *Keeps the light grid* (64×64×128 cells of ambient and directed colour) in JavaScript, where the
@@ -137,7 +158,7 @@ texture, lightmap, first vertex, count, `twosided`), `face_verts`, `textures` (n
 content flags), `models` (world and sub-models with their head node; MD3s and sprites with their
 bounds and frame count), `map_ents` (the entity lump: classname, targetname, target, team, model,
 origin, angles, spawnflags, message, wait, delay, random, speed, lip, height, health, light, dmg,
-count, noise, phase, gravity, music, notfree, nobots).
+count, noise, phase, gravity, music, notfree, nobots, notteam, gametype).
 
 **The simulation**: `map_list` (the pak's arenas in rotation order), `game` (one row: tic, time, map, skill, gravity, sky, music, frag and time limits, the time warnings said, match
 state, number of bots), `ents` (one wide row per entity: position, velocity, angles, bounds, solid,
@@ -401,7 +422,9 @@ item (`movetype` 10, half its speed at each bounce, `G_BounceItem`) whose think 
 seconds, or as soon as it falls into a `CONTENTS_NODROP` brush (`G_RunItem`, in `run_physics`);
 `item_taken` frees such an item instead of hiding it for a respawn.
 
-Map entities (`spawn_map_ents`) turn every `map_ents` row into a live `ents` row: `func_door` with an
+Map entities (`spawn_map_ents`) skip what `G_SpawnGEntityFromSpawnVars` skips (`notteam` in a team game,
+`notfree` otherwise, and with a `gametype` key, as OpenArena's maps have, an entity whose list does not
+name the game type: "ffa", "tournament", "team") and turn every other `map_ents` row into a live `ents` row: `func_door` with an
 auto-spawned `door_trigger` box (`Think_SpawnNewDoorTrigger`), `func_plat` with its `plat_trigger`,
 `func_button`, `func_train` with its `path_corner`s, `func_bobbing`, `func_pendulum`,
 `func_rotating`, `func_static`, `func_timer`, `trigger_multiple`/`once`/`hurt`/`push`/`teleport`
@@ -735,7 +758,7 @@ the rail's where the slug stopped in the world (`n` 64) and a gib's blood where 
 for a pellet, 8 a bullet, 12 the lightning gun, 16 plasma, 24 the rail, 32 the BFG, 64 a rocket or a
 grenade, 16 to 47 blood) turned by a random angle, clipped against the world faces (model 0, not
 sky, `nomarks` or `nodraw`) facing the shot within 32 units in front of the plane and 52 behind:
-planar faces whole (they are convex), patches triangle by triangle. Each piece is lifted half a unit
+planar faces whole when they are convex polygons, patches and q3map2's triangle lists triangle by triangle. Each piece is lifted half a unit
 off its surface and kept with its texture coordinates for 10 s, the last second fading, at most 256
 pieces (`MARK_TOTAL_TIME`, `MARK_FADE_TIME`, `MAX_MARK_POLYS`). `drawMarks` paints them after the
 world and before the models, with the shaders' blends: `bullet_mrk`, `hole_lg_mrk` and

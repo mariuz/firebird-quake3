@@ -19,7 +19,8 @@ explosion sprites, beams) and nothing else. The renderers never query the databa
   in a query without its colon.
 - `npm test` (q3dm1 smoke), `npm run test:dm17` (jump pads), `npm run test:bots` (bots and the
   waypoint hunt), `npm run test:bots:dm17` (bots on the pads), `npm run test:pmove` (the movement against Quake III's
-  `bg_pmove.c`), `npm run test:team` (team deathmatch, the team leader and its orders), `npm run test:tourney` (the tournament), `npm run test:view` (the first-person
+  `bg_pmove.c`), `npm run test:team` (team deathmatch, the team leader and its orders), `npm run test:tourney` (the tournament), `npm run test:maps` (every hosted OpenArena and Community Map-Pack
+  arena on the demo pak; needs `npm run fetch-maps`), `npm run test:view` (the first-person
   view, the impact marks' clipping, the trails, the brass, the dynamic lights, the shader features, the fog, the portal's view, the shadows, the rail and lightning beams and the powerup shells, seconds, no engine). All run against the real WASM engine in
   Node; CI runs all of them before deploying. Each takes one to two minutes.
 - The pak is `public/pak/pak0.pk3`, fetched by `npm run fetch-pak` (gitignored; behind a proxy run it as
@@ -86,7 +87,8 @@ explosion sprites, beams) and nothing else. The renderers never query the databa
 | sounds, music | `src/audio.js`; events are rows in `sound_events` written by `snd`/`snd_at` |
 | the page, settings, input, the loop, the console | `src/main.js`, `public/index.html`, `public/style.css` |
 | items, weapons, bot roster, player model | `src/gamedata.js` |
-| pak parsing, BSP, MD3, shaders, images | `src/pk3.js`, `src/bsp.js`, `src/md3.js`, `src/shader.js`, `src/image.js` |
+| pak parsing, BSP, MD3, shaders, images | `src/pk3.js` (`Pk3`, and `PakSet`: several paks searched as one), `src/bsp.js`, `src/md3.js`, `src/shader.js`, `src/image.js` |
+| OpenArena's and the Community Map-Pack's arenas | `scripts/fetch-maps.mjs` (one pk3 a map into `public/pak/maps/`, `index.json`), the page's `stackPaks`, `ensureMap`, `fillMapMenu` in `src/main.js`; `scripts/maps-test.mjs` |
 
 ## Gotchas that cost hours
 

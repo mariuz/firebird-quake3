@@ -26,6 +26,9 @@ keyboard/mouse → SELECT * FROM q3_tic(...)        game logic: 20 Hz, PSQL
 ```
 
 **Play it at [mariuz.github.io/firebird-quake3](https://mariuz.github.io/firebird-quake3/)** — the page downloads the demo pak, starts Firebird 6 in a Worker and drops you into the Arena Gate with three bots.
+The Arena menu also has [OpenArena](http://openarena.ws)'s 31 deathmatch arenas and the 10 of the OpenArena
+Community Map-Pack: each is a small pk3 of what that map uses, fetched when you pick it, played with the
+demo's weapons, items and players.
 
 ![The live site: the Arena Gate drawn by the WebGL renderer at 320×240, the status bar, the controls and the SQL console](docs/live-site.png)
 
@@ -34,6 +37,8 @@ keyboard/mouse → SELECT * FROM q3_tic(...)        game logic: 20 Hz, PSQL
 ```bash
 npm install
 npm run fetch-pak      # downloads the Quake III Arena demo (linuxq3ademo-1.11-6.x86.gz.sh) and extracts demoq3/pak0.pk3
+npm run fetch-maps     # OpenArena 0.8.8 and its Community Map-Pack (440 MB once, into .cache/) → public/pak/maps/*.pk3, one a map
+npm run test:maps      # each of those arenas on top of the demo pak: its pictures, its spawns, a second of play
 npm test               # SQL smoke test in Node against the real Firebird WASM engine: the Arena Gate
 npm run test:dm7       # the same on the Temple of Retribution
 npm run test:bots      # the bots: they see, chase, shoot, pick things up, die and respawn; the score keeps up
@@ -46,7 +51,9 @@ npm run inspect        # what is in the pk3 (maps, shaders, models, sounds); ins
 
 If you own Quake III Arena, point the page at your own `pak0.pk3` with the file picker, or copy it with
 `PAK=/path/to/pak0.pk3 npm run fetch-pak`: the full game's arenas, player models and the grenade launcher
-and BFG work the same way. The demo has four arenas: q3dm1, q3dm7, q3dm17 and q3tourney2.
+and BFG work the same way. The demo has four arenas: q3dm1, q3dm7, q3dm17 and q3tourney2. Any other pk3
+picked there (OpenArena's `pak1-maps.pk3` with its textures, a Quake III map you downloaded) goes on top of
+the demo, the way the game searches its paks, and its maps join the menu.
 
 Firebird WASM uses pthreads, so the page must be cross-origin isolated. The dev server sends the
 COOP/COEP headers with `--coi`; a static host like GitHub Pages cannot, so `coi-serviceworker.js`
@@ -219,4 +226,6 @@ change; bind as text; count the calls before timing the bodies). New here:
 ## Licence
 
 MIT for the code here. Firebird and Electric Firebird are Apache-2.0. The Quake III Arena demo is freely
-redistributable; Quake III Arena is a trademark of id Software.
+redistributable; Quake III Arena is a trademark of id Software. OpenArena's game data and the OpenArena
+Community Map-Pack are GPLv2 (openarena.ws); the site serves only each arena's own files from them, each
+pk3 with a note of where the complete packs and their sources are.

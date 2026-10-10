@@ -429,14 +429,14 @@ export class FrameState {
       if (Math.hypot(ce[0] - o[0], ce[1] - o[1], ce[2] - o[2]) > f.radius + reach) continue;
       const V = f.verts;
       const at = (k) => [V[k * 10], V[k * 10 + 1], V[k * 10 + 2]];
-      if (f.type === 1) {
+      if (f.type === 1 && f.normal[0] * n[0] + f.normal[1] * n[1] + f.normal[2] * n[2] < 0.5) continue;   // a polygon facing away
+      if (f.type === 1 && f.fan !== false) {
         // a polygon facing the shot (its convex outline in vertex order)
-        if (f.normal[0] * n[0] + f.normal[1] * n[1] + f.normal[2] * n[2] < 0.5) continue;
         const poly = [];
         for (let k = 0; k < f.nverts; k++) poly.push(at(k));
         add(poly, f.normal);
       } else {
-        // a patch: each triangle of its tessellation that faces the shot
+        // a patch, or a planar face that is a triangle list (q3map2's): each triangle that faces the shot
         const T = f.tris;
         for (let k = 0; k + 2 < T.length; k += 3) {
           const A = at(T[k]), B = at(T[k + 1]), C = at(T[k + 2]);

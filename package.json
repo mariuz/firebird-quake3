@@ -6,6 +6,8 @@
   "type": "module",
   "scripts": {
     "fetch-pak": "node scripts/fetch-pak.mjs",
+    "fetch-maps": "node --max-old-space-size=6144 scripts/fetch-maps.mjs",
+    "test:maps": "node --max-old-space-size=4096 scripts/maps-test.mjs",
     "build": "node scripts/build.mjs",
     "serve": "node scripts/build.mjs --serve",
     "test": "node scripts/sql-smoke.mjs",

@@ -147,6 +147,20 @@ export class Renderer {
     }
   }
 
+  /** New paks on top: the pictures and shader looks read so far may be another pak's now. */
+  resetCaches() {
+    this.textures.clear();
+    this.looks.clear();
+  }
+
+  /** A model surface's picture: its shader's (OpenArena's models name shaders, models/weapons2/machinegun/skin),
+   *  else the name itself as an image (the demo's name their images) */
+  modelImage(name) {
+    if (!name) return name;
+    const look = this.look(name);
+    return look?.image ?? look?.stages?.find((s) => s.image)?.image ?? name;
+  }
+
   look(name) {
     let l = this.looks.get(name);
     if (!l) { l = this.res.look(name); this.looks.set(name, l); }
@@ -855,7 +869,7 @@ export class Renderer {
     for (const surf of mdl.surfaces) {
       const img = skin ? skin(surf) : null;
       if (img === false) continue;
-      const tex = this.texture(shell ? shell.look.image : img ?? (surf.shaders[0] || ''));
+      const tex = this.texture(shell ? shell.look.image : this.modelImage(img ?? (surf.shaders[0] || '')));
       const nv = surf.numVerts;
       this.aliasRoom(nv);
       const av = this.av;

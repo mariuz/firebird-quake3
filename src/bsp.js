@@ -116,7 +116,9 @@ export class Bsp {
     for (let i = 0, p = l.off; i < nv; i++, p += 44) {
       this.vertices[i * 3] = dv.getFloat32(p, true); this.vertices[i * 3 + 1] = dv.getFloat32(p + 4, true); this.vertices[i * 3 + 2] = dv.getFloat32(p + 8, true);
       this.texcoords[i * 2] = dv.getFloat32(p + 12, true); this.texcoords[i * 2 + 1] = dv.getFloat32(p + 16, true);
-      this.lmcoords[i * 2] = dv.getFloat32(p + 20, true); this.lmcoords[i * 2 + 1] = dv.getFloat32(p + 24, true);
+      // (a vertex-lit surface's lightmap coordinates can be NaN in q3map2's maps, LIGHTMAP_BY_VERTEX: unused, so 0)
+      const lu = dv.getFloat32(p + 20, true), lv = dv.getFloat32(p + 24, true);
+      this.lmcoords[i * 2] = Number.isFinite(lu) ? lu : 0; this.lmcoords[i * 2 + 1] = Number.isFinite(lv) ? lv : 0;
       this.normals[i * 3] = dv.getFloat32(p + 28, true); this.normals[i * 3 + 1] = dv.getFloat32(p + 32, true); this.normals[i * 3 + 2] = dv.getFloat32(p + 36, true);
       this.colors[i * 4] = bytes[p + 40]; this.colors[i * 4 + 1] = bytes[p + 41]; this.colors[i * 4 + 2] = bytes[p + 42]; this.colors[i * 4 + 3] = bytes[p + 43];
     }
@@ -239,8 +241,10 @@ export class Bsp {
         // the polygon's plane (type 1): the face normal, through its first vertex
         const nx = f.normal[0], ny = f.normal[1], nz = f.normal[2];
         f.plane = f.type === 1 ? { nx, ny, nz, dist: nx * verts[0] + ny * verts[1] + nz * verts[2] } : null;
-        // is the polygon a plain fan over its vertices? then it can be scan-converted as one convex polygon
-        f.fan = f.type === 1;   // planar faces are convex polygons in vertex order (their meshverts are a fan)
+        // is the polygon a plain fan over its vertices? then it can be scan-converted as one convex polygon. id's
+        // q3map writes planar faces so (meshverts 0 k k+1, either winding); q3map2's merged surfaces (OpenArena's
+        // maps) are any triangle list, drawn by their meshverts as the game always draws them
+        f.fan = f.type === 1 && isFan(f.tris, n, verts, f.normal);
       } else {
         f.verts = new Float32Array(0); f.norms = new Float32Array(0); f.tris = null; f.nverts = 0; f.plane = null; f.twoSided = true;   // billboards: not drawn
       }
@@ -399,12 +403,6 @@ const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
 const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
 const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 
-function isFan(tris, n) {
-  if (tris.length !== (n - 2) * 3) return false;
-  for (let k = 0; k < n - 2; k++) if (tris[k * 3] !== 0 || tris[k * 3 + 1] !== k + 1 || tris[k * 3 + 2] !== k + 2) return false;
-  return true;
-}
-
 /**
  * Tessellate a patch face: its numVerts control points form a size[0]×size[1]
  * grid of biquadratic Bézier patches (3×3 control points each, sharing
@@ -458,6 +456,31 @@ export function tessellate(bsp, f, level) {
 }
 
 /** The entity lump: [{ classname, origin: 'x y z', ... }, ...] with lower-cased keys. */
+/**
+ * Whether a planar face can be drawn as one polygon over its vertices in order: they turn one way around its
+ * normal (convex), and its own triangles cover the same area. id's q3map writes faces so (whatever their
+ * triangles), q3map2's merged surfaces are triangle lists in no such order (OpenArena's maps). `v` holds the
+ * vertices (x y z first of each 10), `nrm` the plane's normal.
+ */
+export function isFan(tris, n, v, nrm) {
+  if (!tris || n < 3 || tris.length !== (n - 2) * 3) return false;
+  const cross = (a, b, c) => {
+    const ux = v[b * 10] - v[a * 10], uy = v[b * 10 + 1] - v[a * 10 + 1], uz = v[b * 10 + 2] - v[a * 10 + 2];
+    const wx = v[c * 10] - v[a * 10], wy = v[c * 10 + 1] - v[a * 10 + 1], wz = v[c * 10 + 2] - v[a * 10 + 2];
+    return (uy * wz - uz * wy) * nrm[0] + (uz * wx - ux * wz) * nrm[1] + (ux * wy - uy * wx) * nrm[2];
+  };
+  let sign = 0, fanArea = 0, triArea = 0;
+  for (let k = 0; k < n; k++) {
+    const c = cross(k, (k + 1) % n, (k + 2) % n);
+    if (Math.abs(c) < 1e-3) continue;
+    if (sign === 0) sign = Math.sign(c);
+    else if (Math.sign(c) !== sign) return false;
+  }
+  for (let k = 1; k < n - 1; k++) fanArea += Math.abs(cross(0, k, k + 1));
+  for (let t = 0; t < tris.length; t += 3) triArea += Math.abs(cross(tris[t], tris[t + 1], tris[t + 2]));
+  return Math.abs(fanArea - triArea) <= Math.max(1e-3, triArea * 0.001);
+}
+
 export function parseEntities(text) {
   const ents = [];
   const re = /\{([^}]*)\}/g;

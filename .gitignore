@@ -3,6 +3,8 @@ dist/
 *.log
 .claude/
 public/pak/*.pk3
+public/pak/maps/
+.cache/
 public/music/*
 !public/music/README.txt
 .prof/

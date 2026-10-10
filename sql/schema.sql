@@ -211,7 +211,9 @@ CREATE TABLE map_ents (
   gravity    DOUBLE PRECISION,
   music      VARCHAR(64),
   notfree    INTEGER,
-  nobots     INTEGER
+  nobots     INTEGER,
+  notteam    INTEGER,
+  gametype   VARCHAR(80)                   -- the game types it is in ("ffa tournament team ..."), Team Arena's key
 );
 CREATE INDEX map_ents_class ON map_ents (classname);
 CREATE INDEX map_ents_tname ON map_ents (targetname);

@@ -94,6 +94,73 @@ export class Pk3 {
   }
 }
 
+/**
+ * Several paks searched as one, as FS_FOpenFileRead walks the search path: a file in a later pak hides the
+ * same name in an earlier one (Quake III loads pak0 … pak8 and then the others in order, the last first in
+ * the search). The same interface as a Pk3, so the loaders, the painters and the sound take either. Each
+ * pak may carry a `label` (the game or pack it came from) that `mapSource` reports for a map.
+ */
+export class PakSet {
+  constructor(paks = []) {
+    this.paks = [];
+    this.files = new Map();     // name → the pak's entry (the winning pak's)
+    this.owner = new Map();     // name → the pak it is read from
+    for (const p of paks) this.add(p);
+  }
+
+  /** The paks, bottom first, in place of the present ones (the same object: whoever holds it sees them) */
+  reset(paks) {
+    this.paks = [];
+    this.files.clear();
+    this.owner.clear();
+    for (const p of paks) this.add(p);
+    return this;
+  }
+
+  /** Put a pak on top of the others. */
+  add(pak) {
+    this.paks.push(pak);
+    for (const [name, e] of pak.files) { this.files.set(name, e); this.owner.set(name, pak); }
+    return this;
+  }
+
+  has(name) { return this.owner.has(name.toLowerCase()); }
+
+  get(name) {
+    const pak = this.owner.get(name.toLowerCase());
+    if (!pak) throw new Error(`${name} not in any pak`);
+    return pak.get(name);
+  }
+
+  buffer(name) { return this.get(name).slice().buffer; }
+
+  inflateAll(filter = () => true) {
+    for (const [name, pak] of this.owner) if (filter(name)) pak.get(name);
+  }
+
+  list(prefix = '', suffix = '') {
+    return [...this.owner.keys()].filter((n) => n.startsWith(prefix) && n.endsWith(suffix)).sort();
+  }
+
+  mapNames() {
+    return this.list('maps/', '.bsp').map((n) => n.slice(5, -4));
+  }
+
+  /** The label of the pak a map's BSP comes from (the Quake III demo, OpenArena, a map pack) */
+  mapSource(map) {
+    return this.owner.get(`maps/${map.toLowerCase()}.bsp`)?.label ?? null;
+  }
+
+  imageName(name) {
+    const base = name.toLowerCase().replace(/\.(tga|jpg|jpeg|png)$/, '');
+    if (this.has(base + '.tga')) return base + '.tga';
+    if (this.has(base + '.jpg')) return base + '.jpg';
+    return null;
+  }
+
+  text(name) { return td.decode(this.get(name)); }
+}
+
 // ── inflate (RFC 1951) ────────────────────────────────────────────────────
 const LEN_BASE = [3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258];
 const LEN_EXTRA = [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0];

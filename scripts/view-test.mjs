@@ -13,6 +13,7 @@ import { Md3, parseAnimationCfg, parseSkin } from '../src/md3.js';
 import { postgameMedals } from '../src/hud.js';
 import { parseWeights, preprocess, weightOf } from '../src/itemweights.js';
 import { Pk3 } from '../src/pk3.js';
+import { isFan } from '../src/bsp.js';
 
 let failed = 0;
 const assert = (c, m) => { if (!c) { console.error(`FAIL: ${m}`); failed++; } else console.log(`ok   ${m}`); };
@@ -391,6 +392,16 @@ const markBsp = {
   const r = Math.hypot(15, 15, 24), edge1 = (r * 5) / (tanY * (2 / 3)), edge2 = (r * 5) / (tanY * (1 / 3));
   assert(at(100) === 'l' && at(edge1 - 5) === 'l' && at(edge1 + 5) === 'l1' && at(edge2 + 5) === 'l2' && at(-50) === 'l' && md3Lod(l1, 0, [5000, 0, 0], view, tanY) === l1,
     `the legs' level of detail: full to ${edge1.toFixed(0)} units, the second to ${edge2.toFixed(0)}, then the third`);
+}
+
+// a planar face drawn as one polygon only when its vertices in order make one: q3map's quad triangulated its own
+// way (3 0 2, 2 0 1) is one; q3map2's merged triangles (a zigzag strip) are not, and are drawn by their triangles
+{
+  const verts = (pts) => { const v = new Float32Array(pts.length * 10); pts.forEach((p, k) => v.set(p, k * 10)); return v; };
+  const quad = verts([[0, 0, 0], [64, 0, 0], [64, 64, 0], [0, 64, 0]]);
+  const strip = verts([[0, 0, 0], [64, 0, 0], [0, 64, 0], [64, 64, 0], [0, 128, 0], [64, 128, 0]]);
+  assert(isFan(new Uint16Array([3, 0, 2, 2, 0, 1]), 4, quad, [0, 0, 1]) && !isFan(new Uint16Array([0, 1, 2, 1, 3, 2, 2, 3, 4, 3, 5, 4]), 6, strip, [0, 0, 1]),
+    'a convex quad in q3map\'s triangle order is one polygon; a strip of triangles in zigzag order is not');
 }
 
 // the end of the match (UI_SPPostgameMenu): the accuracy, the awards earned, the frags, perfect for a win

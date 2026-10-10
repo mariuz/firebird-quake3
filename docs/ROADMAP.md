@@ -79,7 +79,7 @@ fuzzy logic from the botfiles. What that leaves out:
 | **Demos** | not recorded. The database *is* the state: recording the `q3_tic` inputs per tic (one table) would replay a match deterministically; dumping the tables would be a save game |
 | **Area portals** | a closed door does not block the PVS on its far side (`CM_AdjustAreaPortalState`); the port draws through closed doors' areas |
 | **Light styles** | not in the demo maps |
-| **File system** | one pak; the game searches every `pak*.pk3` in `baseq3` and a mod directory |
+| **File system** | the page stacks the demo's pak, the pk3s picked from disk and one hosted map pack (`PakSet`); the game searches every `pak*.pk3` in `baseq3` and a mod directory at once, and a picked pk3's models, sounds and bot files are not read again (its maps and shaders are) |
 | **Capsule traces** | players use a box; Quake III traces players as capsules against other players (`cm_trace.c` with `capsule`) |
 | **The menu, key binding, player setup** | the page's controls do this; model and name choice for the player would be a small addition (`PLAYER_MODEL` is fixed to Sarge) |
 | **Sound** | OpenAL-style spatialisation exists; missing: underwater low-pass, doppler, the mover loop sounds (`sound/movers/*` are played at the start and end only), the ambient `target_speaker` global flag, the `s_musicvolume` crossfades |
@@ -89,7 +89,7 @@ fuzzy logic from the botfiles. What that leaves out:
 | Gap | Notes |
 | --- | --- |
 | Frame rate | the painter runs at the display's rate since the interpolation; a frame is the frame query (3 to 8 ms) plus the paint, and the tic (6 ms) lands on every third frame. Batching `q3_tic` and `frame_all` into one procedure would save a round trip on those; the software painter at 640×480 is paint-bound |
-| Bigger maps | the full game's maps have 2 to 4× the faces and brushes of the demo's; `mark_faces` per cluster and the trace cost scale with leaf size, untested beyond the four demo arenas |
+| Bigger maps | OpenArena's and the Community Map-Pack's arenas (up to 11 000 faces, oa_thor; the hosted 41 up to 10 000) load in 1 to 13 s and play; their waypoint graphs take longer to build, and the hunt over them is tested on the demo's arenas only |
 | Load time | 1.3 s for q3dm1, the pak's inflate and the JPEGs dominate in the browser; the waypoint graph is already spread over frames |
 | Memory | the engine is `memory://`; nothing persists between page loads (settings aside) |
 

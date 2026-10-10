@@ -33,12 +33,25 @@ jobs:
         id: pak
         uses: actions/cache@v4
         with:
-          path: public/pak/
+          path: public/pak/pak0.pk3
           key: q3ademo-1.11-6-${{ hashFiles('scripts/fetch-pak.mjs') }}
 
       - name: Fetch the demo pak
         if: steps.pak.outputs.cache-hit != 'true'
         run: npm run fetch-pak
+
+      # OpenArena 0.8.8 and its Community Map-Pack (GPLv2 game data, 440 MB, downloaded once): each of their
+      # deathmatch arenas becomes a small pk3 of what it uses, public/pak/maps/*.pk3, fetched by the page
+      # when it is picked
+      - name: Cache OpenArena and the Community Map-Pack
+        uses: actions/cache@v4
+        with:
+          path: .cache/maps/
+          key: openarena-0.8.8-oacmp-volume1-v3
+
+      - name: Build the OpenArena map packs
+        continue-on-error: true   # (a site without them is better than none when the mirror is down)
+        run: npm run fetch-maps
 
       # Runs the game's SQL inside the real Firebird WASM engine under Node:
       # loads the arena, runs, jumps, shoots, rides a jump pad, renders frames.
@@ -69,6 +82,10 @@ jobs:
 
       - name: Tournament
         run: npm run test:tourney
+
+      # Every hosted OpenArena and Community Map-Pack arena on top of the demo pak: its pictures, its spawns, a second of play
+      - name: The OpenArena map packs
+        run: npm run test:maps
 
       - name: Headless screenshots
         run: npm run screenshots

@@ -1507,16 +1507,20 @@ DECLARE ap DOUBLE PRECISION; DECLARE ay DOUBLE PRECISION; DECLARE ar DOUBLE PREC
 DECLARE sf INTEGER; DECLARE msg VARCHAR(400); DECLARE wt DOUBLE PRECISION; DECLARE dl DOUBLE PRECISION; DECLARE rnd DOUBLE PRECISION; DECLARE spd DOUBLE PRECISION;
 DECLARE lip DOUBLE PRECISION; DECLARE hgt DOUBLE PRECISION; DECLARE hp INTEGER; DECLARE dmg INTEGER; DECLARE cnt INTEGER; DECLARE noise VARCHAR(64);
 DECLARE phase DOUBLE PRECISION; DECLARE grav DOUBLE PRECISION; DECLARE music VARCHAR(64); DECLARE notfree INTEGER;
+DECLARE notteam INTEGER; DECLARE gtypes VARCHAR(80); DECLARE gt SMALLINT;
 DECLARE eid INTEGER; DECLARE dx DOUBLE PRECISION; DECLARE dy DOUBLE PRECISION; DECLARE dz DOUBLE PRECISION;
 DECLARE sx DOUBLE PRECISION; DECLARE sy DOUBLE PRECISION; DECLARE sz DOUBLE PRECISION; DECLARE d DOUBLE PRECISION; DECLARE t2 DOUBLE PRECISION;
 DECLARE tx DOUBLE PRECISION; DECLARE ty DOUBLE PRECISION; DECLARE tz DOUBLE PRECISION; DECLARE best SMALLINT; DECLARE trig INTEGER;
 DECLARE mnx DOUBLE PRECISION; DECLARE mny DOUBLE PRECISION; DECLARE mnz DOUBLE PRECISION; DECLARE mxx DOUBLE PRECISION; DECLARE mxy DOUBLE PRECISION; DECLARE mxz DOUBLE PRECISION;
 DECLARE kind CHAR(1); DECLARE n1 VARCHAR(64); DECLARE n3 VARCHAR(64); DECLARE skyname VARCHAR(64);
 BEGIN
+  SELECT g.gametype FROM game g WHERE g.id = 1 INTO gt;
   FOR SELECT m.id, m.classname, m.targetname, m.target, m.team, m.model, m.ox, m.oy, m.oz, m.angle, m.apitch, m.ayaw, m.aroll,
-             m.spawnflags, m.message, m.wait_, m.delay, m.random_, m.speed, m.lip, m.height, m.health, m.dmg, m.count_, m.noise, m.phase, m.gravity, m.music, m.notfree
+             m.spawnflags, m.message, m.wait_, m.delay, m.random_, m.speed, m.lip, m.height, m.health, m.dmg, m.count_, m.noise, m.phase, m.gravity, m.music, m.notfree,
+             m.notteam, m.gametype
         FROM map_ents m ORDER BY m.id
-        INTO mid, cls, tn, tg, team, mdl, ox, oy, oz, ang, ap, ay, ar, sf, msg, wt, dl, rnd, spd, lip, hgt, hp, dmg, cnt, noise, phase, grav, music, notfree
+        INTO mid, cls, tn, tg, team, mdl, ox, oy, oz, ang, ap, ay, ar, sf, msg, wt, dl, rnd, spd, lip, hgt, hp, dmg, cnt, noise, phase, grav, music, notfree,
+             notteam, gtypes
   DO
   BEGIN
     IF (cls = 'worldspawn') THEN
@@ -1524,7 +1528,11 @@ BEGIN
       UPDATE game g SET g.level_msg = :msg, g.music = :music, g.gravity = COALESCE(NULLIF(:grav, 0), 800) WHERE g.id = 1;
       CONTINUE;
     END
-    IF (notfree = 1) THEN CONTINUE;                                     -- not in free for all
+    -- G_SpawnGEntityFromSpawnVars: notteam in a team game, notfree otherwise; and with a "gametype" key, only
+    -- in the game types it names (its words searched for "ffa", "tournament", "team" as strstr does)
+    IF (gt = 3 AND notteam = 1) THEN CONTINUE;
+    IF (gt < 3 AND notfree = 1) THEN CONTINUE;
+    IF (gtypes IS NOT NULL AND POSITION(TRIM(CASE gt WHEN 1 THEN 'tournament' WHEN 3 THEN 'team' ELSE 'ffa' END) IN LOWER(gtypes)) = 0) THEN CONTINUE;
     -- "angles" overrides "angle"
     IF (ay IS NOT NULL AND ang IS NULL) THEN ang = ay;
     IF (cls IN ('light', 'misc_model', 'func_group', 'target_location', 'info_player_intermission', 'team_CTF_redplayer', 'team_CTF_blueplayer', 'team_CTF_redspawn', 'team_CTF_bluespawn', 'item_botroam', 'misc_portal_surface', 'misc_portal_camera')) THEN CONTINUE;

@@ -359,6 +359,14 @@ export class GLRenderer {
   }
 
   /** The world's vertices go onto the card once: every face of every model of the BSP, in model space. */
+  /** New paks on top: the pictures and shader looks read so far may be another pak's now. */
+  resetCaches() {
+    for (const t of this.textures.values()) if (t?.tex) this.gl.deleteTexture(t.tex);
+    this.textures.clear();
+    this.looks.clear();
+    this.overlay?.resetCaches?.();
+  }
+
   setResources(res) {
     this.res = res;
     this.overlay.setResources(res);
@@ -885,7 +893,7 @@ export class GLRenderer {
     mdl.surfaces.forEach((surf, si) => {
       const img = skin ? skin(surf) : null;
       if (img === false) return;
-      const tex = this.texture(shell ? shell.look.image : img ?? (surf.shaders[0] || ''));
+      const tex = this.texture(shell ? shell.look.image : this.modelImage(img ?? (surf.shaders[0] || '')));
       gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, tex.tex);
       gl.uniform1i(u.uAlphaTest, tex.hasAlpha && blend === 'opaque' ? 1 : 0);
       gl.bufferData(gl.ARRAY_BUFFER, shell ? this.shellBuffer(surf, fr, eye, shell) : this.mesh(mdl, si, fr), gl.DYNAMIC_DRAW);
@@ -1017,6 +1025,6 @@ export class GLRenderer {
 }
 
 // the player parts, the weapon models and the particle bookkeeping are the software painter's
-for (const m of ['drawPlayer', 'drawMd3Powered', 'weaponModel', 'spawnParticles', 'runParticles']) GLRenderer.prototype[m] = Renderer.prototype[m];
+for (const m of ['drawPlayer', 'drawMd3Powered', 'weaponModel', 'modelImage', 'spawnParticles', 'runParticles']) GLRenderer.prototype[m] = Renderer.prototype[m];
 
 export { yawAxis, anglesAxis, tagTransform, animFrame };
