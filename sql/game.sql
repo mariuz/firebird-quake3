@@ -826,11 +826,12 @@ BEGIN
   RETURN 1;
 END^
 
--- a picked-up item hides until it respawns
+-- a picked-up item hides until it respawns; a dropped one (its think is 'remove') is gone
 CREATE OR ALTER PROCEDURE item_taken (item INTEGER, respawn DOUBLE PRECISION)
 AS
 BEGIN
-  UPDATE ents e SET e.solid = 0, e.alpha = 1, e.think = 'item_respawn', e.nextthink = now_() + :respawn WHERE e.id = :item;
+  UPDATE ents e SET e.solid = 0, e.alpha = 1, e.think = IIF(e.think = 'remove', 'remove', 'item_respawn'),
+         e.nextthink = IIF(e.think = 'remove', now_(), now_() + :respawn) WHERE e.id = :item;
 END^
 
 CREATE OR ALTER PROCEDURE item_respawn (eid INTEGER)
@@ -990,11 +991,11 @@ BEGIN
   IF (attacker IS NULL OR attacker <= 0 OR attacker = victim) THEN
   BEGIN
     s = CASE mod_ WHEN 14 THEN ' does a back flip into the lava' WHEN 15 THEN ' melted' WHEN 13 THEN ' cratered' WHEN 21 THEN ' sank like a rock'
-          WHEN 12 THEN ' was squished' WHEN 5 THEN ' tripped on ' || IIF(:v = 'You', 'your', 'its') || ' own grenade' WHEN 7 THEN ' blew ' || IIF(:v = 'You', 'yourself', 'itself') || ' up'
-          WHEN 9 THEN ' melted ' || IIF(:v = 'You', 'yourself', 'itself') WHEN 19 THEN ' should have used a smaller gun' WHEN 20 THEN ' killed ' || IIF(:v = 'You', 'yourself', 'itself')
+          WHEN 12 THEN ' was squished' WHEN 5 THEN ' tripped on ' || TRIM(IIF(:v = 'You', 'your', 'its')) || ' own grenade' WHEN 7 THEN ' blew ' || TRIM(IIF(:v = 'You', 'yourself', 'itself')) || ' up'
+          WHEN 9 THEN ' melted ' || TRIM(IIF(:v = 'You', 'yourself', 'itself')) WHEN 19 THEN ' should have used a smaller gun' WHEN 20 THEN ' killed ' || TRIM(IIF(:v = 'You', 'yourself', 'itself'))
           ELSE ' was in the wrong place' END;
     IF (v = 'You') THEN s = REPLACE(s, ' was ', ' were ');
-    RETURN v || TRIM(s) || '.';
+    RETURN v || ' ' || TRIM(s) || '.';
   END
   own = IIF(a = 'You', 'your', a || '''s');
   s = CASE mod_ WHEN 1 THEN ' was pummeled by ' || a WHEN 2 THEN ' was machinegunned by ' || a WHEN 3 THEN ' was gunned down by ' || a
@@ -1411,6 +1412,65 @@ BEGIN
   -- powerups appear a while after the match starts
   IF (delay_ > 0) THEN UPDATE ents e SET e.solid = 0, e.alpha = 1, e.think = 'item_respawn', e.nextthink = :delay_ WHERE e.id = :id;
   SUSPEND;
+END^
+
+-- Drop_Item and LaunchItem: an item thrown from a player's origin, `angle` degrees off its facing, 150
+-- forward and 200 ± 50 up; it bounces at half its speed (G_BounceItem) and is removed in 30 seconds if
+-- nobody takes it; `cnt` is its quantity (a powerup's seconds), 0 the item's own
+CREATE OR ALTER PROCEDURE drop_item (eid INTEGER, cls VARCHAR(40), angle DOUBLE PRECISION, cnt INTEGER)
+AS
+DECLARE x DOUBLE PRECISION; DECLARE y DOUBLE PRECISION; DECLARE z DOUBLE PRECISION; DECLARE yaw DOUBLE PRECISION; DECLARE it INTEGER;
+BEGIN
+  SELECT e.x, e.y, e.z, e.yaw + :angle FROM ents e WHERE e.id = :eid INTO x, y, z, yaw;
+  IF (x IS NULL) THEN EXIT;
+  SELECT s.id FROM spawn_item(:cls, :x, :y, :z, 1, :cnt, 0) s INTO it;
+  IF (it IS NULL) THEN EXIT;
+  UPDATE ents e SET e.movetype = 10, e.vx = 150 * COS(:yaw * 0.0174532925e0), e.vy = 150 * SIN(:yaw * 0.0174532925e0), e.vz = 200 + crand() * 50,
+         e.owner_id = :eid, e.think = 'remove', e.nextthink = now_() + 30 WHERE e.id = :it;
+END^
+
+-- TossClientItems: the dead drop the gun in hand when it is better than the machinegun and loaded (the
+-- one coming up when the machinegun is going down), and, but in team play, every powerup still running,
+-- with the seconds it has left, 45 degrees apart
+CREATE OR ALTER PROCEDURE toss_client_items (eid INTEGER)
+AS
+DECLARE w INTEGER; DECLARE have INTEGER; DECLARE pend INTEGER; DECLARE ws SMALLINT; DECLARE t DOUBLE PRECISION; DECLARE angle INTEGER = 45;
+DECLARE pw INTEGER; DECLARE fin DOUBLE PRECISION; DECLARE cls VARCHAR(40); DECLARE loaded SMALLINT = 1;
+DECLARE q DOUBLE PRECISION; DECLARE en DOUBLE PRECISION; DECLARE ha DOUBLE PRECISION; DECLARE iv DOUBLE PRECISION; DECLARE rg DOUBLE PRECISION; DECLARE fl DOUBLE PRECISION = 0;
+BEGIN
+  t = now_();
+  IF (eid = player_ent()) THEN
+  BEGIN
+    SELECT p.weapon, p.weapons, p.pending_weapon, p.weaponstate, p.quad_finished, p.enviro_finished, p.haste_finished, p.invis_finished, p.regen_finished, p.flight_finished
+      FROM player p WHERE p.id = 1 INTO w, have, pend, ws, q, en, ha, iv, rg, fl;
+    IF (w = 2 AND ws = 2 AND pend > 0) THEN w = IIF(BIN_AND(have, pend) <> 0, pend, 0);
+    loaded = IIF(ammo_count(weapon_ammo(w)) > 0, 1, 0);
+  END
+  ELSE
+    -- (the bots count no ammunition: a gun held is loaded)
+    SELECT e.weapon, e.quad_finished, e.enviro_finished, e.haste_finished, e.invis_finished, e.regen_finished FROM ents e WHERE e.id = :eid INTO w, q, en, ha, iv, rg;
+  IF (w > 2 AND loaded = 1) THEN
+  BEGIN
+    SELECT FIRST 1 d.cls FROM item_defs d WHERE d.kind = 'W' AND d.bit = :w INTO cls;
+    IF (cls IS NOT NULL) THEN EXECUTE PROCEDURE drop_item(eid, cls, 0, 0);
+  END
+  IF ((SELECT g.gametype FROM game g WHERE g.id = 1) = 3) THEN EXIT;
+  pw = 1;
+  WHILE (pw <= 32) DO
+  BEGIN
+    fin = CASE pw WHEN 1 THEN q WHEN 2 THEN en WHEN 4 THEN ha WHEN 8 THEN iv WHEN 16 THEN rg ELSE fl END;
+    IF (fin > t) THEN
+    BEGIN
+      cls = NULL;
+      SELECT FIRST 1 d.cls FROM item_defs d WHERE d.kind = 'P' AND d.bit = :pw INTO cls;
+      IF (cls IS NOT NULL) THEN
+      BEGIN
+        EXECUTE PROCEDURE drop_item(eid, cls, angle, MAXVALUE(1, CAST(FLOOR(fin - t) AS INTEGER)));
+        angle = angle + 45;
+      END
+    END
+    pw = pw * 2;
+  END
 END^
 
 -- SelectRandomDeathmatchSpawnPoint: one of the info_player_deathmatch spots not too near anyone

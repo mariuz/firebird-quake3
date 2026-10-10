@@ -418,6 +418,8 @@ BEGIN
   SELECT e.health, e.pmodel, e.pskin FROM ents e WHERE e.id = :pe INTO hp, pm, ps;
   EXECUTE PROCEDURE say(obituary(pe, attacker, mod_));
   EXECUTE PROCEDURE score_frag(attacker, pe, mod_);
+  UPDATE ents e SET e.solid = 0 WHERE e.id = :pe;
+  EXECUTE PROCEDURE toss_client_items(pe);   -- the gun and the powerups fall (TossClientItems)
   UPDATE ents e SET e.deadflag = 1, e.solid = 0, e.movetype = 6, e.takedamage = 0, e.viewheight = -8, e.minz = -24, e.maxz = -8, e.weapon = 0 WHERE e.id = :pe;
   UPDATE player p SET p.dead_time = :t, p.deaths = p.deaths + 1, p.view_ofs = -8, p.ducked = 0, p.weapon = 0, p.pending_weapon = 0, p.weaponstate = 0, p.quad_finished = 0, p.haste_finished = 0, p.invis_finished = 0, p.regen_finished = 0, p.enviro_finished = 0, p.flight_finished = 0 WHERE p.id = 1;
   IF (hp < -40) THEN

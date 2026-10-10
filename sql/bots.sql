@@ -885,6 +885,8 @@ BEGIN
   EXECUTE PROCEDURE say(obituary(eid, attacker, mod_));
   EXECUTE PROCEDURE score_frag(attacker, eid, mod_);
   EXECUTE PROCEDURE bot_chat_event(eid, 'death', attacker, mod_);   -- BotChat_Death
+  UPDATE ents e SET e.solid = 0 WHERE e.id = :eid;
+  EXECUTE PROCEDURE toss_client_items(eid);   -- the gun and the powerups fall (TossClientItems)
   UPDATE ents e SET e.deadflag = 1, e.st = 'dead', e.solid = 0, e.movetype = 0, e.takedamage = 0, e.alpha = 1, e.enemy_id = NULL, e.goal_id = NULL,
          e.respawn_time = :t + 2.5e0 + RAND() * 2, e.deaths = e.deaths + 1, e.vx = 0, e.vy = 0, e.vz = 0, e.quad_finished = 0,
          e.haste_finished = 0, e.invis_finished = 0, e.regen_finished = 0, e.enviro_finished = 0, e.nextthink = :t + 0.5e0 WHERE e.id = :eid;
@@ -2017,9 +2019,16 @@ BEGIN
     END
     IF (BIN_AND(flags, 512) <> 0 AND mt <> 9) THEN CONTINUE;      -- resting
     EXECUTE PROCEDURE toss_move(eid, dt);
+    -- G_RunItem: a thrown item that falls into a nodrop brush (CONTENTS_NODROP, the void under the
+    -- arena) is removed
+    IF (mt = 10) THEN
+    BEGIN
+      ex = NULL;
+      SELECT e.x, e.y, e.z FROM ents e WHERE e.id = :eid AND e.classname = 'item' INTO ex, ey, ez;
+      IF (ex IS NOT NULL) THEN
+        IF (BIN_AND(point_contents(ex, ey, ez), -2147483648) <> 0) THEN DELETE FROM ents e WHERE e.id = :eid;
+    END
   END
-  -- items in lava or slime are not there; corpses in them burn away
-  -- (nothing to do: Q3 removes things that fall into NODROP; the maps' hurt triggers do the rest)
 END^
 
 -- ── the tic ─────────────────────────────────────────────────────────────

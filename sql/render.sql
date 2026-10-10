@@ -347,7 +347,7 @@ BEGIN
   FOR SELECT e.id, e.model_id, e.frame, e.weapon,
              -- the medal over the head for two seconds: 8192 excellent, 16384 gauntlet, 32768 impressive
              e.effects + IIF(e.award > 0 AND e.award_time > :tn - 2, CASE e.award WHEN 1 THEN 8192 WHEN 2 THEN 32768 WHEN 3 THEN 16384 ELSE 0 END, 0)
-                       + IIF(e.waterlevel > 0 AND e.movetype IN (9, 10) AND BIN_AND(e.watertype, 32) <> 0, 65536, 0)   -- a missile in water
+                       + IIF(e.waterlevel > 0 AND e.movetype IN (9, 10) AND e.classname <> 'item' AND BIN_AND(e.watertype, 32) <> 0, 65536, 0)   -- a missile in water
                        + IIF(e.pmodel IS NOT NULL AND e.health > 0 AND COALESCE(e.quad_finished, 0) > :tn AND BIN_AND(e.effects, 512) = 0, 512, 0)   -- EF_QUAD: its blue light
                        -- the other powerups a bot carries, for their shells and the haste's smoke: 256 invisible,
                        -- 1024 regeneration, 2048 haste, 4096 battle suit

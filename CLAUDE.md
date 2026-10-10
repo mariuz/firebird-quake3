@@ -58,7 +58,7 @@ explosion sprites, beams) and nothing else. The renderers never query the databa
 | a table or column | `sql/schema.sql` (and `TABLES` in `src/loader.js` for the bulk-loaded ones) |
 | collision, traces, slide/step moves | `sql/physics.sql` |
 | the player's movement (substeps, gravity, `PM_CmdScale`) | `player_think` in `sql/player.sql`; `scripts/pmove-test.mjs` holds it against `bg_pmove.c` |
-| movers, triggers, targets, items, damage, projectiles, map spawning | `sql/game.sql` |
+| movers, triggers, targets, items, damage, projectiles, map spawning | `sql/game.sql` (the dead's dropped gun and powerups: `toss_client_items`, `drop_item`) |
 | weapons, the player's think, respawn | `sql/player.sql` |
 | corpses (the body queue, sinking) | `body_queue`, `body_release`, `body_sink` in `sql/game.sql`; made in `player_die`/`bot_die`, released by the respawns |
 | bot behaviour, skill characteristics (`bot_char`), the characters' own (`bot_cv`, read by `src/botchat.js`) | `sql/bots.sql` |

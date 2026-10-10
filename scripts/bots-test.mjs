@@ -482,6 +482,68 @@ if (item) {
   const bad = lines.filter((l) => !l.startsWith(bot.BOT.trim() + ': ') || /[{}~^]/.test(l));
   assert(bad.length === 0, `${lines.length} lines said whole, e.g. "${lines[0]}" (bad: ${bad.slice(0, 2).join(' | ') || 'none'})`);
 }
+// TossClientItems: a bot killed with the rocket launcher in hand and the quad running drops both; they fly,
+// bounce and rest near where it died; the quad gives what it had left, and a dropped item taken is gone
+{
+  await db.exec("UPDATE ents SET nextthink = 1e9 WHERE classname = 'bot'");
+  const t0 = (await q('SELECT time_ t FROM game'))[0].T;
+  const last = (await q('SELECT MAX(id) m FROM ents'))[0].M;
+  // (a spawn spot away from us and a facing with floor where both land, 100 to 250 out at the facing and 45 degrees off it:
+  // over the void they fall, as they would in the game)
+  let place = null;
+  const us = (await q(`SELECT x, y FROM ents WHERE id = ${pe}`))[0];
+  for (const sp of (await q("SELECT x, y, z FROM ents WHERE classname = 'info_player_deathmatch' ORDER BY id")).filter((sp) => Math.hypot(sp.X - us.X, sp.Y - us.Y) > 500)) {
+    for (let yaw = 0; yaw < 360 && !place; yaw += 45) {
+      let ok = true;
+      for (const a of [yaw, yaw + 45]) for (const r of [100, 175, 250]) {
+        const x = sp.X + Math.cos(a * Math.PI / 180) * r, y = sp.Y + Math.sin(a * Math.PI / 180) * r;
+        const f = (await q(`SELECT fraction f, startsolid s FROM trace_move(NULL, 0,0,0,0,0,0, ${x}, ${y}, ${sp.Z + 30}, ${x}, ${y}, ${sp.Z - 60}, 1)`))[0];
+        if (f.F >= 1 || f.S) ok = false;
+      }
+      if (ok) place = [sp.X, sp.Y, sp.Z + 9, yaw];
+    }
+    if (place) break;
+  }
+  if (place) { await db.exec(`UPDATE ents SET x = ${place[0]}, y = ${place[1]}, z = ${place[2]}, yaw = ${place[3]}, vx = 0, vy = 0, vz = 0 WHERE id = ${b}`); await db.exec(`EXECUTE PROCEDURE link_ent(${b})`); }
+  await db.exec(`UPDATE ents SET weapons = BIN_OR(weapons, 16), weapon = 16, quad_finished = ${t0 + 12.5}, haste_finished = 0, invis_finished = 0, regen_finished = 0, enviro_finished = 0, health = 100 WHERE id = ${b}`);
+  const at = (await q(`SELECT x, y, z FROM ents WHERE id = ${b}`))[0];
+  await db.exec(`EXECUTE PROCEDURE bot_die(${b}, ${pe}, 6)`);
+  const thrown = await q(`SELECT id, TRIM(item) item, count_, vz, nextthink FROM ents WHERE classname = 'item' AND think = 'remove' AND id > ${last} ORDER BY id`);
+  // (they settle in a second or two; one that falls to a floor below takes longer)
+  for (let i = 0; i < 80; i++) {
+    await tic();
+    if (i >= 20 && i % 5 === 0 && (await q(`SELECT COUNT(*) n FROM ents WHERE classname = 'item' AND id > ${last} AND BIN_AND(flags, 512) = 0`))[0].N === 0) break;
+  }
+  const lie = await q(`SELECT id, TRIM(item) item, x, y, z, flags, solid FROM ents WHERE classname = 'item' AND id > ${last} ORDER BY id`);
+  const gun = lie.find((r) => r.ITEM === 'weapon_rocketlauncher'), quad = lie.find((r) => r.ITEM === 'item_quad');
+  const near = (r) => r && Math.hypot(r.X - at.X, r.Y - at.Y) < 300 && (r.FLAGS & 512) && r.SOLID === 1;
+  assert(thrown.length === 2 && thrown.every((r) => r.VZ > 140 && Math.abs(r.NEXTTHINK - t0 - 30) < 0.2) && thrown.find((r) => r.ITEM === 'item_quad')?.COUNT_ === 12 && near(gun) && near(quad),
+    `a dead bot drops its gun and its quad (12 s left): ${thrown.length} thrown${place ? '' : ' (no floor found)'}; ${lie.map((r) => `${r.ITEM} ${Math.hypot(r.X - at.X, r.Y - at.Y).toFixed(0)} away, ${r.FLAGS & 512 ? 'resting' : 'moving'}`).join('; ')}`);
+  if (quad) {
+    await db.exec(`UPDATE ents SET x = ${quad.X}, y = ${quad.Y}, z = ${quad.Z + 10} WHERE id = ${pe}`);
+    await db.exec(`EXECUTE PROCEDURE link_ent(${pe})`);
+    await tic(); await tic();
+    const left = (await q('SELECT p.quad_finished - g.time_ l FROM player p, game g'))[0].L;
+    const gone = (await q(`SELECT COUNT(*) n FROM ents WHERE id = ${quad.ID}`))[0].N;
+    assert(left > 11 && left <= 12 && gone === 0, `we take the dropped quad: ${left.toFixed(1)} s of it, and it is gone (${gone === 0})`);
+    await db.exec('UPDATE player SET quad_finished = 0');
+  }
+  // G_RunItem: one thrown into the void (a CONTENTS_NODROP brush, on the maps that have one) is gone when it gets there
+  const nd = (await q('SELECT FIRST 1 (minx + maxx) / 2 x, (miny + maxy) / 2 y, maxz z FROM brushes WHERE contents < 0 ORDER BY (maxx - minx) * (maxy - miny) DESC'))[0];
+  if (nd) {
+    const holder = bots[1].ID;
+    await db.exec(`UPDATE ents SET x = ${nd.X}, y = ${nd.Y}, z = ${nd.Z + 40}, vx = 0, vy = 0, vz = 0 WHERE id = ${holder}`);
+    const last2 = (await q('SELECT MAX(id) m FROM ents'))[0].M;
+    await db.exec(`EXECUTE PROCEDURE drop_item(${holder}, 'weapon_railgun', 0, 0)`);
+    const made = (await q(`SELECT COUNT(*) n FROM ents WHERE classname = 'item' AND id > ${last2}`))[0].N;
+    for (let i = 0; i < 20; i++) await tic();
+    const left = (await q(`SELECT COUNT(*) n FROM ents WHERE classname = 'item' AND id > ${last2}`))[0].N;
+    assert(made === 1 && left === 0, `a gun thrown over the void is removed in the nodrop brush below (${made} thrown, ${left} left)`);
+    await db.exec(`EXECUTE PROCEDURE bot_respawn(${holder})`);
+  }
+  await db.exec("UPDATE ents SET nextthink = (SELECT time_ FROM game) WHERE classname = 'bot'");
+}
+
 let chats = 0;
 const talkers = new RegExp(`^(${bots.map((b) => b.BOT.trim()).join('|')}): `);
 let lastMsg = 0;

@@ -195,6 +195,13 @@ const foe = blue[0], foe2 = blue[1];
   await db.exec(`EXECUTE PROCEDURE bot_say(${red[0].ID}, 'iamteamleader', NULL, NULL, NULL, NULL, NULL, NULL, -1, 0)`);
   const t2 = (await q('SELECT FIRST 1 msg FROM messages ORDER BY id DESC'))[0].MSG;
   assert(t1 === `(${b1.BOT}): I'm the team leader` && t2 === t1, `the team's chat: "${t1}"; red's is not heard on blue`);
+
+  // TossClientItems in team play: the gun falls, the powerups do not
+  const last = (await q('SELECT MAX(id) m FROM ents'))[0].M;
+  await db.exec(`UPDATE ents SET weapons = BIN_OR(weapons, 64), weapon = 64, quad_finished = (SELECT time_ + 10 FROM game) WHERE id = ${b2.ID}`);
+  await db.exec(`EXECUTE PROCEDURE bot_die(${b2.ID}, ${red[0].ID}, 17)`);
+  const fell = (await q(`SELECT TRIM(item) i FROM ents WHERE classname = 'item' AND think = 'remove' AND id > ${last}`)).map((r) => r.I);
+  assert(fell.join() === 'weapon_railgun', `a bot killed in team play drops its gun but not its quad (${fell.join(', ')})`);
 }
 
 await db.close();

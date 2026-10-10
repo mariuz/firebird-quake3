@@ -386,7 +386,13 @@ weapons give their ammo, every item respawns after the `respawn` time `item_defs
 `bg_itemlist`, powerups stack their time (the bots take every one but flight, `bot_item_touch`), holdables (medkit, teleporter) wait for the Enter key (the
 teleporter sends you to a `select_spawn` spot, as `Use_Teleporter` does); `item_respawn` makes the
 item solid again and plays the respawn sound; a picked-up item is not drawn because `alpha = 1`
-hides it from the frame query.
+hides it from the frame query. The dead drop what they carried (`toss_client_items`, `TossClientItems`,
+from `player_die` and `bot_die`): the gun in hand when it is better than the machinegun and loaded, and
+outside team play every powerup still running, 45 degrees apart, its seconds left as the item's
+`count_`. `drop_item` (`Drop_Item`, `LaunchItem`) throws it 150 forward and 200 ± 50 up as a bouncing
+item (`movetype` 10, half its speed at each bounce, `G_BounceItem`) whose think is `remove` in 30
+seconds, or as soon as it falls into a `CONTENTS_NODROP` brush (`G_RunItem`, in `run_physics`);
+`item_taken` frees such an item instead of hiding it for a respawn.
 
 Map entities (`spawn_map_ents`) turn every `map_ents` row into a live `ents` row: `func_door` with an
 auto-spawned `door_trigger` box (`Think_SpawnNewDoorTrigger`), `func_plat` with its `plat_trigger`,

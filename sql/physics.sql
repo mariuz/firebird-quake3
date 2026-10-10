@@ -921,9 +921,9 @@ DECLARE vx DOUBLE PRECISION; DECLARE vy DOUBLE PRECISION; DECLARE vz DOUBLE PREC
 DECLARE f DOUBLE PRECISION; DECLARE nx DOUBLE PRECISION; DECLARE ny DOUBLE PRECISION; DECLARE nz DOUBLE PRECISION;
 DECLARE als SMALLINT; DECLARE sts SMALLINT; DECLARE hit INTEGER; DECLARE sfl INTEGER;
 DECLARE ox DOUBLE PRECISION; DECLARE oy DOUBLE PRECISION; DECLARE oz DOUBLE PRECISION; DECLARE cb SMALLINT;
-DECLARE grav DOUBLE PRECISION; DECLARE wl SMALLINT; DECLARE wt INTEGER; DECLARE owl SMALLINT; DECLARE d DOUBLE PRECISION;
+DECLARE grav DOUBLE PRECISION; DECLARE wl SMALLINT; DECLARE wt INTEGER; DECLARE owl SMALLINT; DECLARE d DOUBLE PRECISION; DECLARE item SMALLINT;
 BEGIN
-  SELECT e.movetype, e.flags, e.vx, e.vy, e.vz, e.gravity, e.waterlevel FROM ents e WHERE e.id = :eid INTO mt, flags, vx, vy, vz, grav, owl;
+  SELECT e.movetype, e.flags, e.vx, e.vy, e.vz, e.gravity, e.waterlevel, IIF(e.classname = 'item', 1, 0) FROM ents e WHERE e.id = :eid INTO mt, flags, vx, vy, vz, grav, owl, item;
   IF (BIN_AND(flags, 512) <> 0 AND mt <> 9) THEN EXIT;       -- resting on the ground
   d = vz;
   IF (mt IN (6, 10)) THEN vz = vz - (SELECT g.gravity FROM game g WHERE g.id = 1) * COALESCE(NULLIF(grav, 0), 1) * dt;
@@ -942,10 +942,11 @@ BEGIN
   BEGIN
     IF (mt = 10) THEN
     BEGIN
-      -- G_BounceMissile: reflect, keep 65 percent; stop when it has all but come to rest on a floor
+      -- G_BounceMissile: reflect, keep 65 percent; stop when it has all but come to rest on a floor. A
+      -- thrown item (G_BounceItem) keeps half, and rests on any floor once it rises under 40
       d = vx * nx + vy * ny + vz * nz;
-      ox = (vx - 2 * d * nx) * 0.65e0; oy = (vy - 2 * d * ny) * 0.65e0; oz = (vz - 2 * d * nz) * 0.65e0;
-      IF (nz > 0.2e0 AND SQRT(ox * ox + oy * oy + oz * oz) < 40) THEN
+      ox = (vx - 2 * d * nx) * IIF(item = 1, 0.5e0, 0.65e0); oy = (vy - 2 * d * ny) * IIF(item = 1, 0.5e0, 0.65e0); oz = (vz - 2 * d * nz) * IIF(item = 1, 0.5e0, 0.65e0);
+      IF (IIF(item = 1, IIF(nz > 0 AND oz < 40, 1, 0), IIF(nz > 0.2e0 AND SQRT(ox * ox + oy * oy + oz * oz) < 40, 1, 0)) = 1) THEN
         UPDATE ents e SET e.flags = BIN_OR(e.flags, 512), e.vx = 0, e.vy = 0, e.vz = 0, e.avel_yaw = 0, e.avel_pitch = 0 WHERE e.id = :eid;
       ELSE
         UPDATE ents e SET e.vx = :ox, e.vy = :oy, e.vz = :oz WHERE e.id = :eid;
