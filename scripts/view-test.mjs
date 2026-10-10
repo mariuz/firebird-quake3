@@ -7,7 +7,7 @@
 
 import fs from 'node:fs';
 import { FrameState, firstPersonView, zoomedFov, fovY, mapTorsoToWeaponFrame, viewTorsoFrame, underwaterFov, sceneLights, litByDlights, MAX_DLIGHTS, drawRail, drawBolt, findPortals, portalView, portalFade, perpendicular, floorBelow, drawShadows } from '../src/scene.js';
-import { Renderer, tagTransform, autospriteQuads, fogST, fogFactor, md3Lod } from '../src/renderer.js';
+import { Renderer, tagTransform, autospriteQuads, fogST, fogFactor, md3Lod, entityFog } from '../src/renderer.js';
 import { parseDeform, waveValue, deformVertex, envTexCoords, parseShaderScript, surfaceLook, shellMesh, eyeInModel, stageBrightness } from '../src/shader.js';
 import { Md3, parseAnimationCfg, parseSkin } from '../src/md3.js';
 import { postgameMedals } from '../src/hud.js';
@@ -266,6 +266,10 @@ const markBsp = {
   const at = (eye, p) => { const [s, t] = fogST(fog, p[0], p[1], p[2], { x: eye[0], y: eye[1], z: eye[2], fwd: [1, 0, 0] }); return fogFactor(s, t); };
   assert(at([0, 0, -10], [100, 0, -10]) > 0.49 && at([0, 0, -10], [100, 0, -10]) < 0.51, 'inside the fog, a point a quarter of the way to opaque is half fogged (the square root)');
   assert(at([0, 0, -10], [800, 0, -10]) === 1 && at([0, 0, -10], [100, 0, 50]) === 0, 'past opaque it is all fog; above the surface none');
+  // R_ComputeFogNum: a model is in a fog when its sphere's box reaches into the fog's bounds
+  const box = { ...fog, mins: [0, 0, -200], maxs: [500, 500, 0] };
+  assert(entityFog([null, box], [100, 100, -50], 30) === box && entityFog([box], [100, 100, 40], 30) === null && entityFog([box], [100, 100, 20], 30) === box && entityFog([fog], [100, 100, -50], 30) === null,
+    'a model in a fog\'s bounds is fogged, one 40 above it is not, one whose sphere dips in is; a fog without bounds fogs no model');
   const half = at([0, 0, 100], [400, 0, -100]);
   assert(Math.abs(half - Math.sqrt(0.5)) < 1e-6, `from above, a point as deep under the surface as the eye is over it gets half the depth's fog (${half.toFixed(3)})`);
 }

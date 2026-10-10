@@ -19,8 +19,19 @@ const LIGHTMAP_SIZE = 128;
 export function fogDefs(bsp, res) {
   return (bsp.fogs ?? []).map((fg) => {
     const fog = res.shaders?.get(fg.name)?.fog;
-    return fog ? { color: fog.color, opaque: fog.opaque, plane: fg.plane } : null;
+    return fog ? { color: fog.color, opaque: fog.opaque, plane: fg.plane, mins: fg.mins, maxs: fg.maxs } : null;
   });
+}
+
+/** R_ComputeFogNum for a model: the first fog whose bounds its sphere's box (origin ± radius) reaches into */
+export function entityFog(fogs, origin, radius) {
+  for (const fog of fogs ?? []) {
+    if (!fog?.mins) continue;
+    let j = 0;
+    for (; j < 3; j++) if (origin[j] - radius >= fog.maxs[j] || origin[j] + radius <= fog.mins[j]) break;
+    if (j === 3) return fog;
+  }
+  return null;
 }
 
 /**
@@ -829,9 +840,17 @@ export class Renderer {
       ldx = light.dir[0]; ldy = light.dir[1]; ldz = light.dir[2];
       if (amb < 24) amb = 24;
     }
-    const tint = opts.tint ?? null;
-    const n3 = this.anorm;
+    let tint = opts.tint ?? null;
     const blend = opts.blend ?? 'opaque';
+    // inside a fog volume (an opaque model, not the view weapon): faded toward the fog's colour by the fog at its
+    // origin, a multiply standing in for RB_FogPass's blend over the model
+    const fog = blend === 'opaque' && !opts.near ? entityFog(this.fogs, origin, mdl.frames[fr]?.radius ?? 0) : null;
+    if (fog) {
+      const [s, t] = fogST(fog, origin[0], origin[1], origin[2], view);
+      const k = fogFactor(s, t);
+      if (k > 0) tint = [0, 1, 2].map((i) => ((tint?.[i] ?? 1) * (1 - k)) + fog.color[i] * k);
+    }
+    const n3 = this.anorm;
     const shell = opts.shell ?? null, eye = shell ? eyeInModel(view, origin, axis) : null;
     for (const surf of mdl.surfaces) {
       const img = skin ? skin(surf) : null;

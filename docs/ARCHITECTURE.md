@@ -796,6 +796,10 @@ scaled by t, and the fog table's square root of it (`fogST`, `fogFactor`). The W
 it per pixel (the groups are split by fog too); the software painter draws each fogged face once more
 (`fogFace`) with s and t where the lightmap coordinates go and blends the pixels that face left on top.
 A fog surface without stages of its own (`fog_intel`) is not drawn; it was a checkerboard before.
+Models are fogged too: a fog's bounds come from its brush's six axial sides (`R_LoadFogs`), and an
+opaque MD3 whose frame's sphere reaches into them (`entityFog`, `R_ComputeFogNum`) is fogged by the same
+s and t, per pixel in the WebGL model shader; the software painter fades the whole model toward the fog's
+colour by the fog at its origin. The view weapon and the powerup shells are not fogged.
 
 *The rail and the lightning* are the renderer's own surfaces (tr_surface.c), drawn as quads through
 `drawMark`. A rail shot (effect 4) is `CG_RailTrail` with `cg_oldRail 1`: nudged 8 units down, for

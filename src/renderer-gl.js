@@ -8,7 +8,7 @@
 // vertex shader; the player parts hang on their tags as before. The HUD is
 // drawn by the software painter onto a transparent canvas laid over this one.
 
-import { Renderer, yawAxis, anglesAxis, tagTransform, animFrame, autospriteQuads, fogDefs, md3Lod } from './renderer.js';
+import { Renderer, yawAxis, anglesAxis, tagTransform, animFrame, autospriteQuads, fogDefs, md3Lod, entityFog } from './renderer.js';
 import { loadImage, powerOfTwo } from './image.js';
 import { shellMesh, eyeInModel, stageBrightness } from './shader.js';
 
@@ -204,8 +204,10 @@ uniform vec3 uDirected;
 uniform vec3 uLightDir;
 out vec2 vSt;
 out vec3 vLight;
+out vec3 vWorld;
 void main() {
   vec4 w = uModel * vec4(aPos, 1.0);
+  vWorld = w.xyz;
   gl_Position = uProj * uView * w;
   vec3 n = normalize(mat3(uModel) * aNormal);
   vLight = min(uAmbient + uDirected * max(0.0, dot(n, uLightDir)), vec3(1.0));
@@ -216,14 +218,34 @@ const MODEL_FS = `#version 300 es
 precision highp float;
 in vec2 vSt;
 in vec3 vLight;
+in vec3 vWorld;
 uniform sampler2D uTex;
 uniform vec3 uTint;
 uniform int uAlphaTest;
+uniform int uFogOn;       // a model in a fog volume (R_ComputeFogNum): RB_FogPass as on the world
+uniform vec3 uFogColor;
+uniform vec4 uFogPlane;
+uniform int uFogHasPlane;
+uniform float uFogOpaque;
+uniform vec3 uEye;
+uniform vec3 uFwd;
 out vec4 fragColor;
 void main() {
   vec4 c = texture(uTex, vSt);
   if (uAlphaTest == 1 && c.a < 0.5) discard;
-  fragColor = vec4(c.rgb * vLight * uTint, c.a);
+  vec3 rgb = c.rgb * vLight * uTint;
+  if (uFogOn == 1) {
+    float s = dot(vWorld - uEye, uFwd) / uFogOpaque, t = 31.0 / 32.0;
+    if (uFogHasPlane == 1) {
+      float tP = uFogPlane.w - dot(vWorld, uFogPlane.xyz), tE = uFogPlane.w - dot(uEye, uFogPlane.xyz);
+      if (tE < 0.0) t = tP < 1.0 ? 1.0 / 32.0 : 1.0 / 32.0 + 30.0 / 32.0 * tP / (tP - tE);
+      else t = tP < 0.0 ? 1.0 / 32.0 : 31.0 / 32.0;
+    }
+    float f = 0.0;
+    if (t > 1.0 / 32.0 + 1e-6 && s > 0.0) { if (t < 31.0 / 32.0) s *= (t - 1.0 / 32.0) / (30.0 / 32.0); f = sqrt(min(1.0, s)); }
+    rgb = mix(rgb, uFogColor, f);
+  }
+  fragColor = vec4(rgb, c.a);
 }`;
 
 const SPRITE_VS = `#version 300 es
@@ -840,6 +862,17 @@ export class GLRenderer {
     gl.uniform3f(u.uTint, tint[0], tint[1], tint[2]);
     gl.uniform1i(u.uTex, 0);
     const blend = opts.blend ?? 'opaque';
+    // in a fog volume (an opaque model, not the view weapon): fogged per pixel as the world is
+    const fog = blend === 'opaque' && !opts.near && !opts.shell ? entityFog(this.fogs, origin, mdl.frames[fr]?.radius ?? 0) : null;
+    gl.uniform1i(u.uFogOn, fog ? 1 : 0);
+    if (fog) {
+      gl.uniform3f(u.uFogColor, fog.color[0], fog.color[1], fog.color[2]);
+      gl.uniform1f(u.uFogOpaque, fog.opaque);
+      gl.uniform1i(u.uFogHasPlane, fog.plane ? 1 : 0);
+      if (fog.plane) gl.uniform4f(u.uFogPlane, fog.plane.nx, fog.plane.ny, fog.plane.nz, fog.plane.dist);
+      gl.uniform3f(u.uEye, this.view.x, this.view.y, this.view.z);
+      gl.uniform3f(u.uFwd, this.view.fwd[0], this.view.fwd[1], this.view.fwd[2]);
+    }
     this.setBlend(blend);
     if (opts.twoSided) gl.disable(gl.CULL_FACE); else gl.enable(gl.CULL_FACE);
     gl.bindBuffer(gl.ARRAY_BUFFER, this.dynVbo);

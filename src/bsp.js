@@ -191,6 +191,12 @@ export class Bsp {
       const br = this.brushes[fg.brush];
       const pl = br && fg.side >= 0 && fg.side < br.numSides ? this.planes[this.brushsides[br.firstSide + fg.side].plane] : null;
       fg.plane = pl ? { nx: pl.nx, ny: pl.ny, nz: pl.nz, dist: pl.dist } : null;
+      // R_LoadFogs: the bounds from the brush's axial sides, which q3map always puts first (-x, +x, -y, +y, -z, +z)
+      if (br && br.numSides >= 6) {
+        const d = (k) => this.planes[this.brushsides[br.firstSide + k].plane].dist;
+        fg.mins = [-d(0), -d(2), -d(4)];
+        fg.maxs = [d(1), d(3), d(5)];
+      }
     }
     this.buildFacets();
     this.modelLeaves();
