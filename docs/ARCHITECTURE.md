@@ -873,9 +873,11 @@ world faces of the camera's PVS (kept in `PORTAL_FACES`, marked once, apart from
 `VIS_FACES`) through its frustum and the models in it, rows as `FRAME_ALL`'s (3 to 4 ms). `drawScene`
 paints that view first, off screen (a framebuffer texture in WebGL, a copy of the frame in the software
 painter), then the main view, where the portal's faces show the off-screen pixels at their own screen
-places, darkened by the distance's fog, under the portal's own stages. The eye stays at the camera:
-Quake III mirrors it behind the camera by the viewer's offset and clips what lies behind the camera's
-plane.
+places, darkened by the distance's fog, under the portal's own stages. The eye is `R_MirrorPoint`'s: its
+offset from the surface (the entity's origin put on the face's plane) carried into the camera's frame, so
+it stands behind the camera as far as the viewer stands before the portal, and what lies behind the
+camera's plane is cut off (the portal plane, the camera's looking direction through it), as for mirrors
+below.
 
 *Mirrors.* A `misc_portal_surface` with no target is a mirror (OpenArena's oa_dm1 has one on a wall, oa_dm2
 mirror floors). Each portal face belongs to the surface entity within 64 units of its plane, the nearest

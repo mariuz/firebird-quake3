@@ -294,6 +294,9 @@ const markBsp = {
   assert(portals.length === 1 && portals[0].faces.has(0), 'the portal surface finds its camera and its face');
   const pv = portalView(portals[0], { x: 0, y: 100, z: 0, yaw: 270, pitch: 0, fov: 90 });
   assert(pv.x === 1000 && Math.abs(pv.fwd[1] + 1) < 1e-6 && Math.abs(pv.up[2] - 1) < 1e-6, `looking into the portal looks where the camera does, upright (forward ${pv.fwd.map((x) => x.toFixed(2)).join(' ')})`);
+  const off = portalView(portals[0], { x: 20, y: 100, z: 8, yaw: 270, pitch: 0, fov: 90 });
+  assert(Math.abs(pv.y - 100) < 1e-9 && Math.abs(off.x - 1020) < 1e-9 && Math.abs(off.y - 100) < 1e-9 && Math.abs(off.z - 8) < 1e-9 && off.clip.join() === '0,-1,0,0' && off.pvs.join() === '1000,0,0',
+    `the eye stands behind the camera as the viewer stands before the portal (R_MirrorPoint: ${[off.x, off.y, off.z].join()}), what is behind the camera cut off, the PVS the camera's`);
   const turned = portalView(portals[0], { x: 0, y: 100, z: 0, yaw: 300, pitch: 0, fov: 90 });
   assert(turned.yaw > pv.yaw + 25 && turned.yaw < pv.yaw + 35, `turning 30 degrees turns the view through the portal 30 (${(turned.yaw - pv.yaw).toFixed(1)})`);
   assert(Math.abs(portalFade(portals[0], { x: 0, y: 128, z: 0 }) - 0.5) < 1e-6 && portalFade(portals[0], { x: 0, y: 300, z: 0 }) === 0, 'alphaGen portal 256: half the view at 128 units, none past 256');
@@ -332,6 +335,8 @@ const markBsp = {
     `a polygon across the plane keeps the part in front, its texture coordinates carried (x ${xs.join(' ')})`);
   const tri = clipFace({ ...quad, fan: false }, [1, 0, 0, 0]);
   assert(!tri.fan && tri.tris.length === 3 * 3, `a triangle list is cut triangle by triangle (${tri.tris.length / 3} triangles)`);
+  const patch = clipFace({ ...quad, type: 2, fan: undefined }, [1, 0, 0, 0]);
+  assert(!patch.fan && patch.tris.length === 3 * 3, 'a patch (no fan flag) is cut triangle by triangle too, as it is drawn');
 }
 
 // the blob shadows (CG_PlayerShadow): the floor found within 128 units, the shadow darker the nearer it is

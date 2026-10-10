@@ -93,9 +93,9 @@ export function findPortals(bsp, look) {
 }
 
 /**
- * R_MirrorViewBySurface for a portal: the viewer's axes carried from the surface's frame to the camera's.
- * The eye stays at the camera (Quake III moves it behind the camera by the viewer's offset and clips what
- * is behind the camera's plane; there is no clip plane here). Returns the view as the painters take it.
+ * R_MirrorViewBySurface for a portal: the viewer's eye and axes carried from the surface's frame to the
+ * camera's (R_MirrorPoint, R_MirrorVector). Returns the view as the painters take it, with the clip plane
+ * at the camera and the PVS at the camera.
  */
 export function portalView(portal, view) {
   let [n, d] = portal.plane;
@@ -107,7 +107,16 @@ export function portalView(portal, view) {
   const f = [Math.cos(pitch) * Math.cos(yaw), Math.cos(pitch) * Math.sin(yaw), -Math.sin(pitch)];
   const left = [-Math.sin(yaw), Math.cos(yaw), 0], up = cross3(f, left);
   const F = norm3(carry(f)), L = norm3(carry(left)), U = norm3(carry(up));
-  return { ...viewFromAxes(portal.camera.origin, F, L, U, view.fov), pvs: portal.camera.origin };
+  // R_MirrorPoint: the eye's offset from the surface (the entity's origin put on the plane) carried to the
+  // camera, so the eye stands behind the camera as far as the viewer stands before the portal; what lies
+  // behind the camera's plane is cut off (portalPlane: the camera's forward, through it)
+  const o = portal.origin, k = dot3(n, o) - d, so = [o[0] - k * n[0], o[1] - k * n[1], o[2] - k * n[2]];
+  const c = portal.camera.origin, off = carry(sub3(eye, so));
+  const look = C[0].map((v) => -v);   // where the camera looks (its axis before R_GetPortalOrientations negated it)
+  return {
+    ...viewFromAxes([c[0] + off[0], c[1] + off[1], c[2] + off[2]], F, L, U, view.fov),
+    clip: [look[0], look[1], look[2], dot3(look, c)], pvs: c,
+  };
 }
 
 /**

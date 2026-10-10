@@ -115,7 +115,7 @@ export function clipFace(f, [nx, ny, nz, d]) {
     return out;
   };
   const pieces = [];
-  if (f.fan !== false) pieces.push(clipRing([...Array(m).keys()]));
+  if (f.fan) pieces.push(clipRing([...Array(m).keys()]));   // as drawFaceList: a polygon only when fan says so
   else for (let k = 0; k + 2 < f.tris.length; k += 3) pieces.push(clipRing([f.tris[k], f.tris[k + 1], f.tris[k + 2]]));
   const verts = [], tris = [];
   for (const p of pieces) {
