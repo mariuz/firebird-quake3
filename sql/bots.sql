@@ -39,6 +39,16 @@ BEGIN
     WHEN 17 THEN 'Railgun' WHEN 18 THEN 'BFG10K' WHEN 19 THEN 'BFG10K' ELSE '[unknown weapon]' END);
 END^
 
+-- whether a player or bot plays on team `tm` (1 red, 2 blue): a spectating player does not, nor a
+-- tournament's waiting bot (BotSameTeam, and the configstrings BotTeamOrders counts)
+CREATE OR ALTER FUNCTION team_member (eid INTEGER, tm SMALLINT) RETURNS SMALLINT
+AS
+BEGIN
+  IF (tm IS NULL OR tm NOT IN (1, 2)) THEN RETURN 0;
+  RETURN IIF(EXISTS (SELECT 1 FROM ents e WHERE e.id = :eid AND e.classname IN ('player', 'bot') AND e.pteam = :tm AND e.queued = 0
+                       AND NOT (e.classname = 'player' AND (SELECT p.spectator FROM player p WHERE p.id = 1) = 1)), 1, 0);
+END^
+
 -- a chat characteristic of the bot's character at its skill (CHARACTERISTIC_CHAT_*)
 CREATE OR ALTER FUNCTION chat_char (eid INTEGER, k VARCHAR(24)) RETURNS DOUBLE PRECISION
 AS
@@ -51,15 +61,23 @@ END^
 
 -- BotAI_BotInitialChat and BotExpandChatMessage: a random line of the type from the bot's chat file,
 -- its random strings drawn from rnd.c until none is left (they nest), the variables put in, the
--- tildes (words kept from the synonyms) and the colour codes taken out; said to everyone, with the
--- talk sound. Returns nothing when the bot's file has no line of the type, as botlib does
-CREATE OR ALTER PROCEDURE bot_say (eid INTEGER, ctype VARCHAR(32), v0 VARCHAR(40), v1 VARCHAR(40), v2 VARCHAR(40), v3 VARCHAR(40), v4 VARCHAR(64), v5 VARCHAR(40))
+-- tildes (words kept from the synonyms) and the colour codes taken out; with the talk sound. Returns
+-- nothing when the bot's file has no line of the type, as botlib does. `to_` is who hears it (BotEnterChat):
+-- 0 everyone ("Name: …"), -1 the team ("(Name): …", CHAT_TEAM), an entity that one alone ("[Name]: …",
+-- CHAT_TELL); the player sees it when it is one of them. `chatted` 1: a BotChat_* line, which counts for
+-- the 25 seconds between them (the team's orders and answers do not)
+CREATE OR ALTER PROCEDURE bot_say (eid INTEGER, ctype VARCHAR(32), v0 VARCHAR(40), v1 VARCHAR(40), v2 VARCHAR(40), v3 VARCHAR(40), v4 VARCHAR(64), v5 VARCHAR(40),
+                                   to_ INTEGER DEFAULT 0, chatted SMALLINT DEFAULT 1)
 AS
 DECLARE bname VARCHAR(16); DECLARE n INTEGER; DECLARE k INTEGER; DECLARE msg VARCHAR(2000); DECLARE pick VARCHAR(600);
-DECLARE p INTEGER; DECLARE q INTEGER; DECLARE rname VARCHAR(40); DECLARE guard INTEGER = 0;
+DECLARE p INTEGER; DECLARE q INTEGER; DECLARE rname VARCHAR(40); DECLARE guard INTEGER = 0; DECLARE heard SMALLINT = 1;
 BEGIN
   SELECT e.bot FROM ents e WHERE e.id = :eid INTO bname;
   IF (bname IS NULL) THEN EXIT;
+  IF (to_ = -1) THEN
+    heard = IIF(EXISTS (SELECT 1 FROM ents o JOIN ents e ON e.id = :eid WHERE o.id = player_ent() AND o.pteam = e.pteam AND o.pteam > 0
+                                                                      AND (SELECT p.spectator FROM player p WHERE p.id = 1) = 0), 1, 0);
+  ELSE IF (to_ > 0) THEN heard = IIF(to_ = player_ent(), 1, 0);
   SELECT COUNT(*) FROM bot_chat c WHERE c.bot = :bname AND c.ctype = :ctype INTO n;
   IF (n = 0) THEN EXIT;
   k = CAST(FLOOR(RAND() * n) AS INTEGER);
@@ -90,9 +108,12 @@ BEGIN
     msg = SUBSTRING(msg FROM 1 FOR p - 1) || SUBSTRING(msg FROM p + 2);
     p = POSITION('^', msg);
   END
-  EXECUTE PROCEDURE say(SUBSTRING(bname || ': ' || TRIM(msg) FROM 1 FOR 200));
-  EXECUTE PROCEDURE snd_local('sound/player/talk.wav');
-  UPDATE ents e SET e.last_chat = now_() WHERE e.id = :eid;
+  IF (heard = 1) THEN
+  BEGIN
+    EXECUTE PROCEDURE say(SUBSTRING(TRIM(CASE WHEN to_ = -1 THEN '(' || bname || ')' WHEN to_ > 0 THEN '[' || bname || ']' ELSE bname END) || ': ' || TRIM(msg) FROM 1 FOR 200));
+    EXECUTE PROCEDURE snd_local('sound/player/talk.wav');
+  END
+  IF (chatted = 1) THEN UPDATE ents e SET e.last_chat = now_() WHERE e.id = :eid;
 END^
 
 -- the BotChat_* functions of ai_chat.c: when a bot says what, with which variables, how likely by its
@@ -102,7 +123,7 @@ CREATE OR ALTER PROCEDURE bot_chat_event (eid INTEGER, ev VARCHAR(16), other INT
 AS
 DECLARE t DOUBLE PRECISION; DECLARE lc DOUBLE PRECISION; DECLARE ctype VARCHAR(32); DECLARE me VARCHAR(32); DECLARE mine INTEGER;
 DECLARE v0 VARCHAR(40); DECLARE v1 VARCHAR(40); DECLARE v3 VARCHAR(40); DECLARE v4 VARCHAR(64); DECLARE v5 VARCHAR(40);
-DECLARE pf INTEGER; DECLARE top INTEGER; DECLARE low INTEGER; DECLARE first_ VARCHAR(32); DECLARE last_ VARCHAR(32);
+DECLARE pf INTEGER; DECLARE top INTEGER; DECLARE low INTEGER; DECLARE first_ VARCHAR(32); DECLARE last_ VARCHAR(32); DECLARE to_ INTEGER = 0;
 BEGIN
   t = now_();
   SELECT e.last_chat, e.frags FROM ents e WHERE e.id = :eid AND e.classname = 'bot' INTO lc, mine;
@@ -149,6 +170,7 @@ BEGIN
       ctype = TRIM(CASE WHEN mod_ = 21 THEN 'death_drown' WHEN mod_ = 15 THEN 'death_slime' WHEN mod_ = 14 THEN 'death_lava' WHEN mod_ = 13 THEN 'death_cratered'
                         WHEN other IS NULL OR other <= 0 OR other = eid OR mod_ IN (11, 12, 20) THEN 'death_suicide' WHEN mod_ = 10 THEN 'death_telefrag' ELSE '' END);
       IF (ctype <> '') THEN v0 = chat_opponent(eid);
+      ELSE IF (team_member(other, (SELECT e.pteam FROM ents e WHERE e.id = :eid)) = 1) THEN BEGIN ctype = 'death_teammate'; v0 = chat_name(other); to_ = -1; END
       ELSE
       BEGIN
         v0 = chat_name(other); v1 = chat_weapon(mod_);
@@ -160,7 +182,8 @@ BEGIN
     BEGIN
       IF (RAND() > chat_char(eid, 'kill')) THEN EXIT;
       v0 = chat_name(other);
-      ctype = TRIM(CASE WHEN mod_ = 1 THEN 'kill_gauntlet' WHEN mod_ = 17 THEN 'kill_rail' WHEN mod_ = 10 THEN 'kill_telefrag'
+      IF (team_member(other, (SELECT e.pteam FROM ents e WHERE e.id = :eid)) = 1) THEN BEGIN ctype = 'kill_teammate'; to_ = -1; END
+      ELSE ctype = TRIM(CASE WHEN mod_ = 1 THEN 'kill_gauntlet' WHEN mod_ = 17 THEN 'kill_rail' WHEN mod_ = 10 THEN 'kill_telefrag'
                         WHEN RAND() < chat_char(eid, 'insult') THEN 'kill_insult' ELSE 'kill_praise' END);
     END
     ELSE IF (ev = 'enemy_suicide') THEN
@@ -187,7 +210,7 @@ BEGIN
     END
     ELSE EXIT;
   END
-  EXECUTE PROCEDURE bot_say(eid, ctype, v0, v1, NULL, v3, v4, v5);
+  EXECUTE PROCEDURE bot_say(eid, ctype, v0, v1, NULL, v3, v4, v5, to_);
 END^
 
 
@@ -897,6 +920,163 @@ BEGIN
 END^
 
 -- ── the 10 Hz bot frame ──────────────────────────────────────────────────
+-- ── team play (ai_team.c) ────────────────────────────────────────────────
+-- the team's k-th member (0 first) in client order: the player, then the bots as they came
+CREATE OR ALTER FUNCTION team_mate_at (tm SMALLINT, k INTEGER) RETURNS INTEGER
+AS
+DECLARE id INTEGER;
+BEGIN
+  SELECT FIRST 1 SKIP (:k) e.id FROM ents e WHERE e.classname IN ('player', 'bot') AND team_member(e.id, :tm) = 1
+   ORDER BY IIF(e.classname = 'player', 0, 1), e.id INTO id;
+  RETURN id;
+END^
+
+-- BotMatch_HelpAccompany: a bot told to accompany a teammate (LTG_TEAMACCOMPANY) for TEAM_ACCOMPANY_TIME,
+-- 600 seconds; it answers within two (accompany_start, to the one who ordered it). Not itself
+CREATE OR ALTER PROCEDURE bot_order_accompany (eid INTEGER, mate INTEGER, by_ INTEGER)
+AS
+DECLARE t DOUBLE PRECISION;
+BEGIN
+  IF (eid = mate OR NOT EXISTS (SELECT 1 FROM ents e WHERE e.id = :eid AND e.classname = 'bot')) THEN EXIT;
+  t = now_();
+  UPDATE ents e SET e.acc_id = :mate, e.acc_by = :by_, e.acc_until = :t + 600, e.acc_msg = :t + 2 * RAND(), e.acc_arrived = 0 WHERE e.id = :eid;
+END^
+
+-- BotCreateGroup: the others of the group follow its first; the leader tells each (cmd_accompanyme when
+-- it is the first itself, else cmd_accompany), BotSayTeamOrderAlways
+CREATE OR ALTER PROCEDURE bot_create_group (eid INTEGER, tm SMALLINT, k0 INTEGER, size_ INTEGER)
+AS
+DECLARE g0 INTEGER; DECLARE m INTEGER; DECLARE i INTEGER = 1;
+BEGIN
+  g0 = team_mate_at(tm, k0);
+  WHILE (i < size_) DO
+  BEGIN
+    m = team_mate_at(tm, k0 + i);
+    IF (g0 IS NOT NULL AND m IS NOT NULL) THEN
+    BEGIN
+      IF (g0 = eid) THEN EXECUTE PROCEDURE bot_say(eid, 'cmd_accompanyme', chat_name(m), NULL, NULL, NULL, NULL, NULL, m, 0);
+      ELSE EXECUTE PROCEDURE bot_say(eid, 'cmd_accompany', chat_name(m), chat_name(g0), NULL, NULL, NULL, NULL, m, 0);
+      EXECUTE PROCEDURE bot_order_accompany(m, g0, eid);
+    END
+    i = i + 1;
+  END
+END^
+
+-- BotTeamOrders (team deathmatch): three make a pair and one roams, four two pairs, five a pair and a
+-- three, six to ten pairs, more nothing
+CREATE OR ALTER PROCEDURE bot_team_orders (eid INTEGER)
+AS
+DECLARE tm SMALLINT; DECLARE n INTEGER; DECLARE i INTEGER = 0;
+BEGIN
+  SELECT e.pteam FROM ents e WHERE e.id = :eid INTO tm;
+  SELECT COUNT(*) FROM ents e WHERE e.classname IN ('player', 'bot') AND team_member(e.id, :tm) = 1 INTO n;
+  IF (n = 3) THEN EXECUTE PROCEDURE bot_create_group(eid, tm, 0, 2);
+  ELSE IF (n = 4) THEN BEGIN EXECUTE PROCEDURE bot_create_group(eid, tm, 0, 2); EXECUTE PROCEDURE bot_create_group(eid, tm, 2, 2); END
+  ELSE IF (n = 5) THEN BEGIN EXECUTE PROCEDURE bot_create_group(eid, tm, 0, 2); EXECUTE PROCEDURE bot_create_group(eid, tm, 2, 3); END
+  ELSE IF (n >= 6 AND n <= 10) THEN
+    WHILE (i < n / 2) DO BEGIN EXECUTE PROCEDURE bot_create_group(eid, tm, i * 2, 2); i = i + 1; END
+END^
+
+-- BotTeamAI (team deathmatch): with no leader the team's human leads (FindHumanTeamLeader); without one a
+-- bot that came in the first ten seconds asks who leads after 5 to 15 (whoisteamleader) and takes the lead
+-- 8 to 18 later (iamteamleader), a later one takes it 5 to 15 seconds on; the first to say it leads. The
+-- leader gives its orders 5 seconds after the team's size changes, and again every 120
+CREATE OR ALTER PROCEDURE bot_team_ai (eid INTEGER)
+AS
+DECLARE t DOUBLE PRECISION; DECLARE tm SMALLINT; DECLARE leader INTEGER; DECLARE ask DOUBLE PRECISION; DECLARE become DOUBLE PRECISION;
+DECLARE orders DOUBLE PRECISION; DECLARE mates SMALLINT; DECLARE enter DOUBLE PRECISION; DECLARE n INTEGER;
+BEGIN
+  t = now_();
+  SELECT e.pteam, e.tl_ask, e.tl_become, e.tl_orders, e.tl_mates, e.enter_time FROM ents e WHERE e.id = :eid INTO tm, ask, become, orders, mates, enter;
+  IF (team_member(eid, tm) = 0) THEN EXIT;
+  SELECT IIF(:tm = 1, g.red_leader, g.blue_leader) FROM game g WHERE g.id = 1 INTO leader;
+  IF (leader IS NOT NULL AND team_member(leader, tm) = 0) THEN leader = NULL;   -- BotValidTeamLeader
+  IF (leader IS NULL) THEN
+    SELECT e.id FROM ents e WHERE e.classname = 'player' AND team_member(e.id, :tm) = 1 INTO leader;
+  IF (leader IS NULL) THEN
+  BEGIN
+    IF (ask = 0 AND become = 0) THEN
+    BEGIN
+      IF (enter + 10 > t) THEN ask = t + 5 + RAND() * 10;
+      ELSE become = t + 5 + RAND() * 10;
+    END
+    IF (ask > 0 AND ask < t) THEN
+    BEGIN
+      EXECUTE PROCEDURE bot_say(eid, 'whoisteamleader', NULL, NULL, NULL, NULL, NULL, NULL, -1, 0);
+      ask = 0; become = t + 8 + RAND() * 10;
+    END
+    IF (become > 0 AND become < t) THEN
+    BEGIN
+      EXECUTE PROCEDURE bot_say(eid, 'iamteamleader', NULL, NULL, NULL, NULL, NULL, NULL, -1, 0);
+      leader = eid; become = 0;
+      UPDATE game g SET g.red_leader = IIF(:tm = 1, :eid, g.red_leader), g.blue_leader = IIF(:tm = 2, :eid, g.blue_leader) WHERE g.id = 1;
+    END
+    UPDATE ents e SET e.tl_ask = :ask, e.tl_become = :become WHERE e.id = :eid;
+    EXIT;
+  END
+  UPDATE game g SET g.red_leader = IIF(:tm = 1, :leader, g.red_leader), g.blue_leader = IIF(:tm = 2, :leader, g.blue_leader) WHERE g.id = 1;
+  IF (leader <> eid) THEN
+  BEGIN
+    UPDATE ents e SET e.tl_ask = 0, e.tl_become = 0 WHERE e.id = :eid AND (e.tl_ask <> 0 OR e.tl_become <> 0);
+    EXIT;
+  END
+  SELECT COUNT(*) FROM ents e WHERE e.classname IN ('player', 'bot') AND team_member(e.id, :tm) = 1 INTO n;
+  IF (n <> mates) THEN BEGIN orders = t; mates = n; END
+  IF (orders > 0 AND orders < t - 5) THEN
+  BEGIN
+    EXECUTE PROCEDURE bot_team_orders(eid);
+    orders = t + 120;
+  END
+  UPDATE ents e SET e.tl_ask = 0, e.tl_become = 0, e.tl_orders = :orders, e.tl_mates = :mates WHERE e.id = :eid;
+END^
+
+-- BotGetLongTermGoal for LTG_TEAMACCOMPANY: says it will (to the one who ordered it), gives up after the
+-- 600 seconds (accompany_stop, to the companion), and while the companion is alive, in sight and within
+-- the formation distance (3.5 × 32) stands by looking where it looks, saying once that it arrived
+-- (accompany_arrive); else goes to it. `busy` 0: no companion, the bot picks its own goal; `go` the
+-- companion to go to, NULL to stay
+CREATE OR ALTER PROCEDURE bot_accompany (eid INTEGER)
+RETURNS (busy SMALLINT, go INTEGER)
+AS
+DECLARE t DOUBLE PRECISION; DECLARE mate INTEGER; DECLARE by_ INTEGER; DECLARE until_ DOUBLE PRECISION; DECLARE msg_t DOUBLE PRECISION;
+DECLARE arrived SMALLINT; DECLARE tm SMALLINT; DECLARE d DOUBLE PRECISION; DECLARE mhp INTEGER; DECLARE myaw DOUBLE PRECISION;
+BEGIN
+  busy = 0; go = NULL;
+  SELECT e.acc_id, e.acc_by, e.acc_until, e.acc_msg, e.acc_arrived, e.pteam FROM ents e WHERE e.id = :eid INTO mate, by_, until_, msg_t, arrived, tm;
+  IF (mate IS NULL) THEN EXIT;
+  t = now_();
+  IF (team_member(mate, tm) = 0 OR team_member(eid, tm) = 0) THEN
+  BEGIN
+    UPDATE ents e SET e.acc_id = NULL WHERE e.id = :eid;
+    EXIT;
+  END
+  IF (msg_t > 0 AND msg_t < t) THEN
+  BEGIN
+    EXECUTE PROCEDURE bot_say(eid, 'accompany_start', chat_name(mate), NULL, NULL, NULL, NULL, NULL, COALESCE(by_, mate), 0);
+    UPDATE ents e SET e.acc_msg = 0 WHERE e.id = :eid;
+  END
+  IF (until_ < t) THEN
+  BEGIN
+    EXECUTE PROCEDURE bot_say(eid, 'accompany_stop', chat_name(mate), NULL, NULL, NULL, NULL, NULL, mate, 0);
+    UPDATE ents e SET e.acc_id = NULL WHERE e.id = :eid;
+    EXIT;
+  END
+  busy = 1;
+  SELECT vlen(m.x - e.x, m.y - e.y, m.z - e.z), m.health, m.yaw FROM ents m JOIN ents e ON e.id = :eid WHERE m.id = :mate INTO d, mhp, myaw;
+  IF (mhp > 0 AND d < 112 AND visible(eid, mate) = 1) THEN
+  BEGIN
+    IF (arrived = 0) THEN
+    BEGIN
+      EXECUTE PROCEDURE bot_say(eid, 'accompany_arrive', chat_name(mate), NULL, NULL, NULL, NULL, NULL, mate, 0);
+      UPDATE ents e SET e.acc_arrived = 1 WHERE e.id = :eid;
+    END
+    UPDATE ents e SET e.ideal_yaw = :myaw WHERE e.id = :eid;
+    EXECUTE PROCEDURE change_yaw(eid);
+    EXIT;
+  END
+  go = mate;
+END^
+
 CREATE OR ALTER PROCEDURE bot_think (eid INTEGER)
 AS
 DECLARE t DOUBLE PRECISION; DECLARE nt DOUBLE PRECISION; DECLARE st VARCHAR(12); DECLARE enemy INTEGER; DECLARE flags INTEGER; DECLARE goal INTEGER;
@@ -905,6 +1085,7 @@ DECLARE x DOUBLE PRECISION; DECLARE y DOUBLE PRECISION; DECLARE z DOUBLE PRECISI
 DECLARE d DOUBLE PRECISION; DECLARE vis SMALLINT; DECLARE yaw DOUBLE PRECISION; DECLARE moved SMALLINT = 0; DECLARE w INTEGER; DECLARE diff DOUBLE PRECISION; DECLARE spd DOUBLE PRECISION;
 DECLARE ox DOUBLE PRECISION; DECLARE oy DOUBLE PRECISION; DECLARE match_done SMALLINT; DECLARE waiting SMALLINT; DECLARE hp INTEGER; DECLARE hesitate SMALLINT = 0; DECLARE fresh SMALLINT = 0;
 DECLARE aggr INTEGER; DECLARE ft DOUBLE PRECISION; DECLARE htick DOUBLE PRECISION; DECLARE haste DOUBLE PRECISION; DECLARE regen DOUBLE PRECISION;
+DECLARE gt SMALLINT; DECLARE busy SMALLINT = 0; DECLARE mate INTEGER;
 BEGIN
   t = now_();
   nt = t + 0.1e0;
@@ -913,7 +1094,7 @@ BEGIN
     FROM ents e LEFT JOIN bot_defs b ON b.name = e.bot WHERE e.id = :eid INTO st, enemy, flags, goal, rt, srch, af, lefty, legs, x, y, z, yaw, tt, hp, skill, htick, haste, regen;
   IF (st IS NULL) THEN EXIT;
   IF (st = 'queue') THEN BEGIN UPDATE ents e SET e.nextthink = :t + 0.5e0 WHERE e.id = :eid; EXIT; END   -- a tournament's spectator
-  SELECT g.match_over, IIF(g.warmup_end > :t, 1, 0) FROM game g WHERE g.id = 1 INTO match_done, waiting;
+  SELECT g.match_over, IIF(g.warmup_end > :t, 1, 0), g.gametype FROM game g WHERE g.id = 1 INTO match_done, waiting, gt;
   IF (match_done = 1) THEN BEGIN UPDATE ents e SET e.nextthink = :t + 0.5e0, e.vx = 0, e.vy = 0 WHERE e.id = :eid; EXIT; END
   IF (waiting = 1) THEN BEGIN UPDATE ents e SET e.nextthink = :t + 0.1e0 WHERE e.id = :eid; EXIT; END   -- the countdown
   IF (st = 'dead') THEN
@@ -926,6 +1107,8 @@ BEGIN
   -- what we are standing in or on
   EXECUTE PROCEDURE touch_triggers(eid);
   IF (NOT EXISTS (SELECT 1 FROM ents e WHERE e.id = :eid AND e.health > 0)) THEN EXIT;
+  -- a team game: the leader's part (BotTeamAI)
+  IF (gt = 3) THEN EXECUTE PROCEDURE bot_team_ai(eid);
   -- ClientTimerActions, once a second: regeneration counts the health up (15 to 110 percent, then 5 to
   -- twice the maximum), else health over the maximum counts down, and armour over it too
   IF (htick < t) THEN
@@ -1034,14 +1217,16 @@ BEGIN
   BEGIN
     -- nothing in sight: wander toward an item, or just roam
     UPDATE ents e SET e.enemy_id = NULL, e.st = 'stand' WHERE e.id = :eid AND e.enemy_id IS NOT NULL;
+    -- a teammate to accompany comes before the items (BotGetLongTermGoal)
+    EXECUTE PROCEDURE bot_accompany(eid) RETURNING_VALUES busy, mate;
     -- (a timed item not back yet stays the goal while it is on the way and back within 3 s)
-    IF (goal IS NOT NULL AND NOT EXISTS (SELECT 1 FROM ents g WHERE g.id = :goal AND vlen(g.x - :x, g.y - :y, 0) > 40
+    IF (busy = 0 AND goal IS NOT NULL AND NOT EXISTS (SELECT 1 FROM ents g WHERE g.id = :goal AND vlen(g.x - :x, g.y - :y, 0) > 40
                                           AND (g.solid = 1 OR (g.think = 'item_respawn' AND g.nextthink - :t < 3)))) THEN
     BEGIN
       goal = NULL;
       UPDATE ents e SET e.goal_id = NULL WHERE e.id = :eid;
     END
-    IF (goal IS NULL AND RAND() < 0.3e0) THEN
+    IF (busy = 0 AND goal IS NULL AND RAND() < 0.3e0) THEN
     BEGIN
       -- the long-term goal (BotChooseLTGItem): the item worth the most for the trip, by the bot's item weights
       goal = bot_choose_ltg(eid);
@@ -1049,7 +1234,15 @@ BEGIN
     END
     -- nothing to do but roam: now and then a word (BotChat_Random, a chance in a hundred a think, then the character's)
     IF (RAND() < 0.005e0) THEN EXECUTE PROCEDURE bot_chat_event(eid, 'random', NULL, 0);
-    IF (BIN_AND(flags, 512) <> 0 AND tt < t AND hesitate = 0 AND bot_avoid_grenade(eid, spd) = 0) THEN
+    IF (busy = 1) THEN
+    BEGIN
+      IF (mate IS NOT NULL AND BIN_AND(flags, 512) <> 0 AND tt < t AND hesitate = 0 AND bot_avoid_grenade(eid, spd) = 0) THEN
+      BEGIN
+        EXECUTE PROCEDURE bot_follow_route(eid, mate, spd * 0.9e0) RETURNING_VALUES moved;
+        IF (moved <= 0) THEN EXECUTE PROCEDURE move_to_goal(eid, mate, spd * 0.9e0);
+      END
+    END
+    ELSE IF (BIN_AND(flags, 512) <> 0 AND tt < t AND hesitate = 0 AND bot_avoid_grenade(eid, spd) = 0) THEN
     BEGIN
       IF (goal IS NOT NULL) THEN
       BEGIN
@@ -1105,7 +1298,7 @@ BEGIN
          e.minx = -15, e.miny = -15, e.minz = -24, e.maxx = 15, e.maxy = 15, e.maxz = 32, e.viewheight = 26,
          e.solid = 3, e.movetype = 4, e.clipmask = 33619969, e.health = 125, e.max_health = 100, e.takedamage = 2, e.mass = 200, e.flags = 32,
          e.yaw_speed = bot_char((SELECT b.skill FROM bot_defs b WHERE b.name = :bname), 'turn'), e.st = 'stand', e.weapons = 3, e.weapon = 2, e.legs_time = :t, e.torso_time = :t,
-         e.think = 'bot_think', e.nextthink = :t + 0.5e0 + RAND() * 0.5e0, e.attack_finished = :t + 2 WHERE e.id = :id;
+         e.think = 'bot_think', e.nextthink = :t + 0.5e0 + RAND() * 0.5e0, e.attack_finished = :t + 2, e.enter_time = :t WHERE e.id = :id;
   -- its turning from its character file (CHARACTERISTIC_VIEW_MAXCHANGE degrees a second, a think a tenth of it)
   UPDATE ents e SET e.yaw_speed = COALESCE(bot_cv(:id, 'view_maxchange', NULL) / 10, e.yaw_speed) WHERE e.id = :id;
   -- in a team game, a team (PickTeam) and its colours (the model's red or blue skin)
@@ -1277,6 +1470,7 @@ BEGIN
   EXECUTE PROCEDURE body_release(eid);
   DELETE FROM ents e WHERE e.owner_id = :eid AND e.classname IN ('rocket', 'grenade', 'plasma', 'bfg');
   UPDATE ents e SET e.enemy_id = NULL WHERE e.enemy_id = :eid;
+  UPDATE ents e SET e.acc_id = NULL WHERE e.acc_id = :eid;
   UPDATE player p SET p.follow_id = NULL WHERE p.follow_id = :eid;
   DELETE FROM bot_routes r WHERE r.ent_id = :eid;
   DELETE FROM ents e WHERE e.id = :eid;
@@ -1912,7 +2106,8 @@ BEGIN
          g.fraglimit = COALESCE(:fraglimit, 20), g.timelimit = COALESCE(:timelimit, 0), g.time_warnings = 0,
          g.warmup_end = COALESCE(:warmup, 0), g.warmup_said = IIF(COALESCE(:warmup, 0) > 0, 4, 0),
          g.has_water = IIF(EXISTS (SELECT 1 FROM brushes b WHERE BIN_AND(b.contents, 32) <> 0), 1, 0),
-         g.gametype = IIF(COALESCE(:gametype, 0) >= 3, 3, IIF(:gametype = 1, 1, 0)), g.red_score = 0, g.blue_score = 0, g.team_lead = 0 WHERE g.id = 1;
+         g.gametype = IIF(COALESCE(:gametype, 0) >= 3, 3, IIF(:gametype = 1, 1, 0)), g.red_score = 0, g.blue_score = 0, g.team_lead = 0,
+         g.red_leader = NULL, g.blue_leader = NULL WHERE g.id = 1;
   -- the sky: the first sky shader the map's faces use
   SELECT FIRST 1 t.name FROM textures t WHERE BIN_AND(t.flags, 4) <> 0 INTO skyname;
   UPDATE game g SET g.sky = :skyname WHERE g.id = 1;

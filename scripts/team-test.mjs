@@ -1,5 +1,6 @@
 // team-test.mjs – team deathmatch (GT_TEAM): the teams picked and coloured, no friendly fire, the bots
-// leave their teammates alone, the team scores, the announcer, the fraglimit and the time limit by team.
+// leave their teammates alone, the team scores, the announcer, the fraglimit and the time limit by team,
+// the team leader, its orders and the bots accompanying a teammate (ai_team.c).
 //
 //   node scripts/team-test.mjs [map]
 
@@ -143,6 +144,57 @@ const foe = blue[0], foe2 = blue[1];
   const deaths = (await q("SELECT SUM(deaths) d FROM ents WHERE classname = 'bot'"))[0].D;
   assert(deaths > 0 && sums.R === sums.RS && sums.B === sums.BS, `40 seconds of team play: ${deaths} deaths, red ${sums.RS} = its members' ${sums.R}, blue ${sums.BS} = ${sums.B}`);
   console.log('scores', (await q('SELECT * FROM scoreboard')).map((r) => `${r.NAME.trim()}(${r.TEAM === 1 ? 'red' : 'blue'}) ${r.FRAGS}/${r.DEATHS}`).join(', '));
+}
+
+// the team leader (BotTeamAI): red has us, so we lead it; blue's bots ask who leads, one takes the lead,
+// and orders the team (BotTeamOrders, three: the second accompanies the first, the third roams)
+{
+  await loadMap(db, pak, res, mapName, { skill: 3, bots: 4, gametype: 3, team: 1 });
+  const me = (await q('SELECT ent_id e FROM player'))[0].E;
+  await db.exec(`UPDATE ents SET flags = BIN_OR(flags, 16 + 64) WHERE id = ${me}`);
+  const team = async (tm) => (await q(`SELECT id, bot FROM ents WHERE classname IN ('player', 'bot') AND pteam = ${tm} ORDER BY IIF(classname = 'player', 0, 1), id`));
+  const blues = await team(2);
+  let g, accs = [];
+  for (let i = 0; i < 160; i++) {
+    for (let k = 0; k < 5; k++) await tic(2);
+    g = (await q('SELECT red_leader r, blue_leader b, time_ t FROM game'))[0];
+    accs = await q(`SELECT id, acc_id, acc_by FROM ents WHERE pteam = 2 AND classname = 'bot' ORDER BY id`);
+    if (accs.some((a) => a.ACC_ID !== null)) break;
+  }
+  const [b0, b1, b2] = blues;
+  const acc = (id) => accs.find((a) => a.ID === id);
+  assert(g.R === me && blues.some((b) => b.ID === g.B) && acc(b1.ID).ACC_ID === b0.ID && acc(b1.ID).ACC_BY === g.B && acc(b0.ID).ACC_ID === null && acc(b2.ID).ACC_ID === null,
+    `the leaders: we lead red, ${blues.find((b) => b.ID === g.B)?.BOT} leads blue and orders at ${g.T.toFixed(1)} s: ${b1.BOT} accompanies ${b0.BOT} (${accs.map((a) => `${a.ID}->${a.ACC_ID}`).join(' ')})`);
+
+  // we join blue (four: two pairs, we first; its leader stays, BotValidTeamLeader): our partner comes to us and says it is at our service, to us
+  // alone ("[Name]: …"); the team's chat is heard by the team ("(Name): …"), not by the other team
+  const red = (await team(1)).filter((e) => e.ID !== me);
+  await db.exec(`UPDATE ents SET pteam = 2 WHERE id = ${me}`);
+  for (const r of red) await db.exec(`UPDATE ents SET flags = BIN_OR(flags, 64), nextthink = 1e9 WHERE id = ${r.ID}`);
+  await db.exec(`UPDATE ents SET acc_id = NULL WHERE classname = 'bot'`);
+  await db.exec(`EXECUTE PROCEDURE bot_team_ai(${b0.ID})`);
+  const hl = (await q('SELECT blue_leader b FROM game'))[0].B;
+  await db.exec(`EXECUTE PROCEDURE bot_team_orders(${b2.ID})`);
+  const now = await q(`SELECT id, acc_id FROM ents WHERE pteam = 2 AND classname = 'bot' ORDER BY id`);
+  const of = (id) => now.find((a) => a.ID === id)?.ACC_ID;
+  assert(hl === g.B && of(b0.ID) === me && of(b1.ID) === null && of(b2.ID) === b1.ID,
+    `we join blue; ${blues.find((b) => b.ID === hl)?.BOT ?? hl} still leads it (a valid leader stays); four make two pairs: ${b0.BOT} accompanies us, ${b2.BOT} ${b1.BOT}`);
+  const heard = new Set();
+  let arrived = 0;
+  for (let i = 0; i < 120 && !arrived; i++) {
+    for (let k = 0; k < 5; k++) await tic(2);
+    for (const r of await q('SELECT msg FROM messages')) heard.add(r.MSG);
+    arrived = (await q(`SELECT acc_arrived a FROM ents WHERE id = ${b0.ID}`))[0].A;
+  }
+  for (const r of await q('SELECT msg FROM messages')) heard.add(r.MSG);
+  const d = (await q(`SELECT vlen(a.x - b.x, a.y - b.y, a.z - b.z) d FROM ents a, ents b WHERE a.id = ${b0.ID} AND b.id = ${me}`))[0].D;
+  const told = [...heard].filter((m) => m.startsWith(`[${b0.BOT}]: `));
+  assert(arrived === 1 && d < 160 && told.length === 1, `${b0.BOT} comes to us (${d.toFixed(0)} away) and tells us: ${told.join(' / ')}`);
+  await db.exec(`EXECUTE PROCEDURE bot_say(${b1.ID}, 'iamteamleader', NULL, NULL, NULL, NULL, NULL, NULL, -1, 0)`);
+  const t1 = (await q('SELECT FIRST 1 msg FROM messages ORDER BY id DESC'))[0].MSG;
+  await db.exec(`EXECUTE PROCEDURE bot_say(${red[0].ID}, 'iamteamleader', NULL, NULL, NULL, NULL, NULL, NULL, -1, 0)`);
+  const t2 = (await q('SELECT FIRST 1 msg FROM messages ORDER BY id DESC'))[0].MSG;
+  assert(t1 === `(${b1.BOT}): I'm the team leader` && t2 === t1, `the team's chat: "${t1}"; red's is not heard on blue`);
 }
 
 await db.close();

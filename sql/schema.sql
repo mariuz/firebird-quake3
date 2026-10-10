@@ -41,6 +41,8 @@ CREATE TABLE game (
   red_score      INTEGER DEFAULT 0 NOT NULL,            -- level.teamScores[TEAM_RED], [TEAM_BLUE]
   blue_score     INTEGER DEFAULT 0 NOT NULL,
   team_lead      SMALLINT DEFAULT 0 NOT NULL,           -- who leads, as last announced: 0 tied 1 red 2 blue
+  red_leader     INTEGER,                               -- each team's leader (bs->teamleader, heard by all its bots)
+  blue_leader    INTEGER,
   match_over     SMALLINT DEFAULT 0 NOT NULL,           -- 1 from the frag or time limit on: the intermission
   winner         VARCHAR(32),
   over_time      DOUBLE PRECISION DEFAULT 0 NOT NULL,
@@ -334,6 +336,20 @@ CREATE TABLE ents (
   watertype  INTEGER DEFAULT 0 NOT NULL,
   ltime      DOUBLE PRECISION DEFAULT 0 NOT NULL,
   body_of    INTEGER,                      -- a corpse: whose body it is, until it respawns (CopyToBodyQue)
+  -- bots in a team game (ai_team.c, ai_dmq3.c): when it came, the team leader's timers (askteamleader_time,
+  -- becometeamleader_time, teamgiveorders_time and the team's size it last saw), and an order to accompany
+  -- a teammate (LTG_TEAMACCOMPANY): whom, who ordered it, until when, when it says it will, when it last saw
+  -- the companion, whether it said it arrived
+  enter_time DOUBLE PRECISION DEFAULT 0 NOT NULL,
+  tl_ask     DOUBLE PRECISION DEFAULT 0 NOT NULL,
+  tl_become  DOUBLE PRECISION DEFAULT 0 NOT NULL,
+  tl_orders  DOUBLE PRECISION DEFAULT 0 NOT NULL,
+  tl_mates   SMALLINT DEFAULT 0 NOT NULL,
+  acc_id     INTEGER,
+  acc_by     INTEGER,
+  acc_until  DOUBLE PRECISION DEFAULT 0 NOT NULL,
+  acc_msg    DOUBLE PRECISION DEFAULT 0 NOT NULL,
+  acc_arrived SMALLINT DEFAULT 0 NOT NULL,
   teleport_time DOUBLE PRECISION DEFAULT 0 NOT NULL,
   spawn_x DOUBLE PRECISION DEFAULT 0 NOT NULL, spawn_y DOUBLE PRECISION DEFAULT 0 NOT NULL, spawn_z DOUBLE PRECISION DEFAULT 0 NOT NULL,
   alpha      SMALLINT DEFAULT 0 NOT NULL,  -- 1 = not drawn (a picked-up item waiting to respawn)

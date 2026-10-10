@@ -319,7 +319,18 @@ sound, the lead state. Each tic:
    tie is the teams'; the winner is "Red team" or "Blue team" and the win music plays for its side.
    `q3_tic` returns `gametype`, `red_score`, `blue_score` and the player's `team`; the HUD's corner
    shows the two scores with ours marked, and `scoreboard` returns each row's team so the page lists
-   the teams under their names and scores. The *tournament* (`gametype` 1, `GT_TOURNAMENT`) has two
+   the teams under their names and scores. The bots play as a team (`ai_team.c`): `bot_team_ai`
+   (`BotTeamAI`) gives each team a leader (`game.red_leader`, `blue_leader`), the team's human when it
+   has one (`FindHumanTeamLeader`), else a bot that asks "who is the team leader?" and says "I'm the
+   team leader" seconds later; a valid leader stays. A bot leader orders its team 5 seconds after
+   its size changes and every 120 (`bot_team_orders`, `BotTeamOrders`): three make a pair, four two
+   pairs, five a pair and a three, six to ten pairs, the second of each group told to accompany the
+   first (`bot_create_group`, `cmd_accompany`, `cmd_accompanyme`). A bot so told (`ents.acc_id`,
+   for 600 seconds) answers, goes to its companion along the graph when it has no enemy, and stands
+   by it within 112 units, saying once that it arrived (`bot_accompany`, the `LTG_TEAMACCOMPANY`
+   goal of `BotGetLongTermGoal`). `bot_say` says a line to everyone, to the team ("(Name): …",
+   heard by the player on that team) or to one ("[Name]: …", heard when it is the player). The
+   *tournament* (`gametype` 1, `GT_TOURNAMENT`) has two
    play and the others wait as spectators: the player through `player.spectator`, a bot through
    `ents.queued` (`bot_to_queue`: invisible, not solid, `FL_NOTARGET`, its think idling), each with
    `spec_time` (`sess.spectatorTime`). `init_map` lets the first two who came play. `tourney_check`
@@ -476,8 +487,8 @@ selectable one (with `SUSPEND`) does not run through the driver.
 and `be_ai_char.c` do; the loader puts them in three tables):
 
 - `bot_rnd`: the random strings of `rnd.c` (`HELLO5 = { "Awright!! I OWN this arena!"; … }`, 2205 of them)
-- `bot_chat`: each bot's lines by type from its `_t.c` (762 for the six demo bots); the team chats of
-  `#include "teamplay.h"` are left out
+- `bot_chat`: each bot's lines by type from its `_t.c`, with the team chats of its
+  `#include "teamplay.h"` put in place
 - `bot_chatchar`: the chat characteristics of its `_c.c` for skills 1 to 5, interpolated between the
   skills the file defines (`BotInterpolateCharacters`)
 

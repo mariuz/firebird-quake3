@@ -19,7 +19,7 @@ explosion sprites, beams) and nothing else. The renderers never query the databa
   in a query without its colon.
 - `npm test` (q3dm1 smoke), `npm run test:dm17` (jump pads), `npm run test:bots` (bots and the
   waypoint hunt), `npm run test:bots:dm17` (bots on the pads), `npm run test:pmove` (the movement against Quake III's
-  `bg_pmove.c`), `npm run test:team` (team deathmatch), `npm run test:tourney` (the tournament), `npm run test:view` (the first-person
+  `bg_pmove.c`), `npm run test:team` (team deathmatch, the team leader and its orders), `npm run test:tourney` (the tournament), `npm run test:view` (the first-person
   view, the impact marks' clipping, the trails, the brass, the dynamic lights, the shader features, the fog, the portal's view, the shadows, the rail and lightning beams and the powerup shells, seconds, no engine). All run against the real WASM engine in
   Node; CI runs all of them before deploying. Each takes one to two minutes.
 - The pak is `public/pak/pak0.pk3`, fetched by `npm run fetch-pak` (gitignored; behind a proxy run it as
@@ -65,6 +65,7 @@ explosion sprites, beams) and nothing else. The renderers never query the databa
 | the bots' item goals (weights, timing), their favourite guns | `src/itemweights.js` (the botfiles' `*_i.c` and `*_w.c` into `bot_iw` rows), `bot_inv`, `bot_item_weight`, `bot_choose_ltg`, `bot_avoid` and `bot_best_weapon` in `sql/bots.sql` |
 | retreat or chase, grenade avoidance | `bot_aggression`, `bot_retreat_goal`, `bot_avoid_grenade` in `sql/bots.sql`, used in `bot_think` |
 | bot chat | `src/botchat.js` (the pak's botfiles into rows), `bot_say` and `bot_chat_event` at the top of `sql/bots.sql` |
+| team play (the leader, its orders, accompanying) | `bot_team_ai`, `bot_team_orders`, `bot_create_group`, `bot_accompany` before `bot_think` in `sql/bots.sql`; `team_member`, `team_mate_at` |
 | bot navigation (nodes, edges, routing, incremental build) | `sql/waypoints.sql`, `bot_follow_route` in `sql/bots.sql`; the edge kinds' tests (`wp_walkable`, `wp_jump`, `wp_rocket_jump`, `wp_pad_steer`) |
 | the tic entry point, think/physics dispatch, scoring, `init_map` | the end of `sql/bots.sql` |
 | what a frame returns | `sql/render.sql` (`frame_all`), read in `src/scene.js` `FrameState.parse` |

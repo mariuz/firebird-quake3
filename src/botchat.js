@@ -7,8 +7,8 @@
 // A message is pieces joined by commas: literal text, a number (a variable, filled by the game: the
 // opponent's name, the weapon, the map's title…) or a name (a random string of rnd.c, which may hold
 // more of both). Here a message becomes one template string, the variables written {0} … {7} and the
-// random strings {r:NAME}; the SQL (BOT_SAY in sql/bots.sql) draws and fills them. Preprocessor lines
-// (#include "teamplay.h", the team chats) are skipped: there are no teams.
+// random strings {r:NAME}; the SQL (BOT_SAY in sql/bots.sql) draws and fills them. An #include (the team
+// chats of teamplay.h, in six of the files) is put in place; other preprocessor lines are skipped.
 
 function tokens(text) {
   const out = [];
@@ -112,7 +112,8 @@ export function loadBotChat(pak, bots) {
     if (!c) continue;
     const blocks = parseCharacter(c);
     const any = blocks.values().next().value ?? {};
-    const chatFile = text(`botfiles/${any.CHARACTERISTIC_CHAT_FILE ?? `bots/${base}_t.c`}`);
+    const chatFile = text(`botfiles/${any.CHARACTERISTIC_CHAT_FILE ?? `bots/${base}_t.c`}`)
+      ?.replace(/^[ \t]*#include\s+"([^"]+)"/gm, (_, n) => text(`botfiles/${n}`) ?? '');
     if (chatFile) for (const [type, msgs] of parseChatFile(chatFile)) msgs.forEach((m, i) => chat.push([b.name, type, i, m]));
     for (let s = 1; s <= 5; s++) {
       const ch = characterAtSkill(blocks, s);
