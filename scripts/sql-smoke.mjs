@@ -537,7 +537,9 @@ if (pad) {
 {
   await db.exec('EXECUTE PROCEDURE set_player_color(2)');
   const fx0 = (await db.query('SELECT COALESCE(MAX(id), 0) m FROM fx_events')).rows[0].M;
-  await db.exec('EXECUTE PROCEDURE fire_rail(player_ent(), (SELECT x FROM ents WHERE id = player_ent()), (SELECT y FROM ents WHERE id = player_ent()), (SELECT z FROM ents WHERE id = player_ent()), 0, 0, -1, 0)');
+  // straight down from a spawn point, which stands on a floor (the player may be over q3dm17's void by now)
+  const sp = (await db.query("SELECT FIRST 1 x, y, z FROM ents WHERE classname = 'info_player_deathmatch' ORDER BY id")).rows[0];
+  await db.exec(`EXECUTE PROCEDURE fire_rail(player_ent(), ${sp.X}, ${sp.Y}, ${sp.Z}, 0, 0, -1, 0)`);
   const rows = (await db.query(`SELECT kind, n FROM fx_events WHERE id > ${fx0} AND kind IN (4, 16) ORDER BY id`)).rows;
   const botc = (await db.query('SELECT MIN(color1) a, MAX(color1) b FROM ents WHERE classname = \'bot\'')).rows[0];
   assert(rows.find((r) => r.KIND === 4)?.N === 2 && rows.find((r) => r.KIND === 16)?.N === 66 && (botc.A ?? 4) === 4 && (botc.B ?? 4) === 4,
