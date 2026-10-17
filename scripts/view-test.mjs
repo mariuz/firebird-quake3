@@ -8,7 +8,7 @@
 import fs from 'node:fs';
 import { FrameState, firstPersonView, zoomedFov, fovY, mapTorsoToWeaponFrame, viewTorsoFrame, underwaterFov, sceneLights, litByDlights, MAX_DLIGHTS, drawRail, drawBolt, findPortals, portalView, mirrorView, portalFade, cameraRoll, perpendicular, floorBelow, drawShadows } from '../src/scene.js';
 import { Renderer, tagTransform, autospriteQuads, fogST, fogFactor, md3Lod, entityFog, clipFace } from '../src/renderer.js';
-import { parseDeform, waveValue, deformVertex, envTexCoords, parseShaderScript, surfaceLook, shellMesh, eyeInModel, stageBrightness } from '../src/shader.js';
+import { parseDeform, waveValue, deformVertex, envTexCoords, parseShaderScript, surfaceLook, shellMesh, eyeInModel, stageBrightness, stageTcMatrix, stageColor, stageAlpha, shaderStages } from '../src/shader.js';
 import { Md3, parseAnimationCfg, parseSkin } from '../src/md3.js';
 import { postgameMedals } from '../src/hud.js';
 import { parseWeights, preprocess, weightOf } from '../src/itemweights.js';
@@ -346,6 +346,58 @@ const markBsp = {
   assert(!tri.fan && tri.tris.length === 3 * 3, `a triangle list is cut triangle by triangle (${tri.tris.length / 3} triangles)`);
   const patch = clipFace({ ...quad, type: 2, fan: undefined }, [1, 0, 0, 0]);
   assert(!patch.fan && patch.tris.length === 3 * 3, 'a patch (no fan flag) is cut triangle by triangle too, as it is drawn');
+}
+
+// ComputeTexCoords: a stage's tcMods in the script's order as one affine map (RB_CalcTransformTexCoords' matrix)
+{
+  const at = (m, s, t) => [s * m[0] + t * m[1] + m[2], s * m[3] + t * m[4] + m[5]];
+  const near2 = (a, b) => Math.abs(a[0] - b[0]) < 1e-9 && Math.abs(a[1] - b[1]) < 1e-9;
+  const sh = parseShaderScript(`textures/x/a
+{
+ {
+  map textures/x/a.tga
+  tcMod scale 2 2
+  tcMod scroll 0.5 0
+ }
+ {
+  map textures/x/a.tga
+  tcMod scroll 0.5 0
+  tcMod scale 2 2
+ }
+ {
+  map textures/x/a.tga
+  tcMod rotate 90
+ }
+ {
+  map textures/x/a.tga
+  tcMod stretch sin 1 0.5 0 1
+ }
+ {
+  map textures/x/a.tga
+  tcMod transform 0 1 -1 0 0.25 0.5
+  rgbGen const ( 1 0.5 0.25 )
+  alphaGen const 0.3
+ }
+ {
+  map textures/x/a.tga
+  alphaGen wave sin 0.5 0.5 0 1
+ }
+ {
+  map textures/sfx/portalfog.tga
+  alphaGen portal 128
+ }
+}`).get('textures/x/a');
+  const st = shaderStages(sh);
+  assert(near2(at(stageTcMatrix(st[0], 1), 1, 1), [2.5, 2]) && near2(at(stageTcMatrix(st[1], 1), 1, 1), [3, 2]),
+    'tcMods apply in the script\'s order: scale then scroll is not scroll then scale');
+  assert(near2(at(stageTcMatrix(st[2], 1), 0.5, 0.5), [0.5, 0.5]) && near2(at(stageTcMatrix(st[2], 1), 1, 0.5), [0.5, 0]),
+    'tcMod rotate 90 turns about the middle, clockwise in a second (RB_CalcRotateTexCoords)');
+  assert(near2(at(stageTcMatrix(st[3], 0.25), 1, 1), [0.5 + 0.5 / 1.5, 0.5 + 0.5 / 1.5]) && near2(at(stageTcMatrix(st[3], 0), 0.5, 0.5), [0.5, 0.5]),
+    'tcMod stretch scales about the middle by 1 over its wave (1.5 at a quarter: RB_CalcStretchTexCoords)');
+  assert(near2(at(stageTcMatrix(st[4], 0), 1, 0), [0.25, 1.5]) && stageColor(st[4].rgb, 0).join() === '1,0.5,0.25' && stageAlpha(st[4].alpha, 0) === 0.3,
+    'tcMod transform (s m00 + t m10 + t0, s m01 + t m11 + t1), rgbGen const and alphaGen const');
+  assert(Math.abs(stageAlpha(st[5].alpha, 0.25) - 1) < 1e-9 && st[6].alpha.kind === 'portal' && st[6].alpha.range === 128 && stageAlpha(st[6].alpha, 0) === null,
+    'alphaGen wave clamped to 0..1 (RB_CalcWaveAlpha); alphaGen portal keeps its range for the painter');
 }
 
 // the blob shadows (CG_PlayerShadow): the floor found within 128 units, the shadow darker the nearer it is

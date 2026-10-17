@@ -34,7 +34,7 @@ export function parseShaderScript(text, into = new Map()) {
     while (i < t.length && t[i] !== '}') {
       if (t[i] === '{') {
         i++;
-        const st = { map: null, anim: null, animFps: 0, blend: 'opaque', src: 'GL_ONE', dst: 'GL_ZERO', alphaFunc: null, scroll: null, scale: null, turb: null, rotate: 0, clamp: false, lightmap: false, rgbGen: null, depthWrite: false, tcGen: null };
+        const st = { map: null, anim: null, animFps: 0, blend: 'opaque', src: 'GL_ONE', dst: 'GL_ZERO', alphaFunc: null, scroll: null, scale: null, turb: null, rotate: 0, clamp: false, lightmap: false, rgbGen: null, depthWrite: false, tcGen: null, tcMods: [] };
         while (i < t.length && t[i] !== '}') {
           const key = t[i++].toLowerCase();
           const args = [];
@@ -58,6 +58,7 @@ export function parseShaderScript(text, into = new Map()) {
             case 'alphafunc': st.alphaFunc = (args[0] ?? '').toUpperCase(); break;
             case 'tcmod': {
               const k = (args[0] ?? '').toLowerCase();
+              st.tcMods.push([k, ...args.slice(1).map((a) => a.toLowerCase())]);   // in the script's order (ComputeTexCoords)
               if (k === 'scroll') st.scroll = [Number(args[1]) || 0, Number(args[2]) || 0];
               else if (k === 'scale') st.scale = [Number(args[1]) || 1, Number(args[2]) || 1];
               else if (k === 'turb') st.turb = [Number(args[1]) || 0, Number(args[2]) || 0, Number(args[3]) || 0, Number(args[4]) || 0];
@@ -291,13 +292,66 @@ export function shaderStages(sh) {
     let rgb = { kind: 'identity' };
     if (g[0] === 'wave' && g[1] in WAVE_FUNCS) rgb = { kind: 'wave', func: WAVE_FUNCS[g[1]], base: Number(g[2]) || 0, amp: Number(g[3]) || 0, phase: Number(g[4]) || 0, freq: Number(g[5]) || 0 };
     else if (g[0] === 'vertex' || g[0] === 'exactvertex') rgb = { kind: 'vertex' };
+    else if (g[0] === 'const') {
+      const c = g.slice(1).map(Number).filter(Number.isFinite);
+      if (c.length >= 3) rgb = { kind: 'const', color: c.slice(0, 3).map((v) => Math.min(1, Math.max(0, v))) };
+    }
+    // alphaGen: const, wave, portal (the distance over its range); the others leave the picture's alpha
+    const ag = s.alphaGen ?? [];
+    let alpha = null;
+    if (ag[0] === 'const' && Number.isFinite(Number(ag[1]))) alpha = { kind: 'const', value: Number(ag[1]) };
+    else if (ag[0] === 'wave' && ag[1] in WAVE_FUNCS) alpha = { kind: 'wave', func: WAVE_FUNCS[ag[1]], base: Number(ag[2]) || 0, amp: Number(ag[3]) || 0, phase: Number(ag[4]) || 0, freq: Number(ag[5]) || 0 };
+    else if (ag[0] === 'portal') alpha = { kind: 'portal', range: Number(ag[1]) || 256 };
     out.push({
       image: s.lightmap ? null : s.map, lightmap: s.lightmap, anim: s.anim, animFps: s.animFps,
       src: s.src, dst: s.dst, alphaFunc: s.alphaFunc, depthWrite: s.depthWrite,
-      scroll: s.scroll, scale: s.scale, turb: s.turb, rotate: s.rotate, tcGen: s.tcGen, rgb,
+      scroll: s.scroll, scale: s.scale, turb: s.turb, rotate: s.rotate, tcMods: s.tcMods, tcGen: s.tcGen, rgb, alpha,
     });
   }
   return out;
+}
+
+/**
+ * ComputeTexCoords' tcMods for a stage at a time, in the script's order, as one affine map of the texture
+ * coordinates: [m00, m10, m20, m01, m11, m21], s' = s m00 + t m10 + m20, t' = s m01 + t m11 + m21
+ * (RB_CalcTransformTexCoords' matrix). scroll, scale, rotate about the middle, stretch about the middle by
+ * 1 / its wave, transform; turb is per vertex and is the painter's (left out here).
+ */
+export function stageTcMatrix(stage, time) {
+  let m = [1, 0, 0, 0, 1, 0];
+  const then = (o) => {   // o after m
+    m = [o[0] * m[0] + o[1] * m[3], o[0] * m[1] + o[1] * m[4], o[0] * m[2] + o[1] * m[5] + o[2],
+      o[3] * m[0] + o[4] * m[3], o[3] * m[1] + o[4] * m[4], o[3] * m[2] + o[4] * m[5] + o[5]];
+  };
+  const n = (v, d = 0) => (Number.isFinite(Number(v)) ? Number(v) : d);
+  for (const [k, ...a] of stage.tcMods ?? []) {
+    if (k === 'scroll') then([1, 0, n(a[0]) * time, 0, 1, n(a[1]) * time]);
+    else if (k === 'scale') then([n(a[0], 1), 0, 0, 0, n(a[1], 1), 0]);
+    else if (k === 'rotate') {
+      const r = (-n(a[0]) * time * Math.PI) / 180, c = Math.cos(r), s = Math.sin(r);
+      then([c, -s, 0.5 - 0.5 * c + 0.5 * s, s, c, 0.5 - 0.5 * s - 0.5 * c]);
+    } else if (k === 'stretch' && a[0] in WAVE_FUNCS) {
+      const w = waveValue(WAVE_FUNCS[a[0]], n(a[1]), n(a[2]), n(a[3]), n(a[4]), time);
+      const p = w ? 1 / w : 1;
+      then([p, 0, 0.5 - 0.5 * p, 0, p, 0.5 - 0.5 * p]);
+    } else if (k === 'transform') then([n(a[0], 1), n(a[2]), n(a[4]), n(a[1]), n(a[3], 1), n(a[5])]);
+  }
+  return m;
+}
+
+/** A stage's colour at a time, [r, g, b]: rgbGen wave clamped to 0..1 (RB_CalcWaveColor), const, else 1 */
+export function stageColor(rgb, time) {
+  if (rgb.kind === 'const') return rgb.color;
+  const v = stageBrightness(rgb, time);
+  return [v, v, v];
+}
+
+/** A stage's alpha source: alphaGen const and wave (RB_CalcWaveAlpha) as a number, portal as its range */
+export function stageAlpha(alpha, time) {
+  if (!alpha) return null;
+  if (alpha.kind === 'const') return alpha.value;
+  if (alpha.kind === 'wave') return Math.min(1, Math.max(0, waveValue(alpha.func, alpha.base, alpha.amp, alpha.phase, alpha.freq, time)));
+  return null;
 }
 
 /** A stage's colour at a time: 1, or its wave clamped to 0..1 (RB_CalcWaveColor) */

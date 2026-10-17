@@ -10,7 +10,7 @@
 
 import { Renderer, yawAxis, anglesAxis, tagTransform, animFrame, autospriteQuads, fogDefs, md3Lod, entityFog } from './renderer.js';
 import { loadImage, powerOfTwo } from './image.js';
-import { shellMesh, eyeInModel, stageBrightness } from './shader.js';
+import { shellMesh, eyeInModel, stageTcMatrix, stageColor, stageAlpha } from './shader.js';
 
 const LIGHTMAP_SIZE = 128;
 
@@ -70,6 +70,10 @@ uniform vec3 uRgb;        // a stage's colour (rgbGen identity or wave)
 uniform int uVColor;      // a stage's rgbGen vertex: times the vertex light
 uniform int uStageTc;     // a stage's coordinates: 0 the texture's, 1 tcGen environment, 2 the lightmap's
 uniform float uRotate;    // tcMod rotate, degrees a second
+uniform vec3 uTcM0;       // a stage's tcMods as one affine map: s' = dot((s, t, 1), uTcM0), t' = dot(.., uTcM1)
+uniform vec3 uTcM1;
+uniform int uAlphaGen;    // a stage's alphaGen: 0 the picture's alpha, 1 times uAlphaVal, 2 portal (the distance over uAlphaVal)
+uniform float uAlphaVal;
 uniform float uLightScale;
 uniform sampler2D uPortal;
 uniform vec2 uScreen;
@@ -146,21 +150,21 @@ void main() {
   if (uMode == 5) { fragColor = vec4(dlights(), 1.0); return; }
   if (uMode == 6) { fragColor = vec4(uFogColor, fogAmount()); return; }
   if (uMode == 4) {
-    // a shader's stage (RB_IterateStagesGeneric): its coordinates through scale, rotate (about the middle) and
-    // scroll, its picture times its colour; alphaFunc GE128 (1), GT0 (2), LT128 (3)
+    // a shader's stage (RB_IterateStagesGeneric): its coordinates through its tcMods in the script's order (one
+    // affine map, stageTcMatrix) and turb, its picture times its colour, its alpha by alphaGen; alphaFunc GE128 (1),
+    // GT0 (2), LT128 (3)
     vec2 tc;
     if (uStageTc == 2) tc = vLm;
     else if (uStageTc == 1) tc = envCoords();
-    else {
-      tc = vSt * uScale;
-      if (uRotate != 0.0) {
-        float a = radians(-uRotate * uTime), cs = cos(a), sn = sin(a);
-        tc = vec2(cs * (tc.x - 0.5) - sn * (tc.y - 0.5), sn * (tc.x - 0.5) + cs * (tc.y - 0.5)) + 0.5;
-      }
-      tc += uScroll;
+    else tc = vSt;
+    if (uStageTc != 2) {
+      vec3 st1 = vec3(tc, 1.0);
+      tc = vec2(dot(st1, uTcM0), dot(st1, uTcM1));
       if (uTurb > 0.0) tc += vec2(sin(vSt.y * 12.0 + uTime * 2.0), sin(vSt.x * 12.0 + uTime * 2.0)) * 0.015;
     }
     vec4 c = texture(uTex, tc);
+    if (uAlphaGen == 1) c.a *= uAlphaVal;
+    else if (uAlphaGen == 2) c.a *= clamp(length(vWorld - uEye) / uAlphaVal, 0.0, 1.0);
     if ((uAlphaTest == 1 && c.a < 0.5) || (uAlphaTest == 2 && c.a <= 0.0) || (uAlphaTest == 3 && c.a >= 0.5)) discard;
     vec3 rgb = c.rgb * uRgb;
     if (uVColor == 1) rgb *= min(vColor * uLightScale / 255.0, vec3(1.0));
@@ -745,18 +749,20 @@ export class GLRenderer {
     gl.uniform1i(u.uMode, 4);
     gl.activeTexture(gl.TEXTURE0);
     look.stages.forEach((s, i) => {
-      let rgb = stageBrightness(s.rgb, this.time);
+      let rgb = stageColor(s.rgb, this.time);
       if (s.lightmap) {
         gl.bindTexture(gl.TEXTURE_2D, lit ? this.lightmap(this.bsp, g.lm) : this.white());
         // a surface q3map lit by its vertices instead: the average of its faces' vertex light
-        if (!lit) rgb *= Math.min(1, (g.flat / g.faces.length) * this.lightScale / 255);
+        if (!lit) { const k = Math.min(1, (g.flat / g.faces.length) * this.lightScale / 255); rgb = rgb.map((v) => v * k); }
       } else gl.bindTexture(gl.TEXTURE_2D, this.texture(this.animImage(s.image, s.anim, s.animFps)).tex);
       gl.uniform1i(u.uStageTc, s.lightmap ? (lit ? 2 : 0) : s.tcGen === 'environment' ? 1 : 0);
-      gl.uniform3f(u.uRgb, rgb, rgb, rgb);
+      gl.uniform3f(u.uRgb, rgb[0], rgb[1], rgb[2]);
       gl.uniform1i(u.uVColor, s.rgb.kind === 'vertex' ? 1 : 0);
-      gl.uniform2f(u.uScroll, s.scroll ? s.scroll[0] * this.time : 0, s.scroll ? s.scroll[1] * this.time : 0);
-      gl.uniform2f(u.uScale, s.scale ? s.scale[0] : 1, s.scale ? s.scale[1] : 1);
-      gl.uniform1f(u.uRotate, s.rotate || 0);
+      const m = stageTcMatrix(s, this.time);
+      gl.uniform3f(u.uTcM0, m[0], m[1], m[2]); gl.uniform3f(u.uTcM1, m[3], m[4], m[5]);
+      const av = stageAlpha(s.alpha, this.time);
+      gl.uniform1i(u.uAlphaGen, s.alpha?.kind === 'portal' ? 2 : av === null ? 0 : 1);
+      gl.uniform1f(u.uAlphaVal, s.alpha?.kind === 'portal' ? s.alpha.range : av ?? 1);
       gl.uniform1f(u.uTurb, s.turb ? 1 : 0);
       gl.uniform1i(u.uAlphaTest, s.alphaFunc === 'GE128' ? 1 : s.alphaFunc === 'GT0' ? 2 : s.alphaFunc === 'LT128' ? 3 : 0);
       if (s.src === 'GL_ONE' && s.dst === 'GL_ZERO') gl.disable(gl.BLEND);
