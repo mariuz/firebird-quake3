@@ -8,7 +8,7 @@
 // vertex shader; the player parts hang on their tags as before. The HUD is
 // drawn by the software painter onto a transparent canvas laid over this one.
 
-import { Renderer, yawAxis, anglesAxis, tagTransform, animFrame, autospriteQuads, fogDefs, md3Lod, entityFog } from './renderer.js';
+import { Renderer, yawAxis, anglesAxis, tagTransform, animFrame, autospriteQuads, fogDefs, md3Lod, entityFog, polyFog } from './renderer.js';
 import { loadImage, powerOfTwo } from './image.js';
 import { shellMesh, eyeInModel, stageTcMatrix, stageColor, stageAlpha, fogAdjust, blendFogAdjust } from './shader.js';
 
@@ -277,22 +277,43 @@ uniform mat4 uView;
 uniform float uPointSize;
 out vec2 vSt;
 out vec4 vColor;
+out vec3 vWorld;
 void main() {
   gl_Position = uProj * uView * vec4(aPos, 1.0);
   gl_PointSize = uPointSize * 300.0 / max(1.0, gl_Position.w);
-  vSt = aSt; vColor = aColor;
+  vSt = aSt; vColor = aColor; vWorld = aPos;
 }`;
 
 const SPRITE_FS = `#version 300 es
 precision highp float;
 in vec2 vSt;
 in vec4 vColor;
+in vec3 vWorld;
 uniform sampler2D uTex;
 uniform int uUseTex;
+uniform int uFogAdjust;   // a sprite or a mark in a fog (R_SpriteFogNum, RE_AddPolyToScene's): adjustColorsForFog,
+                          // 1 its colour, 2 its alpha, 3 both times 1 - the fog
+uniform vec4 uFogPlane;
+uniform int uFogHasPlane;
+uniform float uFogOpaque;
+uniform vec3 uEye;
+uniform vec3 uFwd;
 out vec4 fragColor;
 void main() {
-  vec4 c = uUseTex == 1 ? texture(uTex, vSt) : vec4(1.0);
-  fragColor = c * vColor;
+  vec4 c = (uUseTex == 1 ? texture(uTex, vSt) : vec4(1.0)) * vColor;
+  if (uFogAdjust > 0) {
+    float s = dot(vWorld - uEye, uFwd) / uFogOpaque, t = 31.0 / 32.0;
+    if (uFogHasPlane == 1) {
+      float tP = uFogPlane.w - dot(vWorld, uFogPlane.xyz), tE = uFogPlane.w - dot(uEye, uFogPlane.xyz);
+      if (tE < 0.0) t = tP < 1.0 ? 1.0 / 32.0 : 1.0 / 32.0 + 30.0 / 32.0 * tP / (tP - tE);
+      else t = tP < 0.0 ? 1.0 / 32.0 : 31.0 / 32.0;
+    }
+    float f = 0.0;
+    if (t > 1.0 / 32.0 + 1e-6 && s > 0.0) { if (t < 31.0 / 32.0) s *= (t - 1.0 / 32.0) / (30.0 / 32.0); f = sqrt(min(1.0, s)); }
+    if (uFogAdjust != 2) c.rgb *= 1.0 - f;
+    if (uFogAdjust >= 2) c.a *= 1.0 - f;
+  }
+  fragColor = c;
 }`;
 
 function compile(gl, vs, fs) {
@@ -965,6 +986,20 @@ export class GLRenderer {
     gl.enableVertexAttribArray(2); gl.vertexAttribPointer(2, 4, gl.FLOAT, false, 36, 20);
     gl.disableVertexAttribArray(3);
     gl.disable(gl.CULL_FACE);
+    gl.uniform1i(u.uFogAdjust, 0);
+  }
+
+  /** A sprite's or a mark's fog: faded by its blend as adjustColorsForFog fades it (the fog's pass is for opaque surfaces) */
+  spriteFog(fog, blend) {
+    const gl = this.gl, u = this.sprite.u;
+    const adj = fog ? blendFogAdjust(blend) : 0;
+    gl.uniform1i(u.uFogAdjust, adj);
+    if (!adj) return;
+    gl.uniform3f(u.uEye, this.view.x, this.view.y, this.view.z);
+    gl.uniform3f(u.uFwd, this.view.fwd[0], this.view.fwd[1], this.view.fwd[2]);
+    gl.uniform1f(u.uFogOpaque, fog.opaque);
+    gl.uniform1i(u.uFogHasPlane, fog.plane ? 1 : 0);
+    if (fog.plane) gl.uniform4f(u.uFogPlane, fog.plane.nx, fog.plane.ny, fog.plane.nz, fog.plane.dist);
   }
 
   quad(p0, p1, p2, p3, uv0, uv1, color) {
@@ -983,6 +1018,7 @@ export class GLRenderer {
     this.bindSprite();
     gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, tex.tex);
     gl.uniform1i(this.sprite.u.uUseTex, 1);
+    this.spriteFog(entityFog(this.fogs, origin, hs), blend);
     this.setBlend(blend);
     const l = light / 255;
     gl.bufferData(gl.ARRAY_BUFFER, this.quad(p(-hs, hs), p(hs, hs), p(hs, -hs), p(-hs, -hs), [0, 0], [1, 1], [l, l, l, alpha]), gl.DYNAMIC_DRAW);
@@ -1002,6 +1038,7 @@ export class GLRenderer {
     this.bindSprite();
     gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, tex.tex);
     gl.uniform1i(this.sprite.u.uUseTex, 1);
+    this.spriteFog(polyFog(this.fogs, pts, n), blend);
     this.setBlend(blend);
     gl.enable(gl.POLYGON_OFFSET_FILL); gl.polygonOffset(-1, -2);
     gl.bufferData(gl.ARRAY_BUFFER, buf, gl.DYNAMIC_DRAW);
@@ -1023,6 +1060,7 @@ export class GLRenderer {
     this.bindSprite();
     gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, tex.tex);
     gl.uniform1i(this.sprite.u.uUseTex, 1);
+    this.spriteFog(polyFog(this.fogs, [...a, ...b], 2), blend);
     this.setBlend(blend);
     gl.bufferData(gl.ARRAY_BUFFER, this.quad([a[0] + n[0], a[1] + n[1], a[2] + n[2]], [b[0] + n[0], b[1] + n[1], b[2] + n[2]], [b[0] - n[0], b[1] - n[1], b[2] - n[2]], [a[0] - n[0], a[1] - n[1], a[2] - n[2]], [scroll, 0], [scroll + tl, 1], [1, 1, 1, 1]), gl.DYNAMIC_DRAW);
     gl.drawArrays(gl.TRIANGLES, 0, 6);

@@ -11,7 +11,7 @@
 import { md3Normal, ANIM } from './md3.js';
 import { loadImage, powerOfTwo, halve } from './image.js';
 import { SURF } from './bsp.js';
-import { deformVertex, envTexCoords, shellMesh, eyeInModel } from './shader.js';
+import { deformVertex, envTexCoords, shellMesh, eyeInModel, blendFogAdjust } from './shader.js';
 
 const LIGHTMAP_SIZE = 128;
 
@@ -32,6 +32,29 @@ export function entityFog(fogs, origin, radius) {
     if (j === 3) return fog;
   }
   return null;
+}
+
+/** RE_AddPolyToScene's fog for a mark (a poly): the first fog whose bounds the points' box reaches into
+ *  (inclusive, as there); a sprite's is R_SpriteFogNum, entityFog of its origin and radius */
+export function polyFog(fogs, pts, n) {
+  if (!fogs?.length || n < 1) return null;
+  const mn = [pts[0], pts[1], pts[2]], mx = [pts[0], pts[1], pts[2]];
+  for (let k = 1; k < n; k++) for (let j = 0; j < 3; j++) { const v = pts[k * 3 + j]; if (v < mn[j]) mn[j] = v; if (v > mx[j]) mx[j] = v; }
+  for (const fog of fogs) {
+    if (!fog?.mins) continue;
+    let j = 0;
+    for (; j < 3; j++) if (mx[j] < fog.mins[j] || mn[j] > fog.maxs[j]) break;
+    if (j === 3) return fog;
+  }
+  return null;
+}
+
+/** adjustColorsForFog for a sprite or a mark at a point: [the colour's scale, the alpha's], by the blend
+ *  (an added or subtracted one fades its colour, a blended one its alpha, a filter not at all) */
+export function fogFade(fog, adjust, px, py, pz, view) {
+  if (!fog || !adjust) return [1, 1];
+  const k = 1 - fogFactor(...fogST(fog, px, py, pz, view));
+  return [adjust !== 2 ? k : 1, adjust >= 2 ? k : 1];
 }
 
 /**
@@ -1115,7 +1138,9 @@ export class Renderer {
     const iz = 1 / f, k = view.scale * iz;
     const hs = size / 2;
     const x0 = view.cx + (r - hs) * k, x1 = view.cx + (r + hs) * k, y0 = view.cy - (u + hs) * k, y1 = view.cy - (u - hs) * k;
-    const tex = this.texture(img), tint = alpha < 1 ? [1, 1, 1, alpha] : null;
+    // in a fog it fades by its blend at its middle (the WebGL painter fades it per pixel)
+    const [fc, fa] = fogFade(entityFog(this.fogs, origin, hs), blendFogAdjust(blend), origin[0], origin[1], origin[2], view);
+    const tex = this.texture(img), tint = alpha < 1 || fc < 1 || fa < 1 ? [fc, fc, fc, alpha * fa] : null;
     this.triangle(x0, y0, iz, 0, 0, light, x1, y0, iz, tex.w, 0, light, x1, y1, iz, tex.w, tex.h, light, tex, blend, tint);
     this.triangle(x0, y0, iz, 0, 0, light, x1, y1, iz, tex.w, tex.h, light, x0, y1, iz, 0, tex.h, light, tex, blend, tint);
   }
@@ -1140,6 +1165,14 @@ export class Renderer {
       }
     }
     if (clipped.length < 3) return;
+    // in a fog it fades by its blend at its middle
+    const fog = polyFog(this.fogs, pts, n);
+    if (fog) {
+      let cx = 0, cy = 0, cz = 0;
+      for (let k = 0; k < n; k++) { cx += pts[k * 3]; cy += pts[k * 3 + 1]; cz += pts[k * 3 + 2]; }
+      const [fc, fa] = fogFade(fog, blendFogAdjust(blend), cx / n, cy / n, cz / n, view);
+      color = [(color?.[0] ?? 1) * fc, (color?.[1] ?? 1) * fc, (color?.[2] ?? 1) * fc, (color?.[3] ?? 1) * fa];
+    }
     const tex = this.texture(img);
     const P = clipped.map((v) => [view.cx + (v[1] * view.scale) / v[0], view.cy - (v[2] * view.scale) / v[0], 1 / v[0], v[3] * tex.w, v[4] * tex.h]);
     for (let k = 1; k + 1 < P.length; k++) {

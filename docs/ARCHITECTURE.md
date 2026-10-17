@@ -832,7 +832,11 @@ distance over its range, so q3dm7's gate fogs over as you back away), and after 
 blended stage, a translucent surface, the glow added over a lit one and a translucent model (a flash, a
 powerup's shell) fade instead as `adjustColorsForFog` has them (`fogAdjust`, by the blend: an additive one
 its colour, an alpha blend its alpha, a premultiplied one both, a filter not at all), by the same fog
-amount the fog pass uses (`uFogAdjust`, the model shader's `uFogOn` 2 to 4). So the flames
+amount the fog pass uses (`uFogAdjust`, the model shader's `uFogOn` 2 to 4). The sprites (explosions,
+smoke, bubbles), the marks (bullet holes, burns, the blob shadows) and the beams fade the same way: a
+sprite takes the fog its origin and size reach into (`R_SpriteFogNum`, `entityFog`), a mark the one its
+points' box reaches into (`RE_AddPolyToScene`, `polyFog`), and the sprite shader fades it per pixel
+(`spriteFog`); the software painter fades each by the fog at its middle (`fogFade`). So the flames
 cross-fade their two animations on their saw waves, the jump pads' arrows and the lights pulse, and
 q3dm1's skull arches show their carving over the scrolling fire behind the holes. The software painter
 keeps the look, whose picture for such a shader is the one blended over the opaque layer.

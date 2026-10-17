@@ -7,7 +7,7 @@
 
 import fs from 'node:fs';
 import { FrameState, firstPersonView, zoomedFov, fovY, mapTorsoToWeaponFrame, viewTorsoFrame, underwaterFov, sceneLights, gunFlashOrigin, litByDlights, MAX_DLIGHTS, drawRail, drawBolt, findPortals, portalView, mirrorView, portalFade, cameraRoll, perpendicular, floorBelow, floorUnderBox, drawShadows } from '../src/scene.js';
-import { Renderer, tagTransform, autospriteQuads, fogST, fogFactor, md3Lod, entityFog, clipFace } from '../src/renderer.js';
+import { Renderer, tagTransform, autospriteQuads, fogST, fogFactor, md3Lod, entityFog, clipFace, polyFog, fogFade } from '../src/renderer.js';
 import { parseDeform, waveValue, deformVertex, envTexCoords, parseShaderScript, surfaceLook, shellMesh, eyeInModel, stageBrightness, stageTcMatrix, stageColor, stageAlpha, shaderStages, fogAdjust, blendFogAdjust } from '../src/shader.js';
 import { Md3, parseAnimationCfg, parseSkin } from '../src/md3.js';
 import { postgameMedals } from '../src/hud.js';
@@ -416,6 +416,18 @@ const markBsp = {
 assert(fogAdjust('GL_ONE', 'GL_ONE') === 1 && fogAdjust('gl_zero', 'gl_one_minus_src_color') === 1 && fogAdjust('GL_SRC_ALPHA', 'GL_ONE_MINUS_SRC_ALPHA') === 2
   && fogAdjust('GL_ONE', 'GL_ONE_MINUS_SRC_ALPHA') === 3 && fogAdjust('GL_DST_COLOR', 'GL_ZERO') === 0 && blendFogAdjust('add') === 1 && blendFogAdjust('blend') === 2 && blendFogAdjust('filter') === 0,
   'in a fog an additive surface fades its colour, an alpha blend its alpha, a premultiplied one both, a filter nothing (adjustColorsForFog)');
+
+// marks and sprites in a fog (RE_AddPolyToScene's fog, R_SpriteFogNum) fade by their blend too
+{
+  const fog = { mins: [0, 0, 0], maxs: [100, 100, 100], opaque: 100, plane: null };
+  assert(polyFog([fog], [10, 10, 100, 20, 10, 110, 20, 20, 120], 3) === fog && polyFog([fog], [10, 10, 101, 20, 10, 110, 20, 20, 120], 3) === null,
+    'a mark is in the fog its points\' box reaches into, the bounds counted in');
+  const view = { x: 0, y: 50, z: 50, fwd: [1, 0, 0] }, k = 1 - Math.sqrt(0.5);
+  const [ac, aa] = fogFade(fog, blendFogAdjust('add'), 50, 50, 50, view), [bc, ba] = fogFade(fog, blendFogAdjust('blend'), 50, 50, 50, view);
+  assert(Math.abs(ac - k) < 1e-9 && aa === 1 && bc === 1 && Math.abs(ba - k) < 1e-9 && fogFade(fog, blendFogAdjust('filter'), 50, 50, 50, view).join() === '1,1'
+    && fogFade(null, 1, 50, 50, 50, view).join() === '1,1',
+    'half the fog\'s depth away an added sprite keeps 1 - sqrt(0.5) of its colour, a blended one of its alpha, a filter all');
+}
 
 // the blob shadows (CG_PlayerShadow): the floor found within 128 units, the shadow darker the nearer it is
 {
