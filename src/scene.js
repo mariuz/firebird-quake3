@@ -4,7 +4,7 @@
 // FrameState keeps what outlives a frame: explosions and beams in
 // flight, the pose of rotating brush models, the console lines.
 
-import { angleMatrix, yawAxis, anglesAxis, tagTransform, animFrame } from './renderer.js';
+import { angleMatrix, yawAxis, anglesAxis, tagTransform, animFrame, WEAPON_DIRS } from './renderer.js';
 import { ITEMS, WEAPONS, PLAYER_MODEL } from './gamedata.js';
 
 const WEAPON_DIR = { 1: 'gauntlet', 2: 'machinegun', 4: 'shotgun', 8: 'grenadel', 16: 'rocketl', 32: 'lightning', 64: 'railgun', 128: 'plasma', 256: 'bfg' };
@@ -196,15 +196,18 @@ export function firing(e, time) {
   return (torso === '7' || torso === '8') && +hp > 0 && cls !== 'corpse' && time - e.torsoTime < 0.1;
 }
 
-export function sceneLights(state, frame, last, view, time) {
+export function sceneLights(state, frame, last, view, time, res = null) {
   const out = [];
   const add = (x, y, z, d, k = 1) => { if (d[0] * k > 0) out.push({ x, y, z, radius: d[0] * k, color: [d[1], d[2], d[3]] }); };
   for (const e of frame.ents) {
-    // a bot's muzzle flash (CG_AddPlayerWeapon: 300 + rand & 31 of the gun's colour), ahead of it at the gun
+    // a bot's muzzle flash (CG_AddPlayerWeapon: 300 + rand & 31 of the gun's colour) at its gun's tag_flash; without
+    // the models, 24 ahead of it at the gun's height
     const fc = firing(e, time) && FLASH_DLIGHT[e.weapon];
     if (fc && !(e.effects & 256)) {
+      const at = gunFlashOrigin(res, e, time);
       const yaw = (e.yaw * Math.PI) / 180;
-      add(e.x + Math.cos(yaw) * 24, e.y + Math.sin(yaw) * 24, e.z + 16, [300 + Math.random() * 32, ...fc]);
+      if (at) add(at[0], at[1], at[2], [300 + Math.random() * 32, ...fc]);
+      else add(e.x + Math.cos(yaw) * 24, e.y + Math.sin(yaw) * 24, e.z + 16, [300 + Math.random() * 32, ...fc]);
     }
     if (e.effects & 16) add(e.x, e.y, e.z, DL_ROCKET);
     else if (e.effects & 64) add(e.x, e.y, e.z, DL_BFG);
@@ -225,6 +228,26 @@ export function sceneLights(state, frame, last, view, time) {
   }
   const d2 = (l) => (l.x - view.x) ** 2 + (l.y - view.y) ** 2 + (l.z - view.z) ** 2;
   return out.sort((a, b) => d2(a) - d2(b)).slice(0, MAX_DLIGHTS);
+}
+
+/**
+ * Where a player model's muzzle flash is (CG_AddPlayerWeapon's flash.origin): the gun's tag_flash, through the
+ * legs' tag_torso and the torso's tag_weapon at their frames of the moment, as drawPlayer places them; the
+ * hand's tag when the gun has no flash tag; null without the models
+ */
+export function gunFlashOrigin(res, e, time) {
+  const p = res?.players?.get(String(e.pmodel ?? '').split('/')[0]);
+  if (!p || !e.anims) return null;
+  const [legs, torso] = e.anims.split(',').map(Number);
+  const lf = animFrame(p.anims, legs, time - e.legsTime);
+  const tf = animFrame(p.anims, torso < 0 ? legs : torso, time - (torso < 0 ? e.legsTime : e.torsoTime));
+  const t = tagTransform(p.lower, lf, 'tag_torso', [e.x, e.y, e.z], yawAxis(e.yaw));
+  const hand = t && tagTransform(p.upper, tf, 'tag_weapon', t.origin, t.axis);
+  if (!hand) return null;
+  const id = res.byName?.get(`models/weapons2/${WEAPON_DIRS[e.weapon]}.md3`);
+  const gun = id ? res.models?.get(id)?.mdl : null;
+  const flash = gun && tagTransform(gun, 0, 'tag_flash', hand.origin, hand.axis);
+  return (flash ?? hand).origin;
 }
 
 /** R_SetupEntityLighting's dynamic lights on a model: each adds 16 r² / d² (d at least 16) of its colour to the
@@ -780,7 +803,7 @@ export function drawScene(renderer, hud, res, bsp, last, frame, opts = {}) {
     r.endPortalView(p.frame ? p.fade : 0, p.faces, !!p.view?.flip);
   } else r.endPortalView?.(0, null);
   r.beginFrame(view);
-  const lights = opts.dlights === false ? [] : sceneLights(state, frame, last, view, time);
+  const lights = opts.dlights === false ? [] : sceneLights(state, frame, last, view, time, res);
   r.setDlights(lights);
   const lightAt = (x, y, z) => litByDlights(bsp.lightGrid(x, y, z), x, y, z, lights);
   if (frame.faces.length) {

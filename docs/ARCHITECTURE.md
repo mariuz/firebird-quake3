@@ -926,7 +926,8 @@ frame already has: a rocket (effects 16) or a BFG ball (64) in flight at 200, a 
 explosion at 300 (full for the first half of its sprite's life, then fading to nothing), a player
 model carrying the quad (`frame_all` sets `EF_QUAD`, 512, from `quad_finished`) and the player with it
 at 200 to 231 in blue, and the player's muzzle flash for its tenth of a second at 300 to 331 in the
-weapon's `flashDlightColor`, a bot's too, 24 ahead of it at its gun's height, while `firing` says its
+weapon's `flashDlightColor`, a bot's too, at its gun's `tag_flash` (`gunFlashOrigin`: the legs' `tag_torso`, the
+torso's `tag_weapon` and the gun's tag at their frames of the moment, as `drawPlayer` places them), while `firing` says its
 torso's attack animation restarted under a tenth of a second ago (`drawPlayer` then also draws the
 gun's `_flash` model on its `tag_flash`, as `CG_AddPlayerWeapon` does); the 32 nearest the eye are kept
 (`MAX_DLIGHTS`). The lights come from the frame's entities, and `frame_all` sends the missiles and the

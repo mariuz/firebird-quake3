@@ -6,7 +6,7 @@
 //   node scripts/view-test.mjs
 
 import fs from 'node:fs';
-import { FrameState, firstPersonView, zoomedFov, fovY, mapTorsoToWeaponFrame, viewTorsoFrame, underwaterFov, sceneLights, litByDlights, MAX_DLIGHTS, drawRail, drawBolt, findPortals, portalView, mirrorView, portalFade, cameraRoll, perpendicular, floorBelow, floorUnderBox, drawShadows } from '../src/scene.js';
+import { FrameState, firstPersonView, zoomedFov, fovY, mapTorsoToWeaponFrame, viewTorsoFrame, underwaterFov, sceneLights, gunFlashOrigin, litByDlights, MAX_DLIGHTS, drawRail, drawBolt, findPortals, portalView, mirrorView, portalFade, cameraRoll, perpendicular, floorBelow, floorUnderBox, drawShadows } from '../src/scene.js';
 import { Renderer, tagTransform, autospriteQuads, fogST, fogFactor, md3Lod, entityFog, clipFace } from '../src/renderer.js';
 import { parseDeform, waveValue, deformVertex, envTexCoords, parseShaderScript, surfaceLook, shellMesh, eyeInModel, stageBrightness, stageTcMatrix, stageColor, stageAlpha, shaderStages, fogAdjust, blendFogAdjust } from '../src/shader.js';
 import { Md3, parseAnimationCfg, parseSkin } from '../src/md3.js';
@@ -207,6 +207,18 @@ const markBsp = {
   // a bot firing (its torso's attack animation restarted under a tenth of a second ago): its gun's light ahead
   // of it; not later, not a corpse
   const bot = (torso, tt, cls = 'bot') => ({ pmodel: 'sarge/default', anims: `15,${torso},100,${cls}`, torsoTime: tt, weapon: 16, effects: 0, x: 500, y: 0, z: 0, yaw: 90 });
+  // with the models: at the gun's tag_flash, through tag_torso and tag_weapon (CG_AddPlayerWeapon's flash.origin)
+  const I = [1, 0, 0, 0, 1, 0, 0, 0, 1];
+  const md = (tags) => ({ numFrames: 1, tagIndex: (n) => Object.keys(tags).indexOf(n), tags: [Object.values(tags).map((o) => ({ origin: o, axis: I }))] });
+  const anims = []; anims[15] = anims[7] = { first: 0, count: 1, fps: 10, loop: 0 };
+  const fakeRes = {
+    players: new Map([['sarge', { anims, lower: md({ tag_torso: [0, 0, 24] }), upper: md({ tag_weapon: [10, 0, 0] }) }]]),
+    byName: new Map([['models/weapons2/rocketl/rocketl.md3', 7]]), models: new Map([[7, { mdl: md({ tag_flash: [20, 0, 0] }) }]]),
+  };
+  const fo = gunFlashOrigin(fakeRes, bot(7, 19.95), 20);
+  const tagged = sceneLights(st, { ents: [bot(7, 19.95)] }, quiet, view, 20, fakeRes);
+  assert(fo && Math.abs(fo[0] - 500) < 1e-6 && Math.abs(fo[1] - 30) < 1e-6 && Math.abs(fo[2] - 24) < 1e-6 && tagged.length === 1 && Math.abs(tagged[0].y - 30) < 1e-6,
+    `a bot's flash lights from its gun's tag_flash, through tag_torso and tag_weapon (${fo?.map((v) => v.toFixed(0)).join(' ')})`);
   const shot = at(20, [bot(7, 19.95)]);
   assert(shot.length === 1 && shot[0].color.join() === '1,0.75,0' && Math.abs(shot[0].y - 24) < 1e-6 && shot[0].radius >= 300
     && at(20, [bot(7, 19.85)]).length === 0 && at(20, [bot(11, 19.95)]).length === 0 && at(20, [bot(7, 19.95, 'corpse')]).length === 0,

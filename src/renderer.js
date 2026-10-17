@@ -92,7 +92,7 @@ export function md3Lod(mdl, frame, origin, view, tanY) {
 }
 
 // the weapons' models under models/weapons2/, by WP bit
-const WEAPON_DIRS = { 1: 'gauntlet/gauntlet', 2: 'machinegun/machinegun', 4: 'shotgun/shotgun', 8: 'grenadel/grenadel', 16: 'rocketl/rocketl', 32: 'lightning/lightning', 64: 'railgun/railgun', 128: 'plasma/plasma', 256: 'bfg/bfg' };
+export const WEAPON_DIRS = { 1: 'gauntlet/gauntlet', 2: 'machinegun/machinegun', 4: 'shotgun/shotgun', 8: 'grenadel/grenadel', 16: 'rocketl/rocketl', 32: 'lightning/lightning', 64: 'railgun/railgun', 128: 'plasma/plasma', 256: 'bfg/bfg' };
 
 /**
  * A world face cut by a plane [nx, ny, nz, d]: itself when wholly in front, null when wholly behind, else a
