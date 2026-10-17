@@ -504,6 +504,15 @@ if (pad) {
   assert(s.EXIT_KIND === 1, 'fire after five seconds: on to the next arena');
 }
 
+// the model played (ClientUserinfoChanged's model): at once, kept for the next arena, and its own sounds
+{
+  await db.exec("EXECUTE PROCEDURE set_player_model('major', 'daemia')");
+  const pm = (await db.query("SELECT TRIM(pmodel) m, TRIM(pskin) s FROM ents WHERE id = player_ent()")).rows[0];
+  await db.exec('EXECUTE PROCEDURE snd(player_ent(), 2, \'*jump1.wav\', 1, 1)');
+  const jump = (await db.query('SELECT FIRST 1 TRIM(snd) s FROM sound_events ORDER BY id DESC')).rows[0].S;
+  assert(pm.M === 'major' && pm.S === 'daemia' && jump === 'sound/player/major/jump1.wav', `the player plays major/daemia at once, with its sounds (${pm.M}/${pm.S}, ${jump})`);
+}
+
 const snds = (await db.query('SELECT DISTINCT snd FROM sound_events')).rows.map((r) => r.SND);
 const missing = snds.filter((n) => !pak.has(n));
 assert(missing.length === 0, `all queued sounds exist in the pak (${missing.join(', ') || 'none missing'})`);

@@ -88,7 +88,7 @@ explosion sprites, beams) and nothing else. The renderers never query the databa
 | accuracy, the postgame medals | `acc_shots`/`acc_hits` counted in `fire_weapon` and at each weapon's hit (`log_accuracy_hit` in `sql/game.sql`); `postgameMedals` in `src/hud.js` |
 | sounds, music | `src/audio.js`; events are rows in `sound_events` written by `snd`/`snd_at` |
 | the page, settings, input, the loop, the console | `src/main.js`, `public/index.html`, `public/style.css` |
-| items, weapons, bot roster, player model | `src/gamedata.js` |
+| items, weapons, bot roster, player model | `src/gamedata.js`; the model played: `set_player_model` in `sql/bots.sql`, `player.model`/`skin`, the *Model* menu (`fillModelMenu`) in `src/main.js` |
 | pak parsing, BSP, MD3, shaders, images | `src/pk3.js` (`Pk3`, and `PakSet`: several paks searched as one), `src/bsp.js`, `src/md3.js`, `src/shader.js`, `src/image.js` |
 | OpenArena's and the Community Map-Pack's arenas | `scripts/fetch-maps.mjs` (one pk3 a map into `public/pak/maps/`, `index.json`), the page's `stackPaks`, `ensureMap`, `fillMapMenu` in `src/main.js`; `scripts/maps-test.mjs` |
 

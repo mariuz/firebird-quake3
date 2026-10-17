@@ -1439,6 +1439,17 @@ END^
 -- ── joining and leaving mid-game ─────────────────────────────────────────
 -- G_AddBot (the addbot command, the Add Bots menu): a bot of the roster that is not in the arena joins,
 -- at the skill asked for; a team game puts it on PickTeam's team, a tournament queues it (tourney_check)
+-- ClientUserinfoChanged's model: the player's model and skin, at once (a team game keeps its red or blue
+-- skin, as the team's colours override the skin there)
+CREATE OR ALTER PROCEDURE set_player_model (m VARCHAR(16), s VARCHAR(16))
+AS
+BEGIN
+  IF (m IS NULL OR TRIM(m) = '') THEN EXIT;
+  UPDATE player p SET p.model = TRIM(:m), p.skin = TRIM(COALESCE(NULLIF(TRIM(:s), ''), 'default')) WHERE p.id = 1;
+  UPDATE ents e SET e.pmodel = TRIM(:m), e.pskin = IIF(e.pteam > 0, e.pskin, TRIM(COALESCE(NULLIF(TRIM(:s), ''), 'default')))
+   WHERE e.id = player_ent();
+END^
+
 CREATE OR ALTER PROCEDURE add_bot (bname VARCHAR(16), skill SMALLINT)
 AS
 DECLARE id INTEGER;
@@ -2127,7 +2138,7 @@ BEGIN
   DELETE FROM bot_routes;
   -- the player
   EXECUTE PROCEDURE spawn_ent('player', 0, 0, 0) RETURNING_VALUES pe;
-  UPDATE ents e SET e.pmodel = 'sarge', e.pskin = 'default', e.viewheight = 26 WHERE e.id = :pe;
+  UPDATE ents e SET e.pmodel = (SELECT p.model FROM player p WHERE p.id = 1), e.pskin = (SELECT p.skin FROM player p WHERE p.id = 1), e.viewheight = 26 WHERE e.id = :pe;
   -- a team game: the team asked for, else PickTeam's, and its colours
   IF (COALESCE(gametype, 0) >= 3) THEN
     UPDATE ents e SET e.pteam = IIF(:team IN (1, 2), :team, pick_team()) WHERE e.id = :pe;

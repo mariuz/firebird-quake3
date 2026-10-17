@@ -299,7 +299,11 @@ sound, the lead state. Each tic:
    lets go and leaves it where the one followed was (`stop_following`); following, `q3_tic` and
    `view_setup` take the eye, the angles, the health, the armour and the gun from the followed bot, and
    `frame_all` does not draw it. A spectator is not ranked at the time limit and stays one into the
-   next arena.
+   next arena. The model played is the page's *Model* menu (every player model of the pak with its own
+   skins, `model/skin` as Quake III's "model" userinfo): `set_player_model` keeps it in `player.model`
+   and `skin` and changes the player's entity at once (`ClientUserinfoChanged`), a team game keeping its
+   red or blue skin; `init_map` spawns the player with it, so its sounds (`*jump1.wav` and the others) are
+   the model's, and the view's hand plays its torso's frames.
 3. `run_pushers`: every mover (`movetype` 7) moves along its `calc_move` track and pushes what stands
    on it or in its way (`push_move`, the pushed set kept in the `pushed` temporary table so a blocked
    mover can put everything back, as `G_MoverPush` does); doors reverse when blocked and crush at

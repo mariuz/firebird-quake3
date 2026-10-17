@@ -425,6 +425,8 @@ CREATE TABLE player (
   holdable        SMALLINT DEFAULT 0 NOT NULL,            -- 1 teleporter 2 medkit
   jump_released   SMALLINT DEFAULT 1 NOT NULL,
   name            VARCHAR(32) DEFAULT 'Player' NOT NULL,  -- what the bots call you
+  model           VARCHAR(16) DEFAULT 'sarge' NOT NULL,   -- the model and skin played (the "model" userinfo: sarge/krusade)
+  skin            VARCHAR(16) DEFAULT 'default' NOT NULL,
   spectator       SMALLINT DEFAULT 0 NOT NULL,            -- TEAM_SPECTATOR: out of the match, flying or following
   follow_id       INTEGER,                                -- SPECTATOR_FOLLOW: the bot whose eyes we see through
   spec_fire       SMALLINT DEFAULT 0 NOT NULL,            -- the attack button at the last tic (it cycles on the press)

@@ -868,14 +868,14 @@ export function drawScene(renderer, hud, res, bsp, last, frame, opts = {}) {
   r.drawAlphaPolys();
 
   // the weapon in hand: the hand model at the eye, the gun on its tag (CG_AddViewWeapon)
-  if (!last.DEAD && !last.MATCH_OVER && !(last.SPECTATOR && !last.FOLLOW_NAME) && last.WEAPON && !opts.noWeapon) drawViewWeapon(r, res, bsp, last, time, view, lights);
+  if (!last.DEAD && !last.MATCH_OVER && !(last.SPECTATOR && !last.FOLLOW_NAME) && last.WEAPON && !opts.noWeapon) drawViewWeapon(r, res, bsp, last, time, view, lights, opts.playerModel);
 
   // 2D
   if (hud) hud.draw(r, last, time, state.messages, opts);
   return screenTint(last, time);
 }
 
-function drawViewWeapon(r, res, bsp, last, time, view, lights = []) {
+function drawViewWeapon(r, res, bsp, last, time, view, lights = [], playerModel = PLAYER_MODEL) {
   const dir = WEAPON_DIR[last.WEAPON];
   if (!dir) return;
   const handId = res.byName.get(`models/weapons2/${dir}/${dir}_hand.md3`);
@@ -895,7 +895,8 @@ function drawViewWeapon(r, res, bsp, last, time, view, lights = []) {
   light.ambient = light.ambient.map((v) => Math.max(v, 96));   // RF_MINLIGHT: the gun is never black
   let gunOrigin = org, gunAxis = axis;
   if (hand) {
-    const p = res.players.get(PLAYER_MODEL) ?? res.players.values().next().value;
+    // the hand plays the torso's frames of the model played (CG_AddViewWeapon, ps's model)
+    const p = res.players.get(playerModel) ?? res.players.get(PLAYER_MODEL) ?? res.players.values().next().value;
     const frame = p ? Math.min(hand.numFrames - 1, mapTorsoToWeaponFrame(p.anims, viewTorsoFrame(p.anims, last, time))) : 0;
     const t = tagTransform(hand, frame, 'tag_weapon', org, axis);
     if (t) { gunOrigin = t.origin; gunAxis = t.axis; }

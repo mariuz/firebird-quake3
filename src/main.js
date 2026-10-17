@@ -49,7 +49,7 @@ let lastFxId = 0;
 let frameNo = 0;
 let scores = [];
 const state = new FrameState();
-const settings = { map: 'q3dm1', detail: 'medium', sfx: 70, music: 40, musicMode: 'tracks', skill: 2, bots: 3, fov: 90, renderer: 'fast', brightness: 4, predict: true, fraglimit: 20, timelimit: 10, rotate: true, name: 'Player', gametype: 'ffa', team: 'auto' };
+const settings = { map: 'q3dm1', detail: 'medium', sfx: 70, music: 40, musicMode: 'tracks', skill: 2, bots: 3, fov: 90, renderer: 'fast', brightness: 4, predict: true, fraglimit: 20, timelimit: 10, rotate: true, name: 'Player', model: 'sarge/default', gametype: 'ffa', team: 'auto' };
 try { Object.assign(settings, JSON.parse(localStorage.getItem('firebird-quake3:settings') || '{}')); } catch { /* defaults */ }
 const saveSettings = () => { try { localStorage.setItem('firebird-quake3:settings', JSON.stringify(settings)); } catch { /* ignore */ } };
 const viewWidth = () => (settings.detail === 'high' ? 640 : settings.detail === 'low' ? 160 : 320);
@@ -240,6 +240,8 @@ async function startMap(name) {
     gametype: { team: 3, tourney: 1 }[settings.gametype] ?? 0, team: { red: 1, blue: 2 }[settings.team] ?? 0 });   // "prepare to fight", three, two, one, "fight!"
   map = { name, bsp, unlinked: 1, portals: findPortals(bsp, res.look) };
   await setPlayerName();
+  fillModelMenu();
+  await setPlayerModel();
   renderer.setResources(res);
   renderer.particles = [];
   renderer.meshCache?.clear();
@@ -347,7 +349,7 @@ function viewRow(alpha, now) {
 async function frame() {
   if (!running || paused || document.hidden) {
     lastTic = performance.now();
-    if (paused && renderer && last) { drawScene(renderer, hud, res, map.bsp, last, { faces: [], ents: [] }, { fov: settings.fov, state }); hud.drawCenter('paused', 80, 16); renderer.present(); }
+    if (paused && renderer && last) { drawScene(renderer, hud, res, map.bsp, last, { faces: [], ents: [] }, { fov: settings.fov, state, playerModel: settings.model.split('/')[0] }); hud.drawCenter('paused', 80, 16); renderer.present(); }
     nextFrame();
     return;
   }
@@ -422,7 +424,7 @@ async function frame() {
     // the gun is put away past half-way into the zoom: drawn with the zoomed view it would fill the screen
     const noWeapon = curFov < (settings.fov + ZOOM_FOV) / 2;
     const portal = await portalFrame(fr, fpv, view.TIME_);
-    const tint = drawScene(renderer, hud, res, map.bsp, view, fr, { fov: curFov, sqlProjected: fr.sqlProjected, state, dt, scoreboard, scores, view: fpv, noWeapon, portal });
+    const tint = drawScene(renderer, hud, res, map.bsp, view, fr, { fov: curFov, sqlProjected: fr.sqlProjected, state, dt, scoreboard, scores, view: fpv, noWeapon, portal, playerModel: settings.model.split('/')[0] });
     renderer.present(tint);
     perf.draw = performance.now() - t;
     updateStats(ticked);
@@ -628,6 +630,23 @@ botMenu('kickbot', (n) => `EXECUTE PROCEDURE kick_bot('${n}')`);
 const cleanName = (s) => String(s ?? '').replace(/[^\x20-\x7e]/g, '').replace(/'/g, '').trim().slice(0, 15) || 'Player';
 async function setPlayerName() { if (db) await db.exec(`UPDATE player SET name = '${cleanName(settings.name)}' WHERE id = 1`); }
 $('pname').value = settings.name;
+// the model played (the "model" userinfo, model/skin): the pak's player models and their own skins, not the team ones
+function fillModelMenu() {
+  const opts = [];
+  for (const [pm, p] of [...res.players].sort(([a], [b]) => a.localeCompare(b))) {
+    for (const sk of [...p.skins.keys()].sort((a, b) => (a === 'default' ? -1 : b === 'default' ? 1 : a.localeCompare(b)))) {
+      if (sk !== 'red' && sk !== 'blue') opts.push(`${pm}/${sk}`);
+    }
+  }
+  if (!opts.includes(settings.model)) settings.model = opts.includes('sarge/default') ? 'sarge/default' : opts[0] ?? 'sarge/default';
+  $('pmodel').replaceChildren(...opts.map((o) => new Option(o.endsWith('/default') ? o.slice(0, -8) : o, o)));
+  $('pmodel').value = settings.model;
+}
+async function setPlayerModel() {
+  const [m, s] = settings.model.split('/');
+  if (db) await db.exec(`EXECUTE PROCEDURE set_player_model('${m.replace(/[^a-z0-9_]/gi, '')}', '${(s ?? 'default').replace(/[^a-z0-9_]/gi, '')}')`);
+}
+$('pmodel').addEventListener('change', (e) => { settings.model = e.target.value; saveSettings(); setPlayerModel().catch((err) => console.error(err)); });
 $('pname').addEventListener('change', (e) => { settings.name = cleanName(e.target.value); e.target.value = settings.name; saveSettings(); setPlayerName().catch((err) => console.error(err)); });
 // the limits apply at once, as Quake III's fraglimit and timelimit cvars do
 const setLimit = (key, col) => (e) => {

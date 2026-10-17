@@ -204,6 +204,18 @@ const foe = blue[0], foe2 = blue[1];
   assert(fell.join() === 'weapon_railgun', `a bot killed in team play drops its gun but not its quad (${fell.join(', ')})`);
 }
 
+// the model played in a team game: the model changes, the skin stays the team's; the next arena spawns it
+{
+  await db.exec("EXECUTE PROCEDURE set_player_model('visor', 'default')");
+  const [now] = await q('SELECT TRIM(pmodel) m, TRIM(pskin) s FROM ents WHERE id = player_ent()');
+  await loadMap(db, pak, res, mapName, { skill: 3, bots: 2, gametype: 3, team: 2 });
+  const [next] = await q('SELECT TRIM(pmodel) m, TRIM(pskin) s FROM ents WHERE id = player_ent()');
+  await loadMap(db, pak, res, mapName, { skill: 3, bots: 2, gametype: 0 });
+  const [ffa] = await q('SELECT TRIM(pmodel) m, TRIM(pskin) s FROM ents WHERE id = player_ent()');
+  assert(now.M === 'visor' && now.S === 'red' && next.M === 'visor' && next.S === 'blue' && ffa.M === 'visor' && ffa.S === 'default',
+    `the model chosen keeps the team's colours (${now.M}/${now.S}, then ${next.M}/${next.S}) and its own skin out of team play (${ffa.M}/${ffa.S})`);
+}
+
 await db.close();
 console.log(failed ? `${failed} FAILED` : 'all good');
 process.exit(failed ? 1 : 0);
