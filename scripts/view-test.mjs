@@ -199,9 +199,9 @@ const markBsp = {
   const at = (t, ents = []) => sceneLights(st, { ents }, quiet, view, t);
   assert(at(10.1).length === 1 && at(10.1)[0].radius === 300 && at(10.1)[0].color.join() === '1,0.75,0', 'an explosion lights at 300, orange');
   assert(Math.abs(at(10.45)[0].radius - 150) < 1e-6 && at(10.59)[0].radius < 12, `it fades in the second half (${at(10.45)[0].radius.toFixed(0)} at three quarters)`);
-  const rockets = Array.from({ length: 12 }, (_, i) => ({ x: 1000 - i * 50, y: 0, z: 0, effects: 16 }));
+  const rockets = Array.from({ length: 40 }, (_, i) => ({ x: 2000 - i * 50, y: 0, z: 0, effects: 16 }));
   const many = at(20, rockets);
-  assert(many.length === MAX_DLIGHTS && many[0].x === 450 && many.every((l) => l.radius === 200), `twelve rockets: the ${MAX_DLIGHTS} nearest, at 200`);
+  assert(MAX_DLIGHTS === 32 && many.length === MAX_DLIGHTS && many[0].x === 50 && many.every((l) => l.radius === 200), `forty rockets: the ${MAX_DLIGHTS} nearest (MAX_DLIGHTS), at 200`);
   const firing = sceneLights(st, { ents: [] }, row({ WEAPON: 64, ATTACK_START: 19.95, TIME_: 20 }), view, 20);
   assert(firing.length === 1 && firing[0].radius >= 300 && firing[0].color.join() === '1,0.5,0', 'the railgun\'s muzzle flash lights orange at 300 and more');
   // a bot firing (its torso's attack animation restarted under a tenth of a second ago): its gun's light ahead

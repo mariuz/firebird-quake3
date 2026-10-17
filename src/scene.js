@@ -182,10 +182,10 @@ export function portalFade(portal, view) {
 // The dynamic lights (trap_R_AddLightToScene): radius and colour. A rocket and a BFG ball in flight (CG_Missile's
 // missileDlight), a rocket's or a grenade's explosion (CG_MissileHitWall: 300, fading in the second half of the
 // explosion), the quad's carrier (CG_PlayerPowerups), the muzzle flash (300 + rand & 31 in the weapon's
-// flashDlightColor). The renderer keeps 8 (Quake III 32), the nearest the eye.
+// flashDlightColor). The renderer keeps 32 (MAX_DLIGHTS), the nearest the eye.
 const DL_ROCKET = [200, 1, 0.75, 0], DL_BFG = [200, 1, 0.7, 1], DL_QUAD = [200, 0.2, 0.2, 1], DL_BOOM = [300, 1, 0.75, 0];
 const FLASH_DLIGHT = { 1: [0.6, 0.6, 1], 2: [1, 1, 0], 4: [1, 1, 0], 8: [1, 0.7, 0], 16: [1, 0.75, 0], 32: [0.6, 0.6, 1], 64: [1, 0.5, 0], 128: [0.6, 0.6, 1], 256: [1, 0.7, 1] };
-export const MAX_DLIGHTS = 8;
+export const MAX_DLIGHTS = 32;
 
 /** The frame's dynamic lights, nearest the eye first: [{ x, y, z, radius, color }] */
 /** Whether a player model fired within the last tenth of a second: its torso's attack animation (7, the

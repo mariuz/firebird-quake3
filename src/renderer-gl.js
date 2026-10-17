@@ -100,8 +100,8 @@ uniform int uFogHasPlane;
 uniform float uFogOpaque;
 uniform vec3 uFwd;
 uniform int uDlCount;     // the dynamic lights on this surface (0 for the translucent ones)
-uniform vec4 uDlPos[8];   // xyz, radius
-uniform vec3 uDlColor[8];
+uniform vec4 uDlPos[32];  // xyz, radius (MAX_DLIGHTS)
+uniform vec3 uDlColor[32];
 out vec4 fragColor;
 // ProjectDlightTexture: dst × (1 + light), the light the dlight image (4000 / d² of 255 for d texels from the
 // middle of 16 spread over the radius, nothing under 75) by the offset in the surface's plane, times full up to
@@ -109,7 +109,7 @@ out vec4 fragColor;
 vec3 dlights() {
   vec3 n = normalize(cross(dFdx(vWorld), dFdy(vWorld)));
   vec3 sum = vec3(0.0);
-  for (int i = 0; i < 8; i++) {
+  for (int i = 0; i < 32; i++) {
     if (i >= uDlCount) break;
     vec3 d = vWorld - uDlPos[i].xyz;
     float r = uDlPos[i].w, dn = abs(dot(d, n));
@@ -606,7 +606,7 @@ export class GLRenderer {
     gl.uniform1f(u.uTime, this.time);
     const dl = this.dlights ?? [];
     if (dl.length) {
-      const pos = new Float32Array(32), col = new Float32Array(24);
+      const pos = new Float32Array(128), col = new Float32Array(96);
       dl.forEach((l, i) => { pos.set([l.x, l.y, l.z, l.radius], i * 4); col.set(l.color, i * 3); });
       gl.uniform4fv(u['uDlPos[0]'], pos); gl.uniform3fv(u['uDlColor[0]'], col);
     }
@@ -644,8 +644,8 @@ export class GLRenderer {
     this.portalK = k; this.portalFaces = faces; this.portalFlip = flip; this.clipPlane = null;
   }
 
-  /** The frame's dynamic lights: [{ x, y, z, radius, color: [r, g, b] }], at most 8 */
-  setDlights(lights) { this.dlights = (lights ?? []).slice(0, 8); }
+  /** The frame's dynamic lights: [{ x, y, z, radius, color: [r, g, b] }], at most 32 (MAX_DLIGHTS) */
+  setDlights(lights) { this.dlights = (lights ?? []).slice(0, 32); }
 
   drawGroup(g) {
     const gl = this.gl, u = this.world.u, look = g.look;

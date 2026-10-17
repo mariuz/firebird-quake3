@@ -363,9 +363,11 @@ BEGIN
              e.pmodel, e.pskin, e.legs_anim, e.torso_anim, e.health, e.classname, e.cluster, e.clusters, (SELECT l.area FROM leaves l WHERE l.id = e.leaf)
         FROM ents e LEFT JOIN models m ON m.id = e.model_id
        WHERE (m.kind IN ('M', 'S') OR e.pmodel IS NOT NULL) AND e.id <> :pe AND e.id <> :fid AND e.alpha = 0
-         AND (e.x - :ex) * :fx + (e.y - :ey) * :fy + (e.z - :ez) * :fz + COALESCE(m.radius, 0) + 64 >= :nearz
+         -- the snapshot's entities light what is in view from outside it (R_AddLightToScene): a missile or a
+         -- player (its flash, its quad) within a light's reach of the frustum, 300, comes too
+         AND (e.x - :ex) * :fx + (e.y - :ey) * :fy + (e.z - :ez) * :fz + COALESCE(m.radius, 0) + IIF(e.movetype IN (9, 10) OR e.pmodel IS NOT NULL, 300, 64) >= :nearz
          AND ABS((e.x - :ex) * :rx + (e.y - :ey) * :ry + (e.z - :ez) * :rz)
-             <= ((e.x - :ex) * :fx + (e.y - :ey) * :fy + (e.z - :ez) * :fz + COALESCE(m.radius, 0) + 64) * :kx + COALESCE(m.radius, 0) + 64
+             <= ((e.x - :ex) * :fx + (e.y - :ey) * :fy + (e.z - :ez) * :fz + COALESCE(m.radius, 0) + 64) * :kx + COALESCE(m.radius, 0) + IIF(e.movetype IN (9, 10) OR e.pmodel IS NOT NULL, 300, 64)
         INTO i1, i2, i3, i4, i5, d1, d2, d3, d4, d5, d6, d7, d8, pm, ps, la, ta, hp, cn, cl, cls, ea
   DO
   BEGIN

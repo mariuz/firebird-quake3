@@ -922,7 +922,10 @@ model carrying the quad (`frame_all` sets `EF_QUAD`, 512, from `quad_finished`) 
 at 200 to 231 in blue, and the player's muzzle flash for its tenth of a second at 300 to 331 in the
 weapon's `flashDlightColor`, a bot's too, 24 ahead of it at its gun's height, while `firing` says its
 torso's attack animation restarted under a tenth of a second ago (`drawPlayer` then also draws the
-gun's `_flash` model on its `tag_flash`, as `CG_AddPlayerWeapon` does); the 8 nearest the eye are kept. The world is lit as
+gun's `_flash` model on its `tag_flash`, as `CG_AddPlayerWeapon` does); the 32 nearest the eye are kept
+(`MAX_DLIGHTS`). The lights come from the frame's entities, and `frame_all` sends the missiles and the
+players up to a light's reach, 300 units, outside the frustum, so a rocket behind the eye lights the
+walls ahead as the snapshot's entities do in Quake III. The world is lit as
 `ProjectDlightTexture` lights it: the light's offset in the surface's plane looks up the 16-texel
 dlight image (4000 / d² of 255 for d texels from the middle, nothing under 75; the image spans half the
 radius each way, so it is full within a quarter of the radius and out past 0.46 of it), times full up

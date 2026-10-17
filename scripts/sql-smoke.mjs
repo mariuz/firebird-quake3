@@ -464,6 +464,26 @@ if (pad) {
   const both = [...v22.keys()].filter((k) => v90.has(k) && Math.abs(v90.get(k)) > 2);
   const ratio = both.length ? v22.get(both[0]) / v90.get(both[0]) : 0;
   assert(both.length > 0 && Math.abs(ratio - 5.03) < 0.05, `the SQL projection zooms too: a vertex ${ratio.toFixed(2)} times as far from the centre`);
+  // a rocket behind the eye still lights what is in view (R_AddLightToScene from the snapshot's entities): it
+  // comes with the frame; an item at the same spot does not
+  // (a heading whose spot 150 units behind is open and seen from the eye's cluster)
+  let hy = 0, bx = 0, by = 0;
+  const bz = e.EZ;
+  for (hy of [0, 90, 180, 270]) {
+    const r = (hy * Math.PI) / 180;
+    bx = e.EX - Math.cos(r) * 150; by = e.EY - Math.sin(r) * 150;
+    const [o] = (await db.query(`SELECT point_contents(${bx}, ${by}, ${bz}) c, (SELECT l.cluster FROM leaves l WHERE l.id = point_leaf(${bx}, ${by}, ${bz})) cl FROM rdb$database`)).rows;
+    if (o.C === 0 && o.CL >= 0) break;
+  }
+  const rid = (await db.query(`EXECUTE BLOCK RETURNS (id INTEGER) AS BEGIN EXECUTE PROCEDURE spawn_ent('rocket', ${bx}, ${by}, ${bz}) RETURNING_VALUES :id; SUSPEND; END`)).rows[0]?.ID;
+  const iid = (await db.query(`EXECUTE BLOCK RETURNS (id INTEGER) AS BEGIN EXECUTE PROCEDURE spawn_ent('item', ${bx}, ${by}, ${bz}) RETURNING_VALUES :id; SUSPEND; END`)).rows[0]?.ID;
+  const md3 = (await db.query("SELECT FIRST 1 id FROM models WHERE kind = 'M'")).rows[0].ID;
+  await db.exec(`UPDATE ents SET model_id = ${md3}, movetype = 9, effects = 16, solid = 2 WHERE id = ${rid}`);
+  await db.exec(`UPDATE ents SET model_id = ${md3}, movetype = 0, effects = 0, solid = 1 WHERE id = ${iid}`);
+  await db.exec(`EXECUTE PROCEDURE link_ent(${rid})`); await db.exec(`EXECUTE PROCEDURE link_ent(${iid})`);
+  const back = (await db.query(`SELECT * FROM frame_all(0, 2147483647, 2147483647, 0, ${e.EX}, ${e.EY}, ${e.EZ}, ${hy}, 0, 90)`, [], { rowMode: 'array' })).rows.filter((r) => r[0] === 2).map((r) => r[1]);
+  assert(back.includes(rid) && !back.includes(iid), `a rocket 150 units behind the eye comes with the frame for its light, an item there does not (${back.includes(rid)}, ${back.includes(iid)})`);
+  await db.exec(`DELETE FROM ents WHERE id IN (${rid}, ${iid})`);
 }
 
 // the end of a match (CheckExitRules, BeginIntermission, CheckIntermissionExit)
