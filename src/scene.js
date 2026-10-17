@@ -352,12 +352,29 @@ export function floorBelow(bsp, x, y, z, reach = SHADOW_DISTANCE) {
   return null;
 }
 
+/**
+ * CG_PlayerShadow's trace: a 30-unit box (-15..15 square, 0..2 high) swept down from the origin stops at the
+ * highest floor anywhere under it; nine points of the box (the middle, the corners and the sides' middles, a
+ * unit in) dropped as floorBelow does, the highest floor found. A point that starts inside a wall the player
+ * stands against is left out; none open below the origin: no shadow.
+ */
+const SHADOW_BOX = [[0, 0], [-14, -14], [14, -14], [-14, 14], [14, 14], [0, -14], [0, 14], [-14, 0], [14, 0]];
+export function floorUnderBox(bsp, x, y, z, reach = SHADOW_DISTANCE) {
+  if (!bsp?.pointContents || bsp.pointContents(x, y, z) & SHADOW_MASK) return null;
+  let best = null;
+  for (const [dx, dy] of SHADOW_BOX) {
+    const f = floorBelow(bsp, x + dx, y + dy, z, reach);
+    if (f !== null && (best === null || f > best)) best = f;
+  }
+  return best;
+}
+
 /** CG_PlayerShadow (cg_shadows 1): a 24-unit markShadow under each player model, and under the player, turned
  *  with the legs and darker the nearer the floor (1 - the trace's fraction); a mark of this frame only */
 export function drawShadows(r, state, bsp, frame, last, time) {
   const list = [];
   const shadow = (x, y, z, yaw) => {
-    const floor = floorBelow(bsp, x, y, z);
+    const floor = floorUnderBox(bsp, x, y, z);
     if (floor === null) return;
     const k = 1 - (z - floor) / SHADOW_DISTANCE;
     const from = list.length;

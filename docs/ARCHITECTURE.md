@@ -865,8 +865,10 @@ tic long) is `RB_SurfaceLightningBolt`: four ribbons 8 either side, the first fa
 mirrored, pulsing at 7.1 and 8.1 a second). `drawRail` and `drawBolt` in `src/scene.js`.
 
 *Shadows* are `CG_PlayerShadow`'s blobs (`cg_shadows 1`): for every player model in the frame and for
-the player itself, `floorBelow` steps a point down through the brushes (`Bsp.pointContents`, solid and
-player clip) for the floor within 128 units, and `drawShadows` lays the 24-unit `markShadow` there
+the player itself, `floorUnderBox` finds the floor within 128 units as `CG_PlayerShadow`'s 30-unit box
+trace does, the highest under the footprint: nine points of the box (the middle, the corners, the sides'
+middles) each stepped down through the brushes by `floorBelow` (`Bsp.pointContents`, solid and player
+clip), one inside a wall left out; and `drawShadows` lays the 24-unit `markShadow` there
 through `impactMark`, turned with the legs, subtracted with 1 - the height's fraction (darker the
 nearer), into a list of this frame only rather than the 10-second marks.
 

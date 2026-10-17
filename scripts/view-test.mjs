@@ -6,7 +6,7 @@
 //   node scripts/view-test.mjs
 
 import fs from 'node:fs';
-import { FrameState, firstPersonView, zoomedFov, fovY, mapTorsoToWeaponFrame, viewTorsoFrame, underwaterFov, sceneLights, litByDlights, MAX_DLIGHTS, drawRail, drawBolt, findPortals, portalView, mirrorView, portalFade, cameraRoll, perpendicular, floorBelow, drawShadows } from '../src/scene.js';
+import { FrameState, firstPersonView, zoomedFov, fovY, mapTorsoToWeaponFrame, viewTorsoFrame, underwaterFov, sceneLights, litByDlights, MAX_DLIGHTS, drawRail, drawBolt, findPortals, portalView, mirrorView, portalFade, cameraRoll, perpendicular, floorBelow, floorUnderBox, drawShadows } from '../src/scene.js';
 import { Renderer, tagTransform, autospriteQuads, fogST, fogFactor, md3Lod, entityFog, clipFace } from '../src/renderer.js';
 import { parseDeform, waveValue, deformVertex, envTexCoords, parseShaderScript, surfaceLook, shellMesh, eyeInModel, stageBrightness, stageTcMatrix, stageColor, stageAlpha, shaderStages, fogAdjust, blendFogAdjust } from '../src/shader.js';
 import { Md3, parseAnimationCfg, parseSkin } from '../src/md3.js';
@@ -410,6 +410,12 @@ assert(fogAdjust('GL_ONE', 'GL_ONE') === 1 && fogAdjust('gl_zero', 'gl_one_minus
   const floor = { pointContents: (x, y, z) => (z < 0 ? 1 : 0) };
   assert(Math.abs(floorBelow(floor, 0, 0, 24) - 0) <= 1 && floorBelow(floor, 0, 0, 200) === null && floorBelow(floor, 0, 0, -5) === null,
     'the floor 24 units down is found to the unit; none past 128, none from inside a brush');
+  // the box: a step 10 units to the side, 16 high, is under the player's footprint; a wall it stands against is not a floor
+  const step = { pointContents: (x, y, z) => (z < 0 || (x > 10 && z < 16) ? 1 : 0) };
+  const wall = { pointContents: (x, y, z) => (z < 0 || x > 14.5 ? 1 : 0) };
+  assert(Math.abs(floorBelow(step, 0, 0, 24) - 0) <= 1 && Math.abs(floorUnderBox(step, 0, 0, 24) - 16) <= 1 && Math.abs(floorUnderBox(step, -40, 0, 24) - 0) <= 1
+    && Math.abs(floorUnderBox(wall, 0, 0, 24) - 0) <= 1,
+    'the shadow\'s box finds the step under the footprint a point misses (CG_PlayerShadow\'s 30-unit trace), and a wall beside it is no floor');
   const st = new FrameState();
   const drawn = [];
   const r = { drawMark: (pts, stc, n, img, blend, color) => drawn.push({ img, blend, k: color[0] }) };

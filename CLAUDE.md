@@ -81,7 +81,7 @@ explosion sprites, beams) and nothing else. The renderers never query the databa
 | smoke trails, brass | `missileTrail`, `ejectBrass`, `moveBrass` in `src/scene.js` (brass collides through `Bsp.pointContents`); kind 17 from `fire_weapon` |
 | the rail's core and rings, the lightning's ribbons | `drawRail`, `drawBolt` in `src/scene.js` (quads through `drawMark`) |
 | powerup shells, the haste's smoke | `drawMd3Powered` in `src/renderer.js`, `shellMesh` in `src/shader.js` (`opts.shell` in both painters' `drawMd3`); `hasteTrail` in `src/scene.js`; the bots' powerups in `bot_item_touch`, `bot_think`, the EF bits in `frame_all` |
-| blob shadows under players | `floorBelow`, `drawShadows` in `src/scene.js` (temporary marks through `impactMark`) |
+| blob shadows under players | `floorUnderBox`, `floorBelow`, `drawShadows` in `src/scene.js` (temporary marks through `impactMark`) |
 | impact marks (bullet holes, burns, blood) | `FrameState.impactMark` and `drawMarks` in `src/scene.js`, `drawMark` in both painters; the hit's normal comes in the fx row (`x2..z2`), kind 16 is a mark alone |
 | what gets drawn and how | `src/scene.js` (what), `src/renderer.js` and `src/renderer-gl.js` (how) |
 | HUD, icons, scoreboard | `src/hud.js` |
