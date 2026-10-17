@@ -827,7 +827,11 @@ first of an opaque shader writing the depth, each stage's colour its wave clampe
 (`stageColor`), its texture coordinates through its tcMods as `ComputeTexCoords` runs them, folded into one
 affine map a frame (`stageTcMatrix`: scroll, scale, rotate and stretch about the middle, transform; turb
 per vertex after them), its alpha the picture's times `alphaGen` (const, wave clamped, or portal: the
-distance over its range, so q3dm7's gate fogs over as you back away), and after them the dynamic lights as a pass of their own
+distance over its range, so q3dm7's gate fogs over as you back away; or lightingSpecular, the shine of
+q3dm7's iron walls, q3dm17's `steed1gf` and q3tourney2's support border: `RB_CalcSpecularAlpha`'s one fixed
+light at (-960, 1980, 96) reflected in the vertex normal, against the eye, to the fourth power, per vertex in
+the model's own space, `vSpec`, `specularAlpha`; the patches' vertex normals are their control points'
+blended as the points are), and after them the dynamic lights as a pass of their own
 (`GL_DST_COLOR GL_ONE`: the frame times one plus the light) and the fog (`RB_FogPass`). In a fog volume a
 blended stage, a translucent surface, the glow added over a lit one and a translucent model (a flash, a
 powerup's shell) fade instead as `adjustColorsForFog` has them (`fogAdjust`, by the blend: an additive one

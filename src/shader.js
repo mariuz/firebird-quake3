@@ -268,7 +268,7 @@ export function surfaceLook(shaders, name) {
   // painter then draws the shader's stages one by one, as RB_StageIteratorGeneric does
   if (!look.portal && !look.autosprite && !look.env && !look.tcGen) {
     const shown = new Set([main.map, look.add?.image].filter(Boolean));
-    const lossy = !!look.add || over || sh.stages.some((s) => (s.map && !s.lightmap && !shown.has(s.map)) || s.rgbGen?.[0] === 'wave');
+    const lossy = !!look.add || over || sh.stages.some((s) => (s.map && !s.lightmap && !shown.has(s.map)) || s.rgbGen?.[0] === 'wave' || s.alphaGen?.[0] === 'lightingspecular');
     if (lossy) {
       look.stages = shaderStages(sh);
       const first = look.stages[0];
@@ -302,6 +302,7 @@ export function shaderStages(sh) {
     if (ag[0] === 'const' && Number.isFinite(Number(ag[1]))) alpha = { kind: 'const', value: Number(ag[1]) };
     else if (ag[0] === 'wave' && ag[1] in WAVE_FUNCS) alpha = { kind: 'wave', func: WAVE_FUNCS[ag[1]], base: Number(ag[2]) || 0, amp: Number(ag[3]) || 0, phase: Number(ag[4]) || 0, freq: Number(ag[5]) || 0 };
     else if (ag[0] === 'portal') alpha = { kind: 'portal', range: Number(ag[1]) || 256 };
+    else if (ag[0] === 'lightingspecular') alpha = { kind: 'specular' };
     out.push({
       image: s.lightmap ? null : s.map, lightmap: s.lightmap, anim: s.anim, animFps: s.animFps,
       src: s.src, dst: s.dst, alphaFunc: s.alphaFunc, depthWrite: s.depthWrite,
@@ -344,6 +345,25 @@ export function stageColor(rgb, time) {
   if (rgb.kind === 'const') return rgb.color;
   const v = stageBrightness(rgb, time);
   return [v, v, v];
+}
+
+/** RB_CalcSpecularAlpha's light: one fixed point for every surface (the source's "FIXME: track dynamics") */
+export const SPECULAR_LIGHT = [-960, 1980, 96];
+
+/**
+ * alphaGen lightingSpecular at a vertex (RB_CalcSpecularAlpha): the light's direction reflected in the
+ * normal, against the direction to the eye, to the fourth power, as alpha 0..1. The WebGL painter's world
+ * shader does the same per vertex (vSpec), in the model's own space as the source does.
+ */
+export function specularAlpha(normal, pos, eye) {
+  const L = [SPECULAR_LIGHT[0] - pos[0], SPECULAR_LIGHT[1] - pos[1], SPECULAR_LIGHT[2] - pos[2]];
+  const ll = Math.hypot(L[0], L[1], L[2]) || 1;
+  L[0] /= ll; L[1] /= ll; L[2] /= ll;
+  const d = normal[0] * L[0] + normal[1] * L[1] + normal[2] * L[2];
+  const r = [normal[0] * 2 * d - L[0], normal[1] * 2 * d - L[1], normal[2] * 2 * d - L[2]];
+  const v = [eye[0] - pos[0], eye[1] - pos[1], eye[2] - pos[2]];
+  const l = (r[0] * v[0] + r[1] * v[1] + r[2] * v[2]) / (Math.hypot(v[0], v[1], v[2]) || 1);
+  return l < 0 ? 0 : Math.min(1, l * l * l * l);
 }
 
 /** A stage's alpha source: alphaGen const and wave (RB_CalcWaveAlpha) as a number, portal as its range */

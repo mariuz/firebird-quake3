@@ -8,12 +8,12 @@
 import fs from 'node:fs';
 import { FrameState, firstPersonView, zoomedFov, fovY, mapTorsoToWeaponFrame, viewTorsoFrame, underwaterFov, sceneLights, gunFlashOrigin, litByDlights, MAX_DLIGHTS, drawRail, drawBolt, findPortals, portalView, mirrorView, portalFade, cameraRoll, perpendicular, floorBelow, floorUnderBox, drawShadows } from '../src/scene.js';
 import { Renderer, tagTransform, autospriteQuads, fogST, fogFactor, md3Lod, entityFog, clipFace, polyFog, fogFade } from '../src/renderer.js';
-import { parseDeform, waveValue, deformVertex, envTexCoords, parseShaderScript, surfaceLook, shellMesh, eyeInModel, stageBrightness, stageTcMatrix, stageColor, stageAlpha, shaderStages, fogAdjust, blendFogAdjust } from '../src/shader.js';
+import { parseDeform, waveValue, deformVertex, envTexCoords, parseShaderScript, surfaceLook, shellMesh, eyeInModel, stageBrightness, stageTcMatrix, stageColor, stageAlpha, shaderStages, fogAdjust, blendFogAdjust, specularAlpha, SPECULAR_LIGHT } from '../src/shader.js';
 import { Md3, parseAnimationCfg, parseSkin } from '../src/md3.js';
 import { postgameMedals } from '../src/hud.js';
 import { parseWeights, preprocess, weightOf } from '../src/itemweights.js';
 import { Pk3 } from '../src/pk3.js';
-import { isFan } from '../src/bsp.js';
+import { isFan, tessellate } from '../src/bsp.js';
 
 let failed = 0;
 const assert = (c, m) => { if (!c) { console.error(`FAIL: ${m}`); failed++; } else console.log(`ok   ${m}`); };
@@ -416,6 +416,33 @@ const markBsp = {
 assert(fogAdjust('GL_ONE', 'GL_ONE') === 1 && fogAdjust('gl_zero', 'gl_one_minus_src_color') === 1 && fogAdjust('GL_SRC_ALPHA', 'GL_ONE_MINUS_SRC_ALPHA') === 2
   && fogAdjust('GL_ONE', 'GL_ONE_MINUS_SRC_ALPHA') === 3 && fogAdjust('GL_DST_COLOR', 'GL_ZERO') === 0 && blendFogAdjust('add') === 1 && blendFogAdjust('blend') === 2 && blendFogAdjust('filter') === 0,
   'in a fog an additive surface fades its colour, an alpha blend its alpha, a premultiplied one both, a filter nothing (adjustColorsForFog)');
+
+// alphaGen lightingSpecular (RB_CalcSpecularAlpha): the shine of q3dm7's iron walls, q3dm17's steed1gf
+{
+  const sh = parseShaderScript(`textures/x/iron { { map $lightmap rgbGen identity } { map textures/x/iron.tga blendFunc GL_DST_COLOR GL_SRC_ALPHA rgbGen identity alphaGen lightingSpecular } }`);
+  const look = surfaceLook(sh, 'textures/x/iron');
+  assert(look.stages?.length === 2 && look.stages[1].alpha?.kind === 'specular' && look.stagesOpaque,
+    'a shader with alphaGen lightingSpecular is drawn stage by stage, its shine stage marked');
+  // a wall facing the light, seen from where the light's ray bounces: full shine; seen from the light's side of the mirror angle, none
+  const pos = [0, 0, 0], toLight = SPECULAR_LIGHT.map((v) => v / Math.hypot(...SPECULAR_LIGHT));
+  const n = toLight;   // the light straight along the normal reflects back along it
+  assert(Math.abs(specularAlpha(n, pos, SPECULAR_LIGHT.map((v) => v * 0.5)) - 1) < 1e-9 && specularAlpha(n, pos, SPECULAR_LIGHT.map((v) => -v)) === 0,
+    'the light bounced straight back at the eye shines fully; an eye behind the wall sees none');
+  const side = [toLight[1], -toLight[0], 0].map((v) => v / Math.hypot(toLight[0], toLight[1]));
+  const e45 = [n[0] + side[0], n[1] + side[1], n[2] + side[2]].map((v) => v * 100);
+  assert(Math.abs(specularAlpha(n, pos, e45) - Math.SQRT1_2 ** 4) < 1e-9, '45 degrees off the bounce keeps cos^4: a quarter');
+}
+
+// the patches' vertex normals: the control points' blended as the points are (deforms and the shine use them)
+{
+  const P = [], N = [];
+  for (let j = 0; j < 3; j++) for (let i = 0; i < 3; i++) { P.push(i * 32, j * 32, i === 1 && j === 1 ? 16 : 0); N.push(0, 0, 1); }
+  const bsp = { vertices: Float32Array.from(P), normals: Float32Array.from(N), texcoords: new Float32Array(18), lmcoords: new Float32Array(18), colors: new Float32Array(36) };
+  const g = tessellate(bsp, { size: [3, 3], firstVert: 0 }, 4);
+  let ok = g.norms.length === g.nverts * 3;
+  for (let k = 0; k < g.nverts; k++) ok &&= Math.abs(g.norms[k * 3 + 2] - 1) < 1e-6;
+  assert(ok, 'a patch whose control normals point up tessellates into vertices whose normals point up');
+}
 
 // marks and sprites in a fog (RE_AddPolyToScene's fog, R_SpriteFogNum) fade by their blend too
 {

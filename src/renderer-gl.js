@@ -29,10 +29,12 @@ uniform int uDefN;        // deformVertexes: how many (up to 2)
 uniform vec4 uDefA[2];    // kind (1 wave, 2 move), spread, func, base
 uniform vec4 uDefB[2];    // amp, phase, freq
 uniform vec3 uDefMove[2];
+uniform vec3 uEye;
 out vec2 vSt;
 out vec2 vLm;
 out vec3 vColor;
 out vec3 vWorld;
+out float vSpec;          // alphaGen lightingSpecular (RB_CalcSpecularAlpha), per vertex
 // EvalWaveForm: sin, triangle, square, sawtooth, inverse sawtooth over one period per unit
 float wave(float func, float base, float amp, float x) {
   x = fract(x);
@@ -52,6 +54,13 @@ void main() {
   vWorld = w.xyz;
   gl_Position = uProj * uView * w;
   vSt = aSt; vLm = aLm; vColor = aColor;
+  // the fixed light reflected in the normal, against the eye, to the fourth power; in the model's own space
+  vec3 eyeL = (inverse(uModel) * vec4(uEye, 1.0)).xyz;
+  vec3 L = normalize(vec3(-960.0, 1980.0, 96.0) - p);
+  vec3 r = aNormal * 2.0 * dot(aNormal, L) - L;
+  vec3 toEye = eyeL - p;
+  float l = dot(r, toEye) * inversesqrt(max(dot(toEye, toEye), 1e-6));
+  vSpec = l < 0.0 ? 0.0 : min(1.0, l * l * l * l);
 }`;
 
 const PORTAL_VIEW_LOOK = { name: '*portal', blend: 'opaque' };
@@ -62,6 +71,7 @@ in vec2 vSt;
 in vec2 vLm;
 in vec3 vColor;
 in vec3 vWorld;
+in float vSpec;
 uniform sampler2D uTex;
 uniform sampler2D uLightmap;
 uniform int uMode;        // 0 texture × lightmap, 1 texture × flat, 2 sky clouds, 3 the view through a portal,
@@ -73,7 +83,8 @@ uniform float uRotate;    // tcMod rotate, degrees a second
 uniform vec3 uTcM0;       // a stage's tcMods as one affine map: s' = dot((s, t, 1), uTcM0), t' = dot(.., uTcM1)
 uniform vec3 uTcM1;
 uniform int uFogAdjust;   // a blended surface in a fog: adjustColorsForFog, 1 its colour, 2 its alpha, 3 both times 1 - the fog
-uniform int uAlphaGen;    // a stage's alphaGen: 0 the picture's alpha, 1 times uAlphaVal, 2 portal (the distance over uAlphaVal)
+uniform int uAlphaGen;    // a stage's alphaGen: 0 the picture's alpha, 1 times uAlphaVal, 2 portal (the distance over uAlphaVal),
+                          // 3 lightingSpecular (vSpec)
 uniform float uAlphaVal;
 uniform float uLightScale;
 uniform sampler2D uPortal;
@@ -166,6 +177,7 @@ void main() {
     vec4 c = texture(uTex, tc);
     if (uAlphaGen == 1) c.a *= uAlphaVal;
     else if (uAlphaGen == 2) c.a *= clamp(length(vWorld - uEye) / uAlphaVal, 0.0, 1.0);
+    else if (uAlphaGen == 3) c.a = vSpec;
     if ((uAlphaTest == 1 && c.a < 0.5) || (uAlphaTest == 2 && c.a <= 0.0) || (uAlphaTest == 3 && c.a >= 0.5)) discard;
     vec3 rgb = c.rgb * uRgb;
     if (uVColor == 1) rgb *= min(vColor * uLightScale / 255.0, vec3(1.0));
@@ -800,7 +812,7 @@ export class GLRenderer {
       const m = stageTcMatrix(s, this.time);
       gl.uniform3f(u.uTcM0, m[0], m[1], m[2]); gl.uniform3f(u.uTcM1, m[3], m[4], m[5]);
       const av = stageAlpha(s.alpha, this.time);
-      gl.uniform1i(u.uAlphaGen, s.alpha?.kind === 'portal' ? 2 : av === null ? 0 : 1);
+      gl.uniform1i(u.uAlphaGen, s.alpha?.kind === 'portal' ? 2 : s.alpha?.kind === 'specular' ? 3 : av === null ? 0 : 1);
       gl.uniform1f(u.uAlphaVal, s.alpha?.kind === 'portal' ? s.alpha.range : av ?? 1);
       gl.uniform1f(u.uTurb, s.turb ? 1 : 0);
       gl.uniform1i(u.uFogAdjust, sfog && !(s.src === 'GL_ONE' && s.dst === 'GL_ZERO') ? fogAdjust(s.src, s.dst) : 0);

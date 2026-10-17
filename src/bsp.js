@@ -218,7 +218,7 @@ export class Bsp {
         const g = tessellate(this, f, RENDER_LEVEL);
         f.verts = g.verts; f.tris = g.tris; f.nverts = g.nverts; f.twoSided = true;
         f.plane = null;
-        f.norms = new Float32Array(g.nverts * 3);   // (not interpolated: no deform or chrome on the demo's patches)
+        f.norms = g.norms;   // the control points' normals, blended as the points are
       } else if (f.type === 1 || f.type === 3) {
         const n = f.numVerts;
         const verts = new Float32Array(n * 10);
@@ -444,13 +444,15 @@ export function tessellate(bsp, f, level) {
   };
   const pw = (w - 1) >> 1, ph = (h - 1) >> 1;      // patches across and down
   const gw = pw * level + 1, gh = ph * level + 1;  // grid vertices
-  const verts = new Float32Array(gw * gh * 10);
-  const tmp = new Float64Array(10);
+  const verts = new Float32Array(gw * gh * 10), norms = new Float32Array(gw * gh * 3);
+  const tmp = new Float64Array(10), tn = new Float64Array(3);
+  const N = bsp.normals;
+  const cn = (i, j) => { const vi = f.firstVert + j * w + i; return N ? [N[vi * 3], N[vi * 3 + 1], N[vi * 3 + 2]] : [0, 0, 0]; };
   for (let pj = 0; pj < ph; pj++) {
     for (let pi = 0; pi < pw; pi++) {
       // the 3×3 control points of this patch
-      const P = [];
-      for (let j = 0; j < 3; j++) for (let i = 0; i < 3; i++) P.push(cp(pi * 2 + i, pj * 2 + j));
+      const P = [], PN = [];
+      for (let j = 0; j < 3; j++) for (let i = 0; i < 3; i++) { P.push(cp(pi * 2 + i, pj * 2 + j)); PN.push(cn(pi * 2 + i, pj * 2 + j)); }
       for (let v = 0; v <= level; v++) {
         if (pj > 0 && v === 0) continue;   // shared with the patch above
         const tv = v / level;
@@ -459,14 +461,17 @@ export function tessellate(bsp, f, level) {
           if (pi > 0 && u === 0) continue;
           const tu = u / level;
           const bu = [(1 - tu) * (1 - tu), 2 * tu * (1 - tu), tu * tu];
-          tmp.fill(0);
+          tmp.fill(0); tn.fill(0);
           for (let j = 0; j < 3; j++) for (let i = 0; i < 3; i++) {
             const wgt = bu[i] * bv[j];
-            const p = P[j * 3 + i];
+            const p = P[j * 3 + i], q = PN[j * 3 + i];
             for (let k = 0; k < 10; k++) tmp[k] += p[k] * wgt;
+            tn[0] += q[0] * wgt; tn[1] += q[1] * wgt; tn[2] += q[2] * wgt;
           }
           const gi = (pj * level + v) * gw + pi * level + u;
           verts.set(tmp, gi * 10);
+          const nl = Math.hypot(tn[0], tn[1], tn[2]) || 1;
+          norms[gi * 3] = tn[0] / nl; norms[gi * 3 + 1] = tn[1] / nl; norms[gi * 3 + 2] = tn[2] / nl;
         }
       }
     }
@@ -478,7 +483,7 @@ export function tessellate(bsp, f, level) {
       tris.push(a, c, b, b, c, d);
     }
   }
-  return { verts, tris: Uint16Array.from(tris), nverts: gw * gh, gw, gh };
+  return { verts, norms, tris: Uint16Array.from(tris), nverts: gw * gh, gw, gh };
 }
 
 /** The entity lump: [{ classname, origin: 'x y z', ... }, ...] with lower-cased keys. */
