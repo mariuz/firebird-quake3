@@ -10,7 +10,7 @@
 
 import { Renderer, yawAxis, anglesAxis, tagTransform, animFrame, autospriteQuads, fogDefs, md3Lod, entityFog } from './renderer.js';
 import { loadImage, powerOfTwo } from './image.js';
-import { shellMesh, eyeInModel, stageTcMatrix, stageColor, stageAlpha } from './shader.js';
+import { shellMesh, eyeInModel, stageTcMatrix, stageColor, stageAlpha, fogAdjust, blendFogAdjust } from './shader.js';
 
 const LIGHTMAP_SIZE = 128;
 
@@ -72,6 +72,7 @@ uniform int uStageTc;     // a stage's coordinates: 0 the texture's, 1 tcGen env
 uniform float uRotate;    // tcMod rotate, degrees a second
 uniform vec3 uTcM0;       // a stage's tcMods as one affine map: s' = dot((s, t, 1), uTcM0), t' = dot(.., uTcM1)
 uniform vec3 uTcM1;
+uniform int uFogAdjust;   // a blended surface in a fog: adjustColorsForFog, 1 its colour, 2 its alpha, 3 both times 1 - the fog
 uniform int uAlphaGen;    // a stage's alphaGen: 0 the picture's alpha, 1 times uAlphaVal, 2 portal (the distance over uAlphaVal)
 uniform float uAlphaVal;
 uniform float uLightScale;
@@ -168,6 +169,7 @@ void main() {
     if ((uAlphaTest == 1 && c.a < 0.5) || (uAlphaTest == 2 && c.a <= 0.0) || (uAlphaTest == 3 && c.a >= 0.5)) discard;
     vec3 rgb = c.rgb * uRgb;
     if (uVColor == 1) rgb *= min(vColor * uLightScale / 255.0, vec3(1.0));
+    if (uFogAdjust > 0) { float k = 1.0 - fogAmount(); if (uFogAdjust != 2) rgb *= k; if (uFogAdjust >= 2) c.a *= k; }
     fragColor = vec4(min(rgb, 1.0), c.a);
     return;
   }
@@ -200,6 +202,7 @@ void main() {
   vec3 lit = uMode == 0 ? c.rgb * (texture(uLightmap, vLm).rgb + shine) : c.rgb * uFlat;
   if (uDlCount > 0) lit *= 1.0 + dlights();
   if (uFogOn == 1) lit = mix(lit, uFogColor, fogAmount());
+  if (uFogAdjust > 0) { float k = 1.0 - fogAmount(); if (uFogAdjust != 2) lit *= k; if (uFogAdjust >= 2) c.a *= k; }
   fragColor = vec4(min(lit, 1.0), c.a);
 }`;
 
@@ -234,7 +237,8 @@ in vec3 vWorld;
 uniform sampler2D uTex;
 uniform vec3 uTint;
 uniform int uAlphaTest;
-uniform int uFogOn;       // a model in a fog volume (R_ComputeFogNum): RB_FogPass as on the world
+uniform int uFogOn;       // a model in a fog volume (R_ComputeFogNum): 1 RB_FogPass as on the world (opaque), 2..4 a
+                          // translucent one faded (adjustColorsForFog: 2 its colour, 3 its alpha, 4 both)
 uniform vec3 uFogColor;
 uniform vec4 uFogPlane;
 uniform int uFogHasPlane;
@@ -257,7 +261,8 @@ void main() {
     }
     float f = 0.0;
     if (t > 1.0 / 32.0 + 1e-6 && s > 0.0) { if (t < 31.0 / 32.0) s *= (t - 1.0 / 32.0) / (30.0 / 32.0); f = sqrt(min(1.0, s)); }
-    rgb = mix(rgb, uFogColor, f);
+    if (uFogOn == 1) rgb = mix(rgb, uFogColor, f);
+    else { if (uFogOn != 3) rgb *= 1.0 - f; if (uFogOn >= 3) c.a *= 1.0 - f; }
   }
   fragColor = vec4(rgb, c.a);
 }`;
@@ -706,8 +711,11 @@ export class GLRenderer {
     gl.uniform1f(u.uTurb, look.turb ? 1 : 0);
     gl.uniform1i(u.uAlphaTest, look.alphaTest ? 1 : 0);
     gl.uniform1i(u.uDlCount, look.blend === 'opaque' ? (this.dlights?.length ?? 0) : 0);
-    const fog = g.fog >= 0 && look.blend === 'opaque' ? this.fogs[g.fog] : null;
-    gl.uniform1i(u.uFogOn, fog ? 1 : 0);
+    // in a fog an opaque look takes the fog over it (RB_FogPass), a blended one fades by its blend (adjustColorsForFog)
+    const fadeBy = look.blend === 'opaque' ? 0 : blendFogAdjust(look.blend);
+    const fog = g.fog >= 0 && (look.blend === 'opaque' || fadeBy) ? this.fogs[g.fog] : null;
+    gl.uniform1i(u.uFogOn, fog && look.blend === 'opaque' ? 1 : 0);
+    gl.uniform1i(u.uFogAdjust, fog ? fadeBy : 0);
     if (fog) {
       gl.uniform3f(u.uFogColor, fog.color[0], fog.color[1], fog.color[2]);
       gl.uniform1f(u.uFogOpaque, fog.opaque);
@@ -727,9 +735,11 @@ export class GLRenderer {
       gl.uniform1i(u.uDlCount, 0);
       gl.uniform1i(u.uEnvMode, 0);
       gl.uniform1i(u.uFogOn, 0);
+      gl.uniform1i(u.uFogAdjust, fog ? 1 : 0);   // the glow fades in the fog (GL_ONE GL_ONE)
       this.setBlend('add');
       gl.drawElements(gl.TRIANGLES, g.count, gl.UNSIGNED_INT, g.first * 4);
     }
+    gl.uniform1i(u.uFogAdjust, 0);
     gl.disable(gl.BLEND);
     gl.depthMask(true);
   }
@@ -747,6 +757,14 @@ export class GLRenderer {
     gl.uniform1i(u.uEnvMode, 0); gl.uniform1i(u.uFogOn, 0); gl.uniform1i(u.uDlCount, 0);
     gl.uniform1f(u.uLightScale, this.lightScale);
     gl.uniform1i(u.uMode, 4);
+    // in a fog the blended stages fade by their blend (adjustColorsForFog); the opaque ones take the fog pass after
+    const sfog = g.fog >= 0 ? this.fogs[g.fog] : null;
+    if (sfog) {
+      gl.uniform3f(u.uFogColor, sfog.color[0], sfog.color[1], sfog.color[2]);
+      gl.uniform1f(u.uFogOpaque, sfog.opaque);
+      gl.uniform1i(u.uFogHasPlane, sfog.plane ? 1 : 0);
+      if (sfog.plane) gl.uniform4f(u.uFogPlane, sfog.plane.nx, sfog.plane.ny, sfog.plane.nz, sfog.plane.dist);
+    }
     gl.activeTexture(gl.TEXTURE0);
     look.stages.forEach((s, i) => {
       let rgb = stageColor(s.rgb, this.time);
@@ -764,6 +782,7 @@ export class GLRenderer {
       gl.uniform1i(u.uAlphaGen, s.alpha?.kind === 'portal' ? 2 : av === null ? 0 : 1);
       gl.uniform1f(u.uAlphaVal, s.alpha?.kind === 'portal' ? s.alpha.range : av ?? 1);
       gl.uniform1f(u.uTurb, s.turb ? 1 : 0);
+      gl.uniform1i(u.uFogAdjust, sfog && !(s.src === 'GL_ONE' && s.dst === 'GL_ZERO') ? fogAdjust(s.src, s.dst) : 0);
       gl.uniform1i(u.uAlphaTest, s.alphaFunc === 'GE128' ? 1 : s.alphaFunc === 'GT0' ? 2 : s.alphaFunc === 'LT128' ? 3 : 0);
       if (s.src === 'GL_ONE' && s.dst === 'GL_ZERO') gl.disable(gl.BLEND);
       else { gl.enable(gl.BLEND); gl.blendFunc(this.factor(s.src), this.factor(s.dst)); }
@@ -771,6 +790,7 @@ export class GLRenderer {
       gl.drawElements(gl.TRIANGLES, g.count, gl.UNSIGNED_INT, g.first * 4);
     });
     gl.uniform1f(u.uRotate, 0);
+    gl.uniform1i(u.uFogAdjust, 0);
     if (look.stagesOpaque) {
       gl.depthMask(false);
       gl.enable(gl.BLEND);
@@ -894,8 +914,10 @@ export class GLRenderer {
     gl.uniform4f(u.uClip, cp[0], cp[1], cp[2], cp[3]);
     const blend = opts.blend ?? 'opaque';
     // in a fog volume (an opaque model, not the view weapon): fogged per pixel as the world is
-    const fog = blend === 'opaque' && !opts.near && !opts.shell ? entityFog(this.fogs, origin, mdl.frames[fr]?.radius ?? 0) : null;
-    gl.uniform1i(u.uFogOn, fog ? 1 : 0);
+    // a translucent one (a flash, a shell) is faded as adjustColorsForFog fades it, by its blend
+    const fadeBy = blend === 'opaque' ? -1 : blendFogAdjust(blend);
+    const fog = !opts.near && fadeBy !== 0 ? entityFog(this.fogs, origin, mdl.frames[fr]?.radius ?? 0) : null;
+    gl.uniform1i(u.uFogOn, fog ? (fadeBy < 0 ? 1 : fadeBy + 1) : 0);
     if (fog) {
       gl.uniform3f(u.uFogColor, fog.color[0], fog.color[1], fog.color[2]);
       gl.uniform1f(u.uFogOpaque, fog.opaque);

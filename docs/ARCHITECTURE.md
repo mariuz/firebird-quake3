@@ -828,7 +828,11 @@ first of an opaque shader writing the depth, each stage's colour its wave clampe
 affine map a frame (`stageTcMatrix`: scroll, scale, rotate and stretch about the middle, transform; turb
 per vertex after them), its alpha the picture's times `alphaGen` (const, wave clamped, or portal: the
 distance over its range, so q3dm7's gate fogs over as you back away), and after them the dynamic lights as a pass of their own
-(`GL_DST_COLOR GL_ONE`: the frame times one plus the light) and the fog (`RB_FogPass`). So the flames
+(`GL_DST_COLOR GL_ONE`: the frame times one plus the light) and the fog (`RB_FogPass`). In a fog volume a
+blended stage, a translucent surface, the glow added over a lit one and a translucent model (a flash, a
+powerup's shell) fade instead as `adjustColorsForFog` has them (`fogAdjust`, by the blend: an additive one
+its colour, an alpha blend its alpha, a premultiplied one both, a filter not at all), by the same fog
+amount the fog pass uses (`uFogAdjust`, the model shader's `uFogOn` 2 to 4). So the flames
 cross-fade their two animations on their saw waves, the jump pads' arrows and the lights pulse, and
 q3dm1's skull arches show their carving over the scrolling fire behind the holes. The software painter
 keeps the look, whose picture for such a shader is the one blended over the opaque layer.

@@ -354,6 +354,23 @@ export function stageAlpha(alpha, time) {
   return null;
 }
 
+/**
+ * adjustColorsForFog (FinishShader): how a blended stage fades in a fog volume, as only the blends whose
+ * contribution goes to nothing with the colour can: 1 the colour (GL_ONE GL_ONE, GL_ZERO
+ * GL_ONE_MINUS_SRC_COLOR), 2 the alpha (GL_SRC_ALPHA GL_ONE_MINUS_SRC_ALPHA), 3 both (GL_ONE
+ * GL_ONE_MINUS_SRC_ALPHA); 0 the others (a filter cannot be faded, an opaque one takes the fog pass)
+ */
+export function fogAdjust(src, dst) {
+  const s = (src ?? '').toUpperCase(), d = (dst ?? '').toUpperCase();
+  if ((s === 'GL_ONE' && d === 'GL_ONE') || (s === 'GL_ZERO' && d === 'GL_ONE_MINUS_SRC_COLOR')) return 1;
+  if (s === 'GL_SRC_ALPHA' && d === 'GL_ONE_MINUS_SRC_ALPHA') return 2;
+  if (s === 'GL_ONE' && d === 'GL_ONE_MINUS_SRC_ALPHA') return 3;
+  return 0;
+}
+/** The same for the painters' blend names (a look's, a model's) */
+export const BLEND_FACTORS = { add: ['GL_ONE', 'GL_ONE'], blend: ['GL_SRC_ALPHA', 'GL_ONE_MINUS_SRC_ALPHA'], subtract: ['GL_ZERO', 'GL_ONE_MINUS_SRC_COLOR'], filter: ['GL_DST_COLOR', 'GL_ZERO'] };
+export const blendFogAdjust = (mode) => (BLEND_FACTORS[mode] ? fogAdjust(...BLEND_FACTORS[mode]) : 0);
+
 /** A stage's colour at a time: 1, or its wave clamped to 0..1 (RB_CalcWaveColor) */
 export function stageBrightness(rgb, time) {
   if (rgb.kind !== 'wave') return 1;

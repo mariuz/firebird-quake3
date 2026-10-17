@@ -8,7 +8,7 @@
 import fs from 'node:fs';
 import { FrameState, firstPersonView, zoomedFov, fovY, mapTorsoToWeaponFrame, viewTorsoFrame, underwaterFov, sceneLights, litByDlights, MAX_DLIGHTS, drawRail, drawBolt, findPortals, portalView, mirrorView, portalFade, cameraRoll, perpendicular, floorBelow, drawShadows } from '../src/scene.js';
 import { Renderer, tagTransform, autospriteQuads, fogST, fogFactor, md3Lod, entityFog, clipFace } from '../src/renderer.js';
-import { parseDeform, waveValue, deformVertex, envTexCoords, parseShaderScript, surfaceLook, shellMesh, eyeInModel, stageBrightness, stageTcMatrix, stageColor, stageAlpha, shaderStages } from '../src/shader.js';
+import { parseDeform, waveValue, deformVertex, envTexCoords, parseShaderScript, surfaceLook, shellMesh, eyeInModel, stageBrightness, stageTcMatrix, stageColor, stageAlpha, shaderStages, fogAdjust, blendFogAdjust } from '../src/shader.js';
 import { Md3, parseAnimationCfg, parseSkin } from '../src/md3.js';
 import { postgameMedals } from '../src/hud.js';
 import { parseWeights, preprocess, weightOf } from '../src/itemweights.js';
@@ -399,6 +399,11 @@ const markBsp = {
   assert(Math.abs(stageAlpha(st[5].alpha, 0.25) - 1) < 1e-9 && st[6].alpha.kind === 'portal' && st[6].alpha.range === 128 && stageAlpha(st[6].alpha, 0) === null,
     'alphaGen wave clamped to 0..1 (RB_CalcWaveAlpha); alphaGen portal keeps its range for the painter');
 }
+
+// adjustColorsForFog: a blended surface in a fog fades by what its blend lets fade
+assert(fogAdjust('GL_ONE', 'GL_ONE') === 1 && fogAdjust('gl_zero', 'gl_one_minus_src_color') === 1 && fogAdjust('GL_SRC_ALPHA', 'GL_ONE_MINUS_SRC_ALPHA') === 2
+  && fogAdjust('GL_ONE', 'GL_ONE_MINUS_SRC_ALPHA') === 3 && fogAdjust('GL_DST_COLOR', 'GL_ZERO') === 0 && blendFogAdjust('add') === 1 && blendFogAdjust('blend') === 2 && blendFogAdjust('filter') === 0,
+  'in a fog an additive surface fades its colour, an alpha blend its alpha, a premultiplied one both, a filter nothing (adjustColorsForFog)');
 
 // the blob shadows (CG_PlayerShadow): the floor found within 128 units, the shadow darker the nearer it is
 {
