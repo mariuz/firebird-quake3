@@ -49,7 +49,7 @@ let lastFxId = 0;
 let frameNo = 0;
 let scores = [];
 const state = new FrameState();
-const settings = { map: 'q3dm1', detail: 'medium', sfx: 70, music: 40, musicMode: 'tracks', skill: 2, bots: 3, fov: 90, renderer: 'fast', brightness: 4, predict: true, fraglimit: 20, timelimit: 10, rotate: true, name: 'Player', model: 'sarge/default', gametype: 'ffa', team: 'auto' };
+const settings = { map: 'q3dm1', detail: 'medium', sfx: 70, music: 40, musicMode: 'tracks', skill: 2, bots: 3, fov: 90, renderer: 'fast', brightness: 4, predict: true, fraglimit: 20, timelimit: 10, rotate: true, name: 'Player', model: 'sarge/default', rail: 4, gametype: 'ffa', team: 'auto' };
 try { Object.assign(settings, JSON.parse(localStorage.getItem('firebird-quake3:settings') || '{}')); } catch { /* defaults */ }
 const saveSettings = () => { try { localStorage.setItem('firebird-quake3:settings', JSON.stringify(settings)); } catch { /* ignore */ } };
 const viewWidth = () => (settings.detail === 'high' ? 640 : settings.detail === 'low' ? 160 : 320);
@@ -242,6 +242,7 @@ async function startMap(name) {
   await setPlayerName();
   fillModelMenu();
   await setPlayerModel();
+  await setPlayerColor();
   renderer.setResources(res);
   renderer.particles = [];
   renderer.meshCache?.clear();
@@ -646,6 +647,15 @@ async function setPlayerModel() {
   const [m, s] = settings.model.split('/');
   if (db) await db.exec(`EXECUTE PROCEDURE set_player_model('${m.replace(/[^a-z0-9_]/gi, '')}', '${(s ?? 'default').replace(/[^a-z0-9_]/gi, '')}')`);
 }
+// the rail's colour (the "color1" userinfo), as the setup menu orders them (uitogamecode)
+const RAIL_COLORS = [[4, 'red'], [6, 'yellow'], [2, 'green'], [3, 'teal'], [1, 'blue'], [5, 'magenta'], [7, 'white']];
+$('prail').replaceChildren(...RAIL_COLORS.map(([v, n]) => new Option(n, String(v))));
+if (!RAIL_COLORS.some(([v]) => v === Number(settings.rail))) settings.rail = 4;
+$('prail').value = String(settings.rail);
+async function setPlayerColor() {
+  if (db) await db.exec(`EXECUTE PROCEDURE set_player_color(${Number(settings.rail) | 0})`);
+}
+$('prail').addEventListener('change', (e) => { settings.rail = Number(e.target.value); saveSettings(); setPlayerColor().catch((err) => console.error(err)); });
 $('pmodel').addEventListener('change', (e) => { settings.model = e.target.value; saveSettings(); setPlayerModel().catch((err) => console.error(err)); });
 $('pname').addEventListener('change', (e) => { settings.name = cleanName(e.target.value); e.target.value = settings.name; saveSettings(); setPlayerName().catch((err) => console.error(err)); });
 // the limits apply at once, as Quake III's fraglimit and timelimit cvars do

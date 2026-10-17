@@ -49,7 +49,7 @@ the order a player notices them on the demo maps:
 | **Flares** | `flare` shaders on lights (the BSP's type 4 surfaces) | off by default in Quake III 1.32 (`r_flares 0`), so not drawn here either |
 | **Entity shadows, the rest** | the stencil shadows (`cg_shadows 2`) and the projected ones (3); the blob's floor is the 30-unit box's, sampled at nine points of it | `scene.js` `drawShadows` |
 | **Curved surface LOD** | `r_lodCurveError` | the patches are tessellated once at level 4 |
-| **Rail and lightning, the rest** | each shooter's `color1` for the rail (one colour here); `cg_oldRail 0`'s particle spiral; the lightning's impact flash model and its beam bending with the shooter's aim between tics | `scene.js` `drawRail`, `drawBolt` |
+| **Rail and lightning, the rest** | `cg_oldRail 0`'s particle spiral (in `color2`); the rail's impact flash (`ringFlashModel`); the lightning's impact flash model and its beam bending with the shooter's aim between tics | `scene.js` `drawRail`, `drawBolt` |
 | **Texture quality** | anisotropic filtering, `r_picmip` | the WebGL painter filters trilinearly (Quake III's default `GL_LINEAR_MIPMAP_NEAREST` is coarser); the software one picks one mip per polygon |
 | **Cinematics** | RoQ videos on `videoMap` surfaces and the intro | none |
 | **2D** | the full menu and HUD art (`gfx/2d/*`) with the `bigchars` font | the status bar, numbers, icons and the console font are drawn; menus are not |
@@ -80,7 +80,7 @@ fuzzy logic from the botfiles. What that leaves out:
 | **Light styles** | not in the demo maps |
 | **File system** | the page stacks the demo's pak, the pk3s picked from disk and one hosted map pack (`PakSet`); the game searches every `pak*.pk3` in `baseq3` and a mod directory at once, and a picked pk3's models, sounds and bot files are not read again (its maps and shaders are) |
 | **Capsule traces** | players use a box; Quake III traces players as capsules against other players (`cm_trace.c` with `capsule`) |
-| **The menu, key binding** | the page's controls do this, the name and the model played among them (*Name*, *Model*: every player model of the pak with its own skins); no key binding |
+| **The menu, key binding** | the page's controls do this, the name, the model and the rail's colour played among them (*Name*, *Model*: every player model of the pak with its own skins, *Rail*: `color1`); no key binding |
 | **Sound** | OpenAL-style spatialisation exists; missing: underwater low-pass, doppler, the mover loop sounds (`sound/movers/*` are played at the start and end only), the ambient `target_speaker` global flag, the `s_musicvolume` crossfades |
 
 ## 7. Performance and scale

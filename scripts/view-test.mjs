@@ -6,7 +6,7 @@
 //   node scripts/view-test.mjs
 
 import fs from 'node:fs';
-import { FrameState, firstPersonView, zoomedFov, fovY, mapTorsoToWeaponFrame, viewTorsoFrame, underwaterFov, sceneLights, gunFlashOrigin, litByDlights, MAX_DLIGHTS, drawRail, drawBolt, findPortals, portalView, mirrorView, portalFade, cameraRoll, perpendicular, floorBelow, floorUnderBox, drawShadows } from '../src/scene.js';
+import { FrameState, firstPersonView, zoomedFov, fovY, mapTorsoToWeaponFrame, viewTorsoFrame, underwaterFov, sceneLights, gunFlashOrigin, litByDlights, MAX_DLIGHTS, drawRail, drawBolt, findPortals, portalView, mirrorView, portalFade, cameraRoll, perpendicular, floorBelow, floorUnderBox, drawShadows, colorFromString } from '../src/scene.js';
 import { Renderer, tagTransform, autospriteQuads, fogST, fogFactor, md3Lod, entityFog, clipFace, polyFog, fogFade } from '../src/renderer.js';
 import { parseDeform, waveValue, deformVertex, envTexCoords, parseShaderScript, surfaceLook, shellMesh, eyeInModel, stageBrightness, stageTcMatrix, stageColor, stageAlpha, shaderStages, fogAdjust, blendFogAdjust, specularAlpha, SPECULAR_LIGHT } from '../src/shader.js';
 import { Md3, parseAnimationCfg, parseSkin } from '../src/md3.js';
@@ -444,6 +444,10 @@ assert(fogAdjust('GL_ONE', 'GL_ONE') === 1 && fogAdjust('gl_zero', 'gl_one_minus
   assert(ok, 'a patch whose control normals point up tessellates into vertices whose normals point up');
 }
 
+// CG_ColorFromString: the rail's colour from color1, 1 blue, 2 green, 4 red; out of 1..7 white
+assert(colorFromString(4).join() === '1,0,0' && colorFromString('6').join() === '1,1,0' && colorFromString(3).join() === '0,1,1' && colorFromString(1).join() === '0,0,1'
+  && colorFromString(0).join() === '1,1,1' && colorFromString(8).join() === '1,1,1', 'color1 4 is red, 6 yellow, 3 teal, 1 blue; 0 or 8 white');
+
 // marks and sprites in a fog (RE_AddPolyToScene's fog, R_SpriteFogNum) fade by their blend too
 {
   const fog = { mins: [0, 0, 0], maxs: [100, 100, 100], opaque: 100, plane: null };
@@ -483,7 +487,7 @@ assert(fogAdjust('GL_ONE', 'GL_ONE') === 1 && fogAdjust('gl_zero', 'gl_one_minus
 {
   const st = new FrameState();
   const calls = [];
-  const r = { drawMark: (pts, stc, n, img, blend, color) => calls.push({ img, blend, k: color[0] }), spawnParticles() {} };
+  const r = { drawMark: (pts, stc, n, img, blend, color) => calls.push({ img, blend, k: color[0], color }), spawnParticles() {} };
   st.handleFx(r, [[0, 4, 0, 0, 40, 320, 0, 40, 0], [0, 12, 0, 50, 40, 200, 50, 40, 0]], 10);
   const [rail, bolt] = st.beams;
   assert(rail.kind === 'rail' && bolt.kind === 'bolt' && rail.a[2] === 32 && Math.abs(rail.until - 10.4) < 1e-6, 'a rail shot lasts 0.4 s, nudged 8 down; a lightning beam its tic');
@@ -492,7 +496,10 @@ assert(fogAdjust('GL_ONE', 'GL_ONE') === 1 && fogAdjust('gl_zero', 'gl_one_minus
   const discs = calls.filter((c) => c.img === 'gfx/misc/raildisc_mono2').length, cores = calls.filter((c) => c.img === 'gfx/misc/railcorethin_mono');
   assert(cores.length === 1 && discs === 320 / 32 - 1 && calls.every((c) => c.blend === 'add'), `a 320-unit rail: its core and a ring every 32 units but the last (${discs})`);
   calls.length = 0; drawRail(r, view, rail, 10.3);
-  assert(Math.abs(calls[0].k - 0.375 * 0.25) < 1e-6, `three quarters through, a quarter of its colour is left (${calls[0].k.toFixed(3)})`);
+  assert(Math.abs(calls[0].k - 0.75 * 0.25) < 1e-6, `three quarters through, a quarter of its colour (color1 times 0.75) is left (${calls[0].k.toFixed(3)})`);
+  st.handleFx(r, [[0, 4, 0, 0, 40, 320, 0, 40, 2]], 10);
+  calls.length = 0; drawRail(r, view, st.beams.at(-1), 10);
+  assert(calls.length > 1 && calls.every((c) => c.color.join() === '0,0.75,0,1'), `a rail of color1 2 is green at 0.75, core and rings (${calls[0]?.color})`);
   calls.length = 0; drawBolt(r, view, bolt, 10);
   assert(calls.length === 8 && calls.every((c) => c.img === 'gfx/misc/lightning3'), 'the lightning: four ribbons, each in two stages');
 }

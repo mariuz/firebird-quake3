@@ -533,6 +533,20 @@ if (pad) {
   assert(pm.M === 'major' && pm.S === 'daemia' && jump === 'sound/player/major/jump1.wav', `the player plays major/daemia at once, with its sounds (${pm.M}/${pm.S}, ${jump})`);
 }
 
+// the rail's colour (the "color1" userinfo): the trail and its mark carry the shooter's; the bots' are 4, red
+{
+  await db.exec('EXECUTE PROCEDURE set_player_color(2)');
+  const fx0 = (await db.query('SELECT COALESCE(MAX(id), 0) m FROM fx_events')).rows[0].M;
+  await db.exec('EXECUTE PROCEDURE fire_rail(player_ent(), (SELECT x FROM ents WHERE id = player_ent()), (SELECT y FROM ents WHERE id = player_ent()), (SELECT z FROM ents WHERE id = player_ent()), 0, 0, -1, 0)');
+  const rows = (await db.query(`SELECT kind, n FROM fx_events WHERE id > ${fx0} AND kind IN (4, 16) ORDER BY id`)).rows;
+  const botc = (await db.query('SELECT MIN(color1) a, MAX(color1) b FROM ents WHERE classname = \'bot\'')).rows[0];
+  assert(rows.find((r) => r.KIND === 4)?.N === 2 && rows.find((r) => r.KIND === 16)?.N === 66 && (botc.A ?? 4) === 4 && (botc.B ?? 4) === 4,
+    `a rail fired after set_player_color(2) carries green, its mark too; the bots' stay red (${JSON.stringify(rows)}, bots ${botc.A}..${botc.B})`);
+  await db.exec('EXECUTE PROCEDURE set_player_color(9)');
+  const c = (await db.query('SELECT color1 c FROM ents WHERE id = player_ent()')).rows[0].C;
+  assert(c === 7, `a colour out of 1..7 is white (CG_ColorFromString): ${c}`);
+}
+
 const snds = (await db.query('SELECT DISTINCT snd FROM sound_events')).rows.map((r) => r.SND);
 const missing = snds.filter((n) => !pak.has(n));
 assert(missing.length === 0, `all queued sounds exist in the pak (${missing.join(', ') || 'none missing'})`);

@@ -1441,6 +1441,16 @@ END^
 -- at the skill asked for; a team game puts it on PickTeam's team, a tournament queues it (tourney_check)
 -- ClientUserinfoChanged's model: the player's model and skin, at once (a team game keeps its red or blue
 -- skin, as the team's colours override the skin there)
+-- the "color1" userinfo: the rail's colour, 1 to 7 (blue 1, green 2, red 4, summed); anything else is white, 7, as
+-- CG_ColorFromString makes it
+CREATE OR ALTER PROCEDURE set_player_color (c SMALLINT)
+AS
+BEGIN
+  IF (c IS NULL OR c < 1 OR c > 7) THEN c = 7;
+  UPDATE player p SET p.color1 = :c WHERE p.id = 1;
+  UPDATE ents e SET e.color1 = :c WHERE e.id = player_ent();
+END^
+
 CREATE OR ALTER PROCEDURE set_player_model (m VARCHAR(16), s VARCHAR(16))
 AS
 BEGIN
@@ -2138,7 +2148,8 @@ BEGIN
   DELETE FROM bot_routes;
   -- the player
   EXECUTE PROCEDURE spawn_ent('player', 0, 0, 0) RETURNING_VALUES pe;
-  UPDATE ents e SET e.pmodel = (SELECT p.model FROM player p WHERE p.id = 1), e.pskin = (SELECT p.skin FROM player p WHERE p.id = 1), e.viewheight = 26 WHERE e.id = :pe;
+  UPDATE ents e SET e.pmodel = (SELECT p.model FROM player p WHERE p.id = 1), e.pskin = (SELECT p.skin FROM player p WHERE p.id = 1),
+    e.color1 = (SELECT p.color1 FROM player p WHERE p.id = 1), e.viewheight = 26 WHERE e.id = :pe;
   -- a team game: the team asked for, else PickTeam's, and its colours
   IF (COALESCE(gametype, 0) >= 3) THEN
     UPDATE ents e SET e.pteam = IIF(:team IN (1, 2), :team, pick_team()) WHERE e.id = :pe;

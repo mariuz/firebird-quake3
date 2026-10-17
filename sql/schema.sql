@@ -321,6 +321,7 @@ CREATE TABLE ents (
   losses       SMALLINT DEFAULT 0 NOT NULL,
   pmodel     VARCHAR(16),                   -- the player model (sarge, grunt …)
   pskin      VARCHAR(16),
+  color1     SMALLINT DEFAULT 4 NOT NULL,   -- the "color1" userinfo, the rail's colour: 1 blue, 2 green, 4 red, summed (4 by default, G_AddBot's too)
   legs_anim  INTEGER DEFAULT 22 NOT NULL,   -- LEGS_IDLE
   legs_time  DOUBLE PRECISION DEFAULT 0 NOT NULL,
   torso_anim INTEGER DEFAULT 11 NOT NULL,   -- TORSO_STAND
@@ -427,6 +428,7 @@ CREATE TABLE player (
   name            VARCHAR(32) DEFAULT 'Player' NOT NULL,  -- what the bots call you
   model           VARCHAR(16) DEFAULT 'sarge' NOT NULL,   -- the model and skin played (the "model" userinfo: sarge/krusade)
   skin            VARCHAR(16) DEFAULT 'default' NOT NULL,
+  color1          SMALLINT DEFAULT 4 NOT NULL,            -- the rail's colour played (the "color1" userinfo)
   spectator       SMALLINT DEFAULT 0 NOT NULL,            -- TEAM_SPECTATOR: out of the match, flying or following
   follow_id       INTEGER,                                -- SPECTATOR_FOLLOW: the bot whose eyes we see through
   spec_fire       SMALLINT DEFAULT 0 NOT NULL,            -- the attack button at the last tic (it cycles on the press)

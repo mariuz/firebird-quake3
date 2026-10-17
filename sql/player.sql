@@ -133,9 +133,11 @@ BEGIN
     END
     LEAVE;
   END
-  EXECUTE PROCEDURE fx(4, ox, oy, oz, hx, hy, hz, 0);
-  -- the slug's mark where it stopped in the world (CG_MissileHitWall for WP_RAILGUN: the energy mark)
-  IF (f < 1 AND BIN_AND(sf, 4) = 0) THEN EXECUTE PROCEDURE fx(16, hx, hy, hz, nx, ny, nz, 64);
+  -- the trail in the shooter's colour (CG_RailTrail: its clientinfo's color1)
+  EXECUTE PROCEDURE fx(4, ox, oy, oz, hx, hy, hz, COALESCE((SELECT e.color1 FROM ents e WHERE e.id = :shooter), 4));
+  -- the slug's mark where it stopped in the world (CG_MissileHitWall for WP_RAILGUN: the energy mark, in color1 too):
+  -- 64 + the colour
+  IF (f < 1 AND BIN_AND(sf, 4) = 0) THEN EXECUTE PROCEDURE fx(16, hx, hy, hz, nx, ny, nz, 64 + COALESCE((SELECT e.color1 FROM ents e WHERE e.id = :shooter), 4));
   -- one hit for the accuracy however many it went through
   IF (hits > 0) THEN UPDATE ents e SET e.acc_hits = e.acc_hits + 1 WHERE e.id = :shooter;
   -- two hits in a row, impressive (a miss starts the count again)

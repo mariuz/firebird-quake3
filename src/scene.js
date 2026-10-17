@@ -271,8 +271,15 @@ export function litByDlights(light, x, y, z, lights) {
 
 // ── the rail and the lightning (tr_surface.c: RB_SurfaceRailCore, RB_SurfaceRailRings, RB_SurfaceLightningBolt) ──
 // cg_railTrailTime 400; r_railCoreWidth 6, r_railWidth 16, r_railSegmentLength 32; the colour is the shooter's
-// color1 times 0.75 in Quake III (one colour for all here), fading to nothing (LE_FADE_RGB)
-const RAIL_TIME = 0.4, RAIL_CORE_WIDTH = 6, RAIL_WIDTH = 16, RAIL_SEGMENT = 32, RAIL_COLOR = [0.375, 0.56, 0.75];
+// the shooter's color1 times 0.75, fading to nothing (LE_FADE_RGB)
+const RAIL_TIME = 0.4, RAIL_CORE_WIDTH = 6, RAIL_WIDTH = 16, RAIL_SEGMENT = 32;
+
+/** CG_ColorFromString: a "color1" of 1 to 7 as [r, g, b], 1 blue, 2 green, 4 red summed; anything else white */
+export function colorFromString(v) {
+  const n = Math.trunc(Number(v));
+  if (!(n >= 1 && n <= 7)) return [1, 1, 1];
+  return [n & 4 ? 1 : 0, n & 2 ? 1 : 0, n & 1 ? 1 : 0];
+}
 // the EF bits of the powerups drawn as shells: 256 invisible, 512 quad, 1024 regeneration, 4096 battle suit
 const POWERUP_BITS = 256 | 512 | 1024 | 4096;
 const quadSt = (t0, t1) => Float32Array.of(t0, 0, t0, 1, t1, 1, t1, 0);
@@ -287,7 +294,7 @@ function beamRight(view, a, b) {
   return norm3(cross3(v1, v2));
 }
 export function drawRail(r, view, b, time) {
-  const k = Math.max(0, 1 - (time - b.t0) / RAIL_TIME), col = [RAIL_COLOR[0] * k, RAIL_COLOR[1] * k, RAIL_COLOR[2] * k, 1];
+  const c = b.color ?? colorFromString(4), k = 0.75 * Math.max(0, 1 - (time - b.t0) / RAIL_TIME), col = [c[0] * k, c[1] * k, c[2] * k, 1];
   const d = sub3(b.b, b.a), len = Math.hypot(d[0], d[1], d[2]);
   if (!(len > 0) || k <= 0) return;
   const dir = [d[0] / len, d[1] / len, d[2] / len];
@@ -647,11 +654,11 @@ export class FrameState {
         case 8: renderer.spawnParticles('explosion', x, y, z, 0); this.explosions.push({ x, y, z, t0: time, frames: RLBOOM, size: 120, dur: 0.8, blend: 'add' }); mark('gfx/damage/burn_med_mrk', 32); break;
         case 3: renderer.spawnParticles('blood', x, y, z, Math.min(n, 30), [0, 0, 0], 0xff1010c0); this.explosions.push({ x, y, z, t0: time, frames: BLOOD, size: 24, dur: 0.4, blend: 'blend' }); break;
         // CG_RailTrail (cg_oldRail 1): the core and the rings, nudged 8 down, fading for cg_railTrailTime
-        case 4: this.beams.push({ kind: 'rail', a: [x, y, z - 8], b: [x2, y2, z2 - 8], t0: time, until: time + RAIL_TIME }); break;
+        case 4: this.beams.push({ kind: 'rail', a: [x, y, z - 8], b: [x2, y2, z2 - 8], t0: time, until: time + RAIL_TIME, color: colorFromString(n) }); break;
         case 5: renderer.spawnParticles('teleport', x, y, z, 0); this.explosions.push({ x, y, z, t0: time, frames: ['gfx/misc/teleportEffect2'], size: 48, dur: 0.5, blend: 'add' }); break;
         case 6: this.explosions.push({ x, y, z, t0: time, frames: ['models/weaphits/plasmaboom'], size: 24, dur: 0.25, blend: 'add' }); mark('gfx/damage/plasma_mrk', 16, 'blend', [1, 1, 1], true); break;
         // a mark alone: the rail's (the energy mark in the rail's colour), a gib's blood (16 to 47 across)
-        case 16: if (n === 64) mark('gfx/damage/plasma_mrk', 24, 'blend', [0.5, 0.75, 1], true); else mark('gfx/damage/blood_stain', 16 + Math.random() * 32, 'blend', [1, 1, 1]); break;
+        case 16: if (n >= 64 && n < 72) mark('gfx/damage/plasma_mrk', 24, 'blend', colorFromString(n - 64), true); else mark('gfx/damage/blood_stain', 16 + Math.random() * 32, 'blend', [1, 1, 1]); break;
         case 12: this.beams.push({ kind: 'bolt', a: [x, y, z], b: [x2, y2, z2], t0: time, until: time + 0.07, owner: n }); break;
         case 13: renderer.spawnParticles('blood', x, y, z, 40, [0, 0, 1], 0xff1010c0); break;
         case 15: this.bubbleTrail([x, y, z], [x2, y2, z2], 32, time); break;

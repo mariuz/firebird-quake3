@@ -867,7 +867,11 @@ colour by the fog at its origin. The view weapon and the powerup shells are not 
 `cg_railTrailTime` (400 ms) fading to nothing, a core (`RB_SurfaceRailCore`: 6 either side of the line,
 turned to the eye, `railcorethin_mono` scrolling) and rings (`DoRailDiscs`: a disc every 32 units but
 the last, its corners 4 out at 45 + 90 i degrees around the line, `raildisc_mono2` turning 30 degrees a
-second), in one colour where Quake III takes the shooter's `color1`. A lightning beam (effect 12, a
+second), in the shooter's `color1` times 0.75 (`ents.color1`, the effect's `n`; `colorFromString` is
+`CG_ColorFromString`: 1 blue, 2 green, 4 red summed, anything out of 1 to 7 white). The bots have no
+colour in `bots.txt`, so `G_AddBot`'s default 4, red, as the client's own cvar; the player picks theirs on
+the page (*Rail*, `set_player_color`). The slug's energy mark takes the same colour (effect 16, `n` 64 plus
+it). A lightning beam (effect 12, a
 tic long) is `RB_SurfaceLightningBolt`: four ribbons 8 either side, the first facing the eye, each turned
 45 degrees about the line, each in `lightningBolt`'s two stages (scrolling at 5 and 7.2, the second
 mirrored, pulsing at 7.1 and 8.1 a second). `drawRail` and `drawBolt` in `src/scene.js`.
