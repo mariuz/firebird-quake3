@@ -555,33 +555,52 @@ END^
 
 -- the nearest player or bot the bot notices (BotFindEnemy): within its alertness range, inside its field
 -- of view unless very close, in sight, and not invisible unless it is shooting (its refire still running)
+-- (declared here, defined below with the retreat)
+CREATE OR ALTER FUNCTION bot_aggression (eid INTEGER, enemy INTEGER) RETURNS INTEGER AS BEGIN RETURN 100; END^
+
 CREATE OR ALTER FUNCTION bot_find_target (eid INTEGER) RETURNS INTEGER
 AS
 DECLARE c INTEGER; DECLARE d DOUBLE PRECISION; DECLARE best INTEGER; DECLARE bestd DOUBLE PRECISION = 1e9; DECLARE inv DOUBLE PRECISION; DECLARE paf DOUBLE PRECISION;
 DECLARE skill SMALLINT; DECLARE alert DOUBLE PRECISION; DECLARE fov DOUBLE PRECISION; DECLARE cosang DOUBLE PRECISION; DECLARE al DOUBLE PRECISION;
+DECLARE shooting SMALLINT; DECLARE facing DOUBLE PRECISION; DECLARE cur SMALLINT;
 BEGIN
   SELECT p.invis_finished, p.attack_finished FROM player p WHERE p.id = 1 INTO inv, paf;
+  -- an enemy now (curenemy >= 0): one alive, not lost
+  cur = IIF(EXISTS (SELECT 1 FROM ents e JOIN ents o ON o.id = e.enemy_id WHERE e.id = :eid AND o.health > 0 AND o.deadflag = 0 AND e.search_time >= now_()), 1, 0);
   SELECT COALESCE(b.skill, 2) FROM ents e LEFT JOIN bot_defs b ON b.name = e.bot WHERE e.id = :eid INTO skill;
   -- BotFindEnemy: no farther than 900 + 4000 × the character's alertness
   al = bot_cv(eid, 'alertness', NULL);
   alert = IIF(al IS NULL, bot_char(skill, 'alert'), 900 + 4000 * al); fov = bot_char(skill, 'fov');
   FOR SELECT o.id, vlen(o.x - e.x, o.y - e.y, o.z - e.z),
-             (COS(e.yaw * 0.0174532925e0) * (o.x - e.x) + SIN(e.yaw * 0.0174532925e0) * (o.y - e.y)) / MAXVALUE(1e-3, vlen(o.x - e.x, o.y - e.y, 0))
+             (COS(e.yaw * 0.0174532925e0) * (o.x - e.x) + SIN(e.yaw * 0.0174532925e0) * (o.y - e.y)) / MAXVALUE(1e-3, vlen(o.x - e.x, o.y - e.y, 0)),
+             -- (EntityIsShooting: its trigger held, the gun's refire running)
+             IIF(IIF(o.classname = 'player', :paf, o.attack_finished) > now_(), 1, 0),
+             -- the other's view toward the bot (the cosine of the angle off its facing)
+             (COS(o.yaw * 0.0174532925e0) * (e.x - o.x) + SIN(o.yaw * 0.0174532925e0) * (e.y - o.y)) / MAXVALUE(1e-3, vlen(o.x - e.x, o.y - e.y, 0))
         FROM ents o CROSS JOIN ents e
        WHERE e.id = :eid AND o.id <> :eid AND o.classname IN ('player', 'bot') AND o.health > 0 AND o.deadflag = 0 AND BIN_AND(o.flags, 64) = 0
          AND NOT (e.pteam > 0 AND o.pteam = e.pteam)
          -- (BotFindEnemy: "if the enemy is invisible and not shooting")
          AND NOT (IIF(o.classname = 'player', :inv, o.invis_finished) > now_() AND IIF(o.classname = 'player', :paf, o.attack_finished) <= now_())
          AND ABS(o.x - e.x) < :alert AND ABS(o.y - e.y) < :alert AND ABS(o.z - e.z) < :alert
-       ORDER BY 2 INTO c, d, cosang
+       ORDER BY 2 INTO c, d, cosang, shooting, facing
   DO
   BEGIN
     IF (d >= bestd OR d > alert) THEN LEAVE;
     -- behind it: BotFindEnemy's field of view, 90 degrees close, widening to 180 at 810 and past (with the
-    -- character files; without them the skill's)
-    IF (al IS NOT NULL AND cosang < COS((90 + MINVALUE(d * d, 656100) / 7290) * 0.00872664626e0)) THEN CONTINUE;
-    IF (al IS NULL AND d > 250 AND cosang < fov) THEN CONTINUE;
-    IF (visible(eid, c) = 1) THEN BEGIN best = c; bestd = d; END
+    -- character files; without them the skill's); all round for one shooting while the bot has no enemy
+    IF (NOT (cur = 0 AND shooting = 1)) THEN
+    BEGIN
+      IF (al IS NOT NULL AND cosang < COS((90 + MINVALUE(d * d, 656100) / 7290) * 0.00872664626e0)) THEN CONTINUE;
+      IF (al IS NULL AND d > 250 AND cosang < fov) THEN CONTINUE;
+    END
+    IF (visible(eid, c) = 1) THEN
+    BEGIN
+      -- "check if we can avoid this enemy": with no enemy yet, one past 100 units, not shooting, that has not
+      -- the bot in its 90 degrees, is let be by a bot that would rather retreat from it (BotWantsToRetreat)
+      IF (cur = 0 AND d > 100 AND shooting = 0 AND facing < 0.70710678e0 AND bot_aggression(eid, c) < 50) THEN CONTINUE;
+      best = c; bestd = d;
+    END
   END
   RETURN best;
 END^

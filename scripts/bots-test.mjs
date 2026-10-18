@@ -233,6 +233,36 @@ if (item) {
   assert([cv.RT, cv.AA, cv.AL].every((v) => v >= 0 && v <= 1) && cv.VM >= 1 && Math.abs(cv.YS - cv.VM / 10) < 1e-6 && side !== b2 && ahead === b2,
     `its character: reaction ${cv.RT}, aim ${cv.AA}, alertness ${cv.AL}, turning ${cv.VM}°/s (${cv.YS} a think); the other bot at its side unnoticed (${side}), ahead noticed`);
 
+  // BotFindEnemy's "check if we can avoid this enemy": the other 140 units ahead with its back turned, not
+  // shooting; a bot that would retreat from it (a machinegun, BotAggression 0) lets it be, one with a railgun
+  // (95) goes for it, and so does the weak one when the other faces it. And one shooting is noticed behind
+  {
+    const a = (spot.YAW * Math.PI) / 180;
+    await bset(b2, `x = ${spot.X + Math.cos(a) * 140}, y = ${spot.Y + Math.sin(a) * 140}, yaw = ${spot.YAW}, attack_finished = 0`);
+    await db.exec(`EXECUTE PROCEDURE link_ent(${b2})`);
+    await bset(b, `yaw = ${spot.YAW}, enemy_id = NULL, weapons = 3, weapon = 2, health = 100, armor = 0, quad_finished = 0`);
+    const find = async () => (await q(`SELECT bot_find_target(${b}) t FROM rdb$database`))[0].T;
+    if ((await q(`SELECT visible(${b}, ${b2}) v FROM rdb$database`))[0].V === 1) {
+      const weak = await find();
+      await bset(b, 'weapons = 67');
+      const armed = await find();
+      await bset(b, 'weapons = 3');
+      await bset(b2, `yaw = ${spot.YAW + 180}`);
+      const seen = await find();
+      await bset(b2, `yaw = ${spot.YAW}`);
+      await bset(b, `yaw = ${spot.YAW + 180}`);
+      const behind = await find();
+      await bset(b2, 'attack_finished = 1e9');
+      const shot = await find();
+      assert(weak !== b2 && armed === b2 && seen === b2 && behind !== b2 && shot === b2,
+        `a bot that would retreat lets a turned back be (${weak}), armed it goes for it (${armed}), and when it is seen (${seen}); behind unnoticed (${behind}) until it shoots (${shot})`);
+      await bset(b2, 'attack_finished = 0');
+      await bset(b, `yaw = ${spot.YAW}`);
+    } else console.log('(no sight 140 units ahead of the spawn: the avoidance check skipped)');
+    await bset(b2, `x = ${spot.X + Math.cos(a) * 100}, y = ${spot.Y + Math.sin(a) * 100}`);
+    await db.exec(`EXECUTE PROCEDURE link_ent(${b2})`);
+  }
+
   // accuracy (FireWeapon's accuracy_shots, LogAccuracyHit's accuracy_hits): the bot shoots the other, both
   // holding still; a bullet that hits, one that misses, a shotgun blast (one hit for the pattern), a gauntlet
   // swing at nothing (no shot), a rocket in the face (its splash not counted again)
