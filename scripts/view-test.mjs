@@ -6,7 +6,7 @@
 //   node scripts/view-test.mjs
 
 import fs from 'node:fs';
-import { FrameState, firstPersonView, zoomedFov, fovY, mapTorsoToWeaponFrame, viewTorsoFrame, underwaterFov, sceneLights, gunFlashOrigin, litByDlights, MAX_DLIGHTS, drawRail, drawBolt, findPortals, portalView, mirrorView, portalFade, cameraRoll, perpendicular, floorBelow, floorUnderBox, drawShadows, colorFromString, boltImpact } from '../src/scene.js';
+import { FrameState, firstPersonView, zoomedFov, fovY, mapTorsoToWeaponFrame, viewTorsoFrame, underwaterFov, sceneLights, gunFlashOrigin, litByDlights, MAX_DLIGHTS, drawRail, drawBolt, findPortals, portalView, mirrorView, portalFade, cameraRoll, perpendicular, floorBelow, floorUnderBox, drawShadows, colorFromString, boltImpact, ringStages, RING_TIME } from '../src/scene.js';
 import { Renderer, tagTransform, autospriteQuads, fogST, fogFactor, md3Lod, entityFog, clipFace, polyFog, fogFade } from '../src/renderer.js';
 import { parseDeform, waveValue, deformVertex, envTexCoords, parseShaderScript, surfaceLook, shellMesh, eyeInModel, stageBrightness, stageTcMatrix, stageColor, stageAlpha, shaderStages, fogAdjust, blendFogAdjust, specularAlpha, SPECULAR_LIGHT } from '../src/shader.js';
 import { Md3, parseAnimationCfg, parseSkin } from '../src/md3.js';
@@ -453,6 +453,21 @@ assert(colorFromString(4).join() === '1,0,0' && colorFromString('6').join() === 
   const hit = boltImpact({ a: [0, 0, 0], b: [300, 0, 0] }), miss = boltImpact({ a: [0, 0, 0], b: [0, 768, 0] });
   assert(hit?.join() === '284,0,0' && miss === null && boltImpact({ a: [5, 5, 5], b: [5, 5, 5] }) === null,
     'a beam stopped at 300 units flares 16 short of the wall (284); one at its full 768 hit nothing');
+}
+
+// the rail's impact flash (railExplosion): ring02_1..4 at five a second, each fading into the next
+{
+  const [a, b] = ringStages(0), [c, d] = ringStages(0.3), [e, f] = ringStages(RING_TIME - 0.01);
+  assert(a[0].endsWith('ring02_1.tga') && a[1] === 1 && b[0].endsWith('ring02_2.tga') && b[1] === 0
+    && c[0].endsWith('ring02_2.tga') && Math.abs(c[1] - 0.5) < 1e-9 && d[0].endsWith('ring02_3.tga') && Math.abs(d[1] - 0.5) < 1e-9
+    && e[0].endsWith('ring02_3.tga') && f[0].endsWith('ring02_4.tga') && f[1] > 0.9 && RING_TIME === 0.6,
+    'the flash starts on ring02_1, is half ring02_2 half ring02_3 at 0.3 s, and has nearly reached ring02_4 at 0.6 s');
+  const st = new FrameState();
+  st.handleFx({ spawnParticles() {} }, [[0, 16, 10, 0, 0, 1, 0, 0, 68]], 5);
+  const g = st.rings[0], ax = g?.axis ?? [];
+  const dot = (i, j) => ax[i * 3] * ax[j * 3] + ax[i * 3 + 1] * ax[j * 3 + 1] + ax[i * 3 + 2] * ax[j * 3 + 2];
+  assert(st.rings.length === 1 && ax.slice(0, 3).join() === '1,0,0' && Math.abs(dot(0, 1)) < 1e-9 && Math.abs(dot(1, 2)) < 1e-9 && Math.abs(dot(2, 2) - 1) < 1e-9 && g.end === 5.6,
+    'a rail mark comes with a ring along the wall normal, its axes square, for 0.6 s');
 }
 
 // marks and sprites in a fog (RE_AddPolyToScene's fog, R_SpriteFogNum) fade by their blend too

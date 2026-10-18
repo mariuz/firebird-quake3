@@ -177,7 +177,7 @@ void main() {
     vec4 c = texture(uTex, tc);
     if (uAlphaGen == 1) c.a *= uAlphaVal;
     else if (uAlphaGen == 2) c.a *= clamp(length(vWorld - uEye) / uAlphaVal, 0.0, 1.0);
-    else if (uAlphaGen == 3) c.a = vSpec;
+    else if (uAlphaGen == 3) c.a *= vSpec;   // the vertex alpha modulates the picture's (GL_MODULATE)
     if ((uAlphaTest == 1 && c.a < 0.5) || (uAlphaTest == 2 && c.a <= 0.0) || (uAlphaTest == 3 && c.a >= 0.5)) discard;
     vec3 rgb = c.rgb * uRgb;
     if (uVColor == 1) rgb *= min(vColor * uLightScale / 255.0, vec3(1.0));
@@ -249,6 +249,7 @@ in vec3 vWorld;
 uniform sampler2D uTex;
 uniform vec3 uTint;
 uniform int uAlphaTest;
+uniform float uAlphaMul;  // a stage's alphaGen (the rail's flash): the vertex alpha, modulating the picture's
 uniform int uFogOn;       // a model in a fog volume (R_ComputeFogNum): 1 RB_FogPass as on the world (opaque), 2..4 a
                           // translucent one faded (adjustColorsForFog: 2 its colour, 3 its alpha, 4 both)
 uniform vec3 uFogColor;
@@ -262,6 +263,7 @@ out vec4 fragColor;
 void main() {
   if (dot(vWorld, uClip.xyz) < uClip.w) discard;
   vec4 c = texture(uTex, vSt);
+  c.a *= uAlphaMul;
   if (uAlphaTest == 1 && c.a < 0.5) discard;
   vec3 rgb = c.rgb * vLight * uTint;
   if (uFogOn == 1) {
@@ -480,7 +482,9 @@ export class GLRenderer {
     if (file) { try { img = powerOfTwo(loadImage(this.pak.get(file), file)); } catch { img = null; } }
     if (!img) {
       const data = new Uint32Array(64 * 64);
-      for (let i = 0; i < 64 * 64; i++) data[i] = ((i >> 3) + (i >> 9)) & 1 ? 0xff606060 : 0xff303030;
+      // gfx/colors/black (railExplosion's last frame) is in the full pak, not the demo's: black, not the checkers
+      const black = /^gfx\/colors\/black/i.test(name);
+      for (let i = 0; i < 64 * 64; i++) data[i] = black ? 0xff000000 : ((i >> 3) + (i >> 9)) & 1 ? 0xff606060 : 0xff303030;
       img = { w: 64, h: 64, data, hasAlpha: false };
     }
     t = { tex: this.makeTexture(new Uint8Array(img.data.buffer, img.data.byteOffset, img.w * img.h * 4), img.w, img.h, true), w: img.w, h: img.h, hasAlpha: img.hasAlpha };
@@ -942,6 +946,7 @@ export class GLRenderer {
     }
     const tint = opts.tint ?? [1, 1, 1];
     gl.uniform3f(u.uTint, tint[0], tint[1], tint[2]);
+    gl.uniform1f(u.uAlphaMul, opts.alpha ?? 1);
     gl.uniform1i(u.uTex, 0);
     const cp = this.clipPlane ?? [0, 0, 0, 0];
     gl.uniform4f(u.uClip, cp[0], cp[1], cp[2], cp[3]);

@@ -236,7 +236,9 @@ export class Renderer {
     }
     if (!t) {
       const data = new Uint32Array(64 * 64);
-      for (let i = 0; i < 64 * 64; i++) data[i] = ((i >> 3) + (i >> 9)) & 1 ? 0xff606060 : 0xff303030;
+      // gfx/colors/black (railExplosion's last frame) is in the full pak, not the demo's: black, not the checkers
+      const black = /^gfx\/colors\/black/i.test(name);
+      for (let i = 0; i < 64 * 64; i++) data[i] = black ? 0xff000000 : ((i >> 3) + (i >> 9)) & 1 ? 0xff606060 : 0xff303030;
       t = { w: 64, h: 64, data, hasAlpha: false };
     }
     t.wm = t.w - 1; t.hm = t.h - 1;
@@ -929,6 +931,8 @@ export class Renderer {
       const k = fogFactor(s, t);
       if (k > 0) tint = [0, 1, 2].map((i) => ((tint?.[i] ?? 1) * (1 - k)) + fog.color[i] * k);
     }
+    // a stage's alphaGen (the rail's flash): the painter's blend takes it times the picture's alpha
+    if (opts.alpha != null) tint = [tint?.[0] ?? 1, tint?.[1] ?? 1, tint?.[2] ?? 1, opts.alpha];
     const n3 = this.anorm;
     const shell = opts.shell ?? null, eye = shell ? eyeInModel(view, origin, axis) : null;
     for (const surf of mdl.surfaces) {

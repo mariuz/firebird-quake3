@@ -325,6 +325,15 @@ export function drawRail(r, view, b, time) {
     r.drawMark(pts, st, 4, 'gfx/misc/raildisc_mono2', 'add', col);
   }
 }
+/** railExplosion's two stages at a time since the flash: animmap 5 over ring02_1..4 then black, the first stage
+ *  fading out (inversesawtooth) as the second, a picture ahead, fades in (sawtooth); [[image, alpha], [image, alpha]] */
+export const RING_TIME = 0.6;
+const RING_FRAMES = ['models/weaphits/ring02_1.tga', 'models/weaphits/ring02_2.tga', 'models/weaphits/ring02_3.tga', 'models/weaphits/ring02_4.tga', 'gfx/colors/black.tga'];
+export function ringStages(dt) {
+  const x = Math.max(0, dt) * 5, k = Math.floor(x), f = x - k;
+  return [[RING_FRAMES[Math.min(k, 4)], 1 - f], [RING_FRAMES[Math.min(k + 1, 4)], f]];
+}
+
 /** CG_LightningBolt's impact flare: when the beam stopped short of its 768 units (the trace's fraction under
  *  1) the crackle model 16 units back along it from where it stopped, else null */
 export const LIGHTNING_RANGE = 768;
@@ -444,6 +453,7 @@ export class FrameState {
     this.brushAngles = new Map();
     this.explosions = [];     // { x, y, z, t0, frames, size, dur, blend }
     this.beams = [];          // { kind: 'rail' | 'bolt', a, b, t0, until, owner }
+    this.rings = [];          // the rail's impact flashes: { at, axis, t0, end }
     this.messages = [];       // [{ id, time, text }]
     this.kick = { dmgSeen: null, at: -1e9, pitch: 0, roll: 0, bob: 0 };   // the first-person view's state
     this.bubbles = [];        // { p: [x, y, z], v: [vx, vy, vz], t0, dur } (CG_BubbleTrail's local entities)
@@ -612,6 +622,16 @@ export class FrameState {
 
   /** CG_MachineGunEjectBrass and CG_ShotgunEjectBrass: shells thrown out of the shooter's right side
    *  (one for the machinegun, two for the shotgun), tumbling, bouncing, gone after cg_brassTime */
+  /** The rail's impact flash (CG_MissileHitWall for WP_RAILGUN): ringFlashModel at the hit for 600 ms, its first
+   *  axis the wall's normal, turned about it at random (CG_MakeExplosion, RotateAroundDirection) */
+  ringFlash(at, normal, time) {
+    const l = Math.hypot(normal[0], normal[1], normal[2]) || 1;
+    const a0 = [normal[0] / l, normal[1] / l, normal[2] / l];
+    const a1 = rotateAround(a0, perpendicular(a0), Math.random() * 360);
+    const a2 = [a0[1] * a1[2] - a0[2] * a1[1], a0[2] * a1[0] - a0[0] * a1[2], a0[0] * a1[1] - a0[1] * a1[0]];
+    this.rings.push({ at, axis: [...a0, ...a1, ...a2], t0: time, end: time + RING_TIME });
+  }
+
   ejectBrass(x, y, z, yaw, weapon, time) {
     const a = (yaw * Math.PI) / 180, f = [Math.cos(a), Math.sin(a)], l = [-Math.sin(a), Math.cos(a)];
     const crand = () => Math.random() * 2 - 1;
@@ -667,7 +687,7 @@ export class FrameState {
         case 5: renderer.spawnParticles('teleport', x, y, z, 0); this.explosions.push({ x, y, z, t0: time, frames: ['gfx/misc/teleportEffect2'], size: 48, dur: 0.5, blend: 'add' }); break;
         case 6: this.explosions.push({ x, y, z, t0: time, frames: ['models/weaphits/plasmaboom'], size: 24, dur: 0.25, blend: 'add' }); mark('gfx/damage/plasma_mrk', 16, 'blend', [1, 1, 1], true); break;
         // a mark alone: the rail's (the energy mark in the rail's colour), a gib's blood (16 to 47 across)
-        case 16: if (n >= 64 && n < 72) mark('gfx/damage/plasma_mrk', 24, 'blend', colorFromString(n - 64), true); else mark('gfx/damage/blood_stain', 16 + Math.random() * 32, 'blend', [1, 1, 1]); break;
+        case 16: if (n >= 64 && n < 72) { mark('gfx/damage/plasma_mrk', 24, 'blend', colorFromString(n - 64), true); this.ringFlash([x, y, z], [x2, y2, z2], time); } else mark('gfx/damage/blood_stain', 16 + Math.random() * 32, 'blend', [1, 1, 1]); break;
         case 12: this.beams.push({ kind: 'bolt', a: [x, y, z], b: [x2, y2, z2], t0: time, until: time + 0.07, owner: n }); break;
         case 13: renderer.spawnParticles('blood', x, y, z, 40, [0, 0, 1], 0xff1010c0); break;
         case 15: this.bubbleTrail([x, y, z], [x2, y2, z2], 32, time); break;
@@ -919,6 +939,16 @@ export function drawScene(renderer, hud, res, bsp, last, frame, opts = {}) {
   }
   state.beams = state.beams.filter((b) => b.until > time && time >= b.t0 - 0.1);
   for (const b of state.beams) (b.kind === 'rail' ? drawRail : drawBolt)(r, view, b, time);
+  // the rail's impact flashes: ringFlashModel in railExplosion's two blended stages
+  const ring = res.byName.get('models/weaphits/ring02.md3');
+  state.rings = state.rings.filter((g) => time < g.end && time >= g.t0 - 0.1);
+  if (ring) {
+    for (const g of state.rings) {
+      for (const [img, alpha] of ringStages(time - g.t0)) {
+        if (alpha > 0.004) r.drawMd3(res.models.get(ring).mdl, 0, g.at, g.axis, () => img, null, { blend: 'blend', twoSided: true, alpha });
+      }
+    }
+  }
   // the lightning's impact flare (lightningExplosionModel), turned at random every frame, added
   const crackle = res.byName.get('models/weaphits/crackle.md3');
   if (crackle) {

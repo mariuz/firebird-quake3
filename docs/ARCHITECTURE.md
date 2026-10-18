@@ -830,7 +830,8 @@ per vertex after them), its alpha the picture's times `alphaGen` (const, wave cl
 distance over its range, so q3dm7's gate fogs over as you back away; or lightingSpecular, the shine of
 q3dm7's iron walls, q3dm17's `steed1gf` and q3tourney2's support border: `RB_CalcSpecularAlpha`'s one fixed
 light at (-960, 1980, 96) reflected in the vertex normal, against the eye, to the fourth power, per vertex in
-the model's own space, `vSpec`, `specularAlpha`; the patches' vertex normals are their control points'
+the model's own space, `vSpec`, `specularAlpha`; like every alphaGen it is the vertex alpha, which modulates the
+picture's own; the patches' vertex normals are their control points'
 blended as the points are), and after them the dynamic lights as a pass of their own
 (`GL_DST_COLOR GL_ONE`: the frame times one plus the light) and the fog (`RB_FogPass`). In a fog volume a
 blended stage, a translucent surface, the glow added over a lit one and a translucent model (a flash, a
@@ -871,7 +872,12 @@ second), in the shooter's `color1` times 0.75 (`ents.color1`, the effect's `n`; 
 `CG_ColorFromString`: 1 blue, 2 green, 4 red summed, anything out of 1 to 7 white). The bots have no
 colour in `bots.txt`, so `G_AddBot`'s default 4, red, as the client's own cvar; the player picks theirs on
 the page (*Rail*, `set_player_color`). The slug's energy mark takes the same colour (effect 16, `n` 64 plus
-it). A lightning beam (effect 12, a
+it). Where the slug stops on a wall `CG_MissileHitWall` also adds `ringFlashModel` (`ring02.md3`) for 600 ms,
+its first axis the wall's normal, turned about it at random, in `railExplosion`'s two blended stages: `animmap 5`
+over `ring02_1` to `_4` and black, the first fading out on an inverse sawtooth as the second, a picture ahead,
+fades in (`ringFlash`, `ringStages`; the painters' `drawMd3` take the stage's alpha as `opts.alpha`, modulating
+the picture's), and plays `sfx_plasmaexp` there. The demo pak lacks `gfx/colors/black.tga`; the painters
+draw it black. A lightning beam (effect 12, a
 tic long) is `RB_SurfaceLightningBolt`: four ribbons 8 either side, the first facing the eye, each turned
 45 degrees about the line, each in `lightningBolt`'s two stages (scrolling at 5 and 7.2, the second
 mirrored, pulsing at 7.1 and 8.1 a second). Where the beam stopped short of its 768 units (the trace's

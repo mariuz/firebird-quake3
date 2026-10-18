@@ -49,7 +49,7 @@ the order a player notices them on the demo maps:
 | **Flares** | `flare` shaders on lights (the BSP's type 4 surfaces) | off by default in Quake III 1.32 (`r_flares 0`), so not drawn here either |
 | **Entity shadows, the rest** | the stencil shadows (`cg_shadows 2`) and the projected ones (3); the blob's floor is the 30-unit box's, sampled at nine points of it | `scene.js` `drawShadows` |
 | **Curved surface LOD** | `r_lodCurveError` | the patches are tessellated once at level 4 |
-| **Rail and lightning, the rest** | `cg_oldRail 0`'s particle spiral (in `color2`); the rail's impact flash (`ringFlashModel`); the lightning beam bending with the shooter's aim between tics (its impact flare, `crackle.md3`, is drawn) | `scene.js` `drawRail`, `drawBolt` |
+| **Rail and lightning, the rest** | `cg_oldRail 0`'s particle spiral (in `color2`); the lightning beam bending with the shooter's aim between tics (its impact flare, `crackle.md3`, is drawn) | `scene.js` `drawRail`, `drawBolt` |
 | **Texture quality** | anisotropic filtering, `r_picmip` | the WebGL painter filters trilinearly (Quake III's default `GL_LINEAR_MIPMAP_NEAREST` is coarser); the software one picks one mip per polygon |
 | **Cinematics** | RoQ videos on `videoMap` surfaces and the intro | none |
 | **2D** | the full menu and HUD art (`gfx/2d/*`) with the `bigchars` font | the status bar, numbers, icons and the console font are drawn; menus are not |
