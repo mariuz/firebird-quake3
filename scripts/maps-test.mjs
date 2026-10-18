@@ -128,6 +128,17 @@ async function shooters(map) {
   assert(a.HEALTH <= 0 && a.FRAGS === b.FRAGS - 1 && /\bdied\.$/.test(msg?.MSG ?? ''), `${map}: a shooter's kill is the world's: "${msg?.MSG}", frags ${b.FRAGS} → ${a.FRAGS}`);
 }
 
+// a mover's "noise" (InitMover's loopSound): looped from the middle of its brush, its sound in the pak, and in the
+// frame's list of the looped sounds playing (oa_shouse's bobbing fires)
+async function moverLoops(map) {
+  const lp = await q("SELECT e.id, TRIM(e.loop_sound) s, e.minx, e.maxx FROM ents e WHERE e.loop_sound IS NOT NULL");
+  if (!lp.length) return;
+  const [fr] = await q("SELECT lst FROM frame_all(0, 0, 0, 1) WHERE kind = 7");
+  const on = new Set(String(fr?.LST ?? '').split(',').map(Number));
+  const ok = lp.filter((l) => pak.has(l.S) && on.has(l.ID) && l.MAXX > l.MINX).length;
+  assert(ok === lp.length, `${map}: ${ok} of ${lp.length} movers loop their noise (${[...new Set(lp.map((l) => l.S))].join(', ')})`);
+}
+
 for (const m of index) {
   const pk3 = new Pk3(fs.readFileSync(path.join(dir, m.file)).buffer);
   pk3.label = m.pack;
@@ -155,6 +166,7 @@ for (const m of index) {
     await mirrors(m.map, bsp);
     await areaPortals(m.map);
     await shooters(m.map);
+    await moverLoops(m.map);
   } catch (e) {
     assert(false, `${m.map}: ${e.message.split('\n')[0]}`);
   }

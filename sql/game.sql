@@ -1672,6 +1672,10 @@ BEGIN
            e.dmg = COALESCE(:dmg, 0), e.count_ = COALESCE(:cnt, 0), e.phase = COALESCE(:phase, 0), e.yaw = COALESCE(:ang, 0), e.spawn_x = :ox, e.spawn_y = :oy, e.spawn_z = :oz, e.noise1 = :noise
      WHERE e.id = :eid;
     IF (mdl IS NOT NULL AND mdl STARTING WITH '*') THEN EXECUTE PROCEDURE set_model(eid, mdl);
+    -- InitMover: a mover's "noise" is its looping sound for as long as it exists (s.loopSound), heard from the
+    -- middle of its brush model (CG_SetEntitySoundPosition)
+    IF (cls IN ('func_door', 'func_plat', 'func_button', 'func_train', 'func_bobbing', 'func_pendulum', 'func_rotating') AND noise IS NOT NULL AND TRIM(noise) <> '') THEN
+      UPDATE ents e SET e.loop_sound = IIF(POSITION('.', :noise) = 0, TRIM(:noise) || '.wav', TRIM(:noise)) WHERE e.id = :eid;
     SELECT e.minx, e.miny, e.minz, e.maxx, e.maxy, e.maxz FROM ents e WHERE e.id = :eid INTO mnx, mny, mnz, mxx, mxy, mxz;
     sx = mxx - mnx; sy = mxy - mny; sz = mxz - mnz;
 

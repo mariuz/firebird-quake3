@@ -250,7 +250,9 @@ async function startMap(name) {
   const g = (await db.query('SELECT sky, music FROM game')).rows[0];
   map.sky = g.SKY;
   renderer.setSky(g.SKY);
-  const speakers = (await db.query("SELECT id, x, y, z, noise1, speed, height, count_ FROM ents WHERE classname = 'target_speaker' AND BIN_AND(spawnflags, 3) <> 0 AND noise1 IS NOT NULL", [], arr)).rows;
+  // the looped target_speakers, and the movers' looping sounds (a mover's "noise"), at the middle of the brush
+  const speakers = (await db.query(`SELECT id, x, y, z, noise1, speed, height, count_ FROM ents WHERE classname = 'target_speaker' AND BIN_AND(spawnflags, 3) <> 0 AND noise1 IS NOT NULL
+    UNION ALL SELECT id, x + (minx + maxx) / 2, y + (miny + maxy) / 2, z + (minz + maxz) / 2, loop_sound, 1, 1, 1 FROM ents WHERE loop_sound IS NOT NULL`, [], arr)).rows;
   audio.setSpeakers(speakers);
   audio.playMusic(g.MUSIC);
   const { rows } = await db.query('SELECT MAX(id) m FROM sound_events');

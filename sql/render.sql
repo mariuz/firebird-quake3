@@ -392,7 +392,7 @@ BEGIN
   IF (want_speakers = 1) THEN
   BEGIN
     kind = 7; i1 = NULL; d1 = NULL; s = NULL;
-    SELECT LIST(e.id, ',') FROM ents e WHERE e.classname = 'target_speaker' AND e.count_ = 1 INTO lst;
+    SELECT LIST(e.id, ',') FROM ents e WHERE (e.classname = 'target_speaker' AND e.count_ = 1) OR e.loop_sound IS NOT NULL INTO lst;
     SUSPEND;
   END
 END^

@@ -301,6 +301,7 @@ CREATE TABLE ents (
   mv_time    DOUBLE PRECISION,              -- when it finishes
   linked_id  INTEGER,                       -- the master of a team of movers
   noise1     VARCHAR(64),                   -- start / open sound
+  loop_sound VARCHAR(64),                   -- a mover's "noise" (InitMover's s.loopSound), looped while it exists
   noise2     VARCHAR(64),                   -- middle (looping) sound
   noise3     VARCHAR(64),                   -- end / close sound
   -- players and bots
