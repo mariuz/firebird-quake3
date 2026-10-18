@@ -6,7 +6,7 @@
 //   node scripts/view-test.mjs
 
 import fs from 'node:fs';
-import { FrameState, firstPersonView, zoomedFov, fovY, mapTorsoToWeaponFrame, viewTorsoFrame, underwaterFov, sceneLights, gunFlashOrigin, litByDlights, MAX_DLIGHTS, drawRail, drawBolt, findPortals, portalView, mirrorView, portalFade, cameraRoll, perpendicular, floorBelow, floorUnderBox, drawShadows, colorFromString } from '../src/scene.js';
+import { FrameState, firstPersonView, zoomedFov, fovY, mapTorsoToWeaponFrame, viewTorsoFrame, underwaterFov, sceneLights, gunFlashOrigin, litByDlights, MAX_DLIGHTS, drawRail, drawBolt, findPortals, portalView, mirrorView, portalFade, cameraRoll, perpendicular, floorBelow, floorUnderBox, drawShadows, colorFromString, boltImpact } from '../src/scene.js';
 import { Renderer, tagTransform, autospriteQuads, fogST, fogFactor, md3Lod, entityFog, clipFace, polyFog, fogFade } from '../src/renderer.js';
 import { parseDeform, waveValue, deformVertex, envTexCoords, parseShaderScript, surfaceLook, shellMesh, eyeInModel, stageBrightness, stageTcMatrix, stageColor, stageAlpha, shaderStages, fogAdjust, blendFogAdjust, specularAlpha, SPECULAR_LIGHT } from '../src/shader.js';
 import { Md3, parseAnimationCfg, parseSkin } from '../src/md3.js';
@@ -447,6 +447,13 @@ assert(fogAdjust('GL_ONE', 'GL_ONE') === 1 && fogAdjust('gl_zero', 'gl_one_minus
 // CG_ColorFromString: the rail's colour from color1, 1 blue, 2 green, 4 red; out of 1..7 white
 assert(colorFromString(4).join() === '1,0,0' && colorFromString('6').join() === '1,1,0' && colorFromString(3).join() === '0,1,1' && colorFromString(1).join() === '0,0,1'
   && colorFromString(0).join() === '1,1,1' && colorFromString(8).join() === '1,1,1', 'color1 4 is red, 6 yellow, 3 teal, 1 blue; 0 or 8 white');
+
+// CG_LightningBolt's impact flare: only where the beam stopped short of its 768 units, 16 back along it
+{
+  const hit = boltImpact({ a: [0, 0, 0], b: [300, 0, 0] }), miss = boltImpact({ a: [0, 0, 0], b: [0, 768, 0] });
+  assert(hit?.join() === '284,0,0' && miss === null && boltImpact({ a: [5, 5, 5], b: [5, 5, 5] }) === null,
+    'a beam stopped at 300 units flares 16 short of the wall (284); one at its full 768 hit nothing');
+}
 
 // marks and sprites in a fog (RE_AddPolyToScene's fog, R_SpriteFogNum) fade by their blend too
 {

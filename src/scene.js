@@ -325,6 +325,15 @@ export function drawRail(r, view, b, time) {
     r.drawMark(pts, st, 4, 'gfx/misc/raildisc_mono2', 'add', col);
   }
 }
+/** CG_LightningBolt's impact flare: when the beam stopped short of its 768 units (the trace's fraction under
+ *  1) the crackle model 16 units back along it from where it stopped, else null */
+export const LIGHTNING_RANGE = 768;
+export function boltImpact(b) {
+  const d = sub3(b.b, b.a), len = Math.hypot(d[0], d[1], d[2]);
+  if (!(len > 0) || len >= LIGHTNING_RANGE - 0.5) return null;
+  return [b.b[0] - (d[0] / len) * 16, b.b[1] - (d[1] / len) * 16, b.b[2] - (d[2] / len) * 16];
+}
+
 /** RB_SurfaceLightningBolt: four ribbons 8 either side, the first facing the eye, each turned 45 degrees about
  *  the beam; lightningBolt's two stages (scrolling at 5 and 7.2, pulsing at 7.1 and 8.1 a second) */
 export function drawBolt(r, view, b, time) {
@@ -910,6 +919,14 @@ export function drawScene(renderer, hud, res, bsp, last, frame, opts = {}) {
   }
   state.beams = state.beams.filter((b) => b.until > time && time >= b.t0 - 0.1);
   for (const b of state.beams) (b.kind === 'rail' ? drawRail : drawBolt)(r, view, b, time);
+  // the lightning's impact flare (lightningExplosionModel), turned at random every frame, added
+  const crackle = res.byName.get('models/weaphits/crackle.md3');
+  if (crackle) {
+    for (const b of state.beams) {
+      const at = b.kind === 'bolt' ? boltImpact(b) : null;
+      if (at) r.drawMd3(res.models.get(crackle).mdl, 0, at, anglesAxis(Math.random() * 360, Math.random() * 360, Math.random() * 360), null, null, { blend: 'add', twoSided: true });
+    }
+  }
   r.runParticles(opts.dt ?? 0.05, time);
   r.drawParticles();
   r.drawAlphaPolys();
