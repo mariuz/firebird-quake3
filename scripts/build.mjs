@@ -18,9 +18,10 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const OUT = path.join(root, 'dist');
 const PKG = path.join(root, 'node_modules/firebird-wasm/dist');
 
-// wasm-loader.js has a Node-only require() of the Emscripten glue; browsers
+// wasm-loader.js has a Node-only require() of the Emscripten glue (the threaded build and, since 0.7, the
+// one without threads); browsers
 // take the globalThis path, so keep the glue out of the bundle.
-const EXTERNAL = ['*firebird-embedded.js'];
+const EXTERNAL = ['*firebird-embedded.js', '*firebird-embedded-st.js'];
 
 fs.rmSync(OUT, { recursive: true, force: true });
 fs.mkdirSync(OUT, { recursive: true });

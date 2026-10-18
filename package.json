@@ -28,7 +28,7 @@
   },
   "license": "MIT",
   "dependencies": {
-    "firebird-wasm": "^0.3.0",
+    "firebird-wasm": "^0.7.0",
     "jpeg-js": "^0.4.4"
   },
   "devDependencies": {
