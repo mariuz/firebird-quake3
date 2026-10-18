@@ -536,6 +536,27 @@ if (pad) {
   assert(pm.M === 'major' && pm.S === 'daemia' && jump === 'sound/player/major/jump1.wav', `the player plays major/daemia at once, with its sounds (${pm.M}/${pm.S}, ${jump})`);
 }
 
+// target_speaker's spawnflags (Use_Target_Speaker): 4 is heard everywhere at full volume (q3dm1's ominous sound),
+// 8 is played on the activator (q3dm17's void scream comes from whoever fell)
+{
+  const [sp] = (await db.query("SELECT FIRST 1 id, targetname, spawnflags FROM ents WHERE classname = 'target_speaker' AND BIN_AND(spawnflags, 3) = 0 AND targetname IS NOT NULL ORDER BY id")).rows;
+  const bot = (await db.query("SELECT FIRST 1 id FROM ents WHERE classname = 'bot' ORDER BY id")).rows[0]?.ID;
+  if (sp && bot) {
+    const tid = (await db.query("EXECUTE BLOCK RETURNS (id INTEGER) AS BEGIN EXECUTE PROCEDURE spawn_ent('test_trigger', 0, 0, 0) RETURNING_VALUES id; SUSPEND; END")).rows[0].ID;
+    await db.exec(`UPDATE ents SET target = '${sp.TARGETNAME}' WHERE id = ${tid}`);
+    const fire = async (sf) => {
+      await db.exec(`UPDATE ents SET spawnflags = ${sf} WHERE id = ${sp.ID}`);
+      await db.exec(`EXECUTE PROCEDURE use_targets(${tid}, ${bot})`);
+      return (await db.query('SELECT FIRST 1 ent_id, attn FROM sound_events ORDER BY id DESC')).rows[0];
+    };
+    const g = await fire(4), a = await fire(8), n = await fire(0);
+    await db.exec(`UPDATE ents SET spawnflags = ${sp.SPAWNFLAGS} WHERE id = ${sp.ID}`);
+    await db.exec(`DELETE FROM ents WHERE id = ${tid}`);
+    assert(g.ATTN === 0 && a.ENT_ID === bot && a.ATTN === 1 && n.ENT_ID === null && n.ATTN === 1,
+      `a global speaker is heard everywhere (attenuation ${g.ATTN}), an activator one from the activator (${a.ENT_ID} = ${bot}), a plain one from where it stands`);
+  } else console.log('(no triggered speaker here)');
+}
+
 // BotNearbyGoal: an item on the way to the long-term goal, under 1.5 s off, is a nearby goal; one that would
 // take the bot further from the long-term goal, or one too far, is not (BotChooseNBGItem)
 {

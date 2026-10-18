@@ -833,9 +833,13 @@ BEGIN
       SELECT e.noise1, e.x, e.y, e.z, e.speed, e.height, e.spawnflags FROM ents e WHERE e.id = :t INTO n, x, y, z, vol, attn, sf;
       -- a "*" sound is the activator's player model's (CG_CustomSound): q3dm17's void screams "*falling1.wav"
       IF (n STARTING WITH '*') THEN n = 'sound/player/' || COALESCE((SELECT a.pmodel FROM ents a WHERE a.id = :activator), 'sarge') || '/' || SUBSTRING(n FROM 2);
+      -- Use_Target_Speaker: a looped one toggles (the browser follows ents.count_); else spawnflag 8 plays on the
+      -- activator (EV_GENERAL_SOUND on it: q3dm17's void scream comes from whoever fell), 4 everywhere at full
+      -- volume (EV_GLOBAL_SOUND: q3dm1's ominous sound), the others at the speaker
       IF (BIN_AND(sf, 3) <> 0) THEN
-        UPDATE ents e SET e.count_ = 1 - e.count_ WHERE e.id = :t;      -- a looped speaker toggles: the browser follows ents.count_
-      ELSE IF (BIN_AND(sf, 8) <> 0 OR attn = 0) THEN EXECUTE PROCEDURE snd_local(n);   -- GLOBAL
+        UPDATE ents e SET e.count_ = 1 - e.count_ WHERE e.id = :t;
+      ELSE IF (BIN_AND(sf, 8) <> 0 AND activator IS NOT NULL) THEN EXECUTE PROCEDURE snd(activator, 0, n, 1, 1);
+      ELSE IF (BIN_AND(sf, 4) <> 0) THEN EXECUTE PROCEDURE snd_local(n);
       ELSE EXECUTE PROCEDURE snd_at(x, y, z, n, vol, attn);
     END
     ELSE IF (tcls = 'target_print') THEN
@@ -1837,8 +1841,10 @@ BEGIN
     END
     ELSE IF (cls = 'target_speaker') THEN
     BEGIN
-      -- noise1 holds the sound; speed = volume, height = attenuation; count_ = 1 while a looped speaker plays
-      UPDATE ents e SET e.solid = 0, e.model_id = NULL, e.speed = 1, e.height = IIF(BIN_AND(:sf, 8) <> 0, 0, 1),
+      -- noise1 holds the sound; speed = volume, height = attenuation (Quake III's speakers have neither key: full
+      -- volume, the normal fall-off; a global one is heard everywhere when used, see use_targets); count_ = 1 while a
+      -- looped speaker plays (spawnflags 1 looped-on, 2 looped-off, 4 global, 8 activator)
+      UPDATE ents e SET e.solid = 0, e.model_id = NULL, e.speed = 1, e.height = 1,
              e.count_ = IIF(BIN_AND(:sf, 1) <> 0, 1, 0), e.noise1 = IIF(POSITION('.', :noise) = 0, :noise || '.wav', :noise) WHERE e.id = :eid;
       IF (BIN_AND(sf, 3) = 0 AND COALESCE(wt, 0) > 0) THEN UPDATE ents e SET e.think = 'speaker_think', e.nextthink = :wt + RAND() * :wt WHERE e.id = :eid;
     END

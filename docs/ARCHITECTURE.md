@@ -433,7 +433,8 @@ auto-spawned `door_trigger` box (`Think_SpawnNewDoorTrigger`), `func_plat` with 
 `func_button`, `func_train` with its `path_corner`s, `func_bobbing`, `func_pendulum`,
 `func_rotating`, `func_static`, `func_timer`, `trigger_multiple`/`once`/`hurt`/`push`/`teleport`
 (a jump pad computes its launch velocity from its `target_position` the way `AimAtTarget` does and
-stores it in `p1x..p1z`), `target_speaker`, `target_print`, `target_give`, `target_kill`,
+stores it in `p1x..p1z`), `target_speaker` (`Use_Target_Speaker`: a looped one toggles, spawnflag 4 is heard
+everywhere at full volume, 8 is played on the activator, the others at the speaker), `target_print`, `target_give`, `target_kill`,
 `target_delay`, `target_relay`, `target_teleporter`, `target_remove_powerups`, `target_score`,
 `target_push` (`push_use`: the activator takes its velocity, its movedir × speed or `AimAtTarget`'s
 throw at its target, and the wind or the pad sounds at most every 1.5 s; OpenArena's jump pads aim at
