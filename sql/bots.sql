@@ -930,7 +930,7 @@ BEGIN
   EXECUTE PROCEDURE bot_chat_event(eid, 'death', attacker, mod_);   -- BotChat_Death
   UPDATE ents e SET e.solid = 0 WHERE e.id = :eid;
   EXECUTE PROCEDURE toss_client_items(eid);   -- the gun and the powerups fall (TossClientItems)
-  UPDATE ents e SET e.deadflag = 1, e.st = 'dead', e.solid = 0, e.movetype = 0, e.takedamage = 0, e.alpha = 1, e.enemy_id = NULL, e.goal_id = NULL, e.nbg_id = NULL,
+  UPDATE ents e SET e.deadflag = 1, e.st = 'dead', e.solid = 0, e.movetype = 0, e.takedamage = 0, e.alpha = 1, e.enemy_id = NULL, e.goal_id = NULL, e.nbg_id = NULL, e.viewheight = -16,
          e.respawn_time = :t + 2.5e0 + RAND() * 2, e.deaths = e.deaths + 1, e.vx = 0, e.vy = 0, e.vz = 0, e.quad_finished = 0,
          e.haste_finished = 0, e.invis_finished = 0, e.regen_finished = 0, e.enviro_finished = 0, e.nextthink = :t + 0.5e0 WHERE e.id = :eid;
   IF (hp < -40) THEN
@@ -954,7 +954,7 @@ BEGIN
   EXECUTE PROCEDURE body_release(eid);
   EXECUTE PROCEDURE select_spawn(eid) RETURNING_VALUES x, y, z, yaw;
   UPDATE ents e SET e.x = :x, e.y = :y, e.z = :z + 9, e.yaw = COALESCE(:yaw, 0), e.ideal_yaw = COALESCE(:yaw, 0), e.pitch = 0, e.vx = 0, e.vy = 0, e.vz = 0,
-         e.solid = 3, e.movetype = 4, e.takedamage = 2, e.alpha = 0, e.deadflag = 0, e.health = 125, e.armor = 0, e.weapons = 3, e.weapon = 2,
+         e.solid = 3, e.movetype = 4, e.takedamage = 2, e.alpha = 0, e.deadflag = 0, e.viewheight = 26, e.health = 125, e.armor = 0, e.weapons = 3, e.weapon = 2,
          e.flags = 32, e.st = 'stand', e.legs_anim = 22, e.legs_time = :t, e.torso_anim = 11, e.torso_time = :t, e.enemy_id = NULL, e.goal_id = NULL, e.nbg_id = NULL, e.nbg_check = NULL,
          e.attack_finished = :t + 1, e.teleport_time = :t + 0.3e0, e.lx = NULL, e.nextthink = :t + 0.1e0, e.think = 'bot_think', e.respawn_time = 0,
          e.quad_finished = 0, e.haste_finished = 0, e.invis_finished = 0, e.regen_finished = 0, e.enviro_finished = 0, e.health_tick = :t + 1,
@@ -2158,6 +2158,7 @@ RETURNS (
   gametype SMALLINT, red_score INTEGER, blue_score INTEGER, team SMALLINT, acc_shots INTEGER, acc_hits INTEGER)
 AS
 DECLARE i INTEGER = 0;
+DECLARE did INTEGER; DECLARE bx DOUBLE PRECISION; DECLARE by_ DOUBLE PRECISION; DECLARE bz DOUBLE PRECISION;
 BEGIN
   SELECT g.tic FROM game g WHERE g.id = 1 INTO tic;
   UPDATE player p SET p.mover_yaw = 0 WHERE p.id = 1 AND p.mover_yaw <> 0;
@@ -2169,6 +2170,14 @@ BEGIN
     EXECUTE PROCEDURE player_think(0.05e0, fwd, side, yaw_d / tics, pitch_d / tics, fire, jump, run, IIF(i = 0, imp, 0));
     EXECUTE PROCEDURE run_pushers(0.05e0);
     EXECUTE PROCEDURE run_physics(0.05e0);
+    -- Quake III's dead player is its own body until the respawn copies it into the queue: the eye goes where
+    -- the body goes, knocked by a blast, carried by a mover, sliding down a slope
+    FOR SELECT d.id, c.x, c.y, c.z FROM ents d JOIN ents c ON c.body_of = d.id AND c.classname = 'corpse'
+         WHERE d.deadflag = 1 AND d.classname IN ('player', 'bot') AND (d.x <> c.x OR d.y <> c.y OR d.z <> c.z) INTO did, bx, by_, bz DO
+    BEGIN
+      UPDATE ents e SET e.x = :bx, e.y = :by_, e.z = :bz, e.vx = 0, e.vy = 0, e.vz = 0 WHERE e.id = :did;
+      EXECUTE PROCEDURE link_ent(did);
+    END
     EXECUTE PROCEDURE check_exit_rules;
     i = i + 1;
   END

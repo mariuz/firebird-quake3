@@ -489,6 +489,25 @@ if (pad) {
   await db.exec(`DELETE FROM ents WHERE id IN (${rid}, ${iid})`);
 }
 
+// the dead player is its body until the respawn: the eye at DEAD_VIEWHEIGHT (-16), and where the body goes
+{
+  await db.exec("UPDATE ents SET flags = BIN_AND(flags, BIN_NOT(16)) WHERE id = player_ent()");
+  const hp = (await db.query('SELECT health h FROM ents WHERE id = player_ent()')).rows[0].H;
+  await db.exec("UPDATE ents SET armor = 0 WHERE id = player_ent()"); await db.exec("UPDATE player SET armor = 0 WHERE id = 1");
+  await db.exec(`EXECUTE PROCEDURE t_damage(player_ent(), NULL, NULL, ${hp + 20}, 0, 8, 0)`);   // dead, not gibbed (the world: not halved)
+  let d = await tic([1, 0, 0, 0, 0, 0, 0, 1, 0]);
+  const body = (await db.query('SELECT id, x, y, z FROM ents WHERE classname = \'corpse\' AND body_of = player_ent()')).rows[0];
+  if (d.DEAD && body) {
+    await db.exec(`UPDATE ents SET x = x + 40, vx = 0, vy = 0, vz = 0 WHERE id = ${body.ID}`);
+    d = await tic([1, 0, 0, 0, 0, 0, 0, 1, 0]);
+    const b2 = (await db.query(`SELECT x, y, z FROM ents WHERE id = ${body.ID}`)).rows[0];
+    assert(Math.abs(d.PX - b2.X) < 1e-6 && Math.abs(d.PY - b2.Y) < 1e-6 && Math.abs(d.VIEW_Z - (d.PZ - 16)) < 1e-6,
+      `dead, the eye is 16 under the origin (${(d.VIEW_Z - d.PZ).toFixed(1)}) and goes with the body moved 40 (${(d.PX - body.X).toFixed(1)})`);
+  } else assert(false, `the player died and left a body (dead ${d.DEAD}, body ${body?.ID}, health ${d.HEALTH}, ${JSON.stringify((await db.query("SELECT e.health, e.deadflag, e.flags, p.spectator, g.match_over, g.exit_kind FROM ents e, player p, game g WHERE e.id = p.ent_id")).rows[0])})`);
+  await db.exec('EXECUTE PROCEDURE player_respawn');
+  await db.exec("UPDATE ents SET flags = BIN_OR(flags, 16) WHERE id = player_ent()");
+}
+
 // the end of a match (CheckExitRules, BeginIntermission, CheckIntermissionExit)
 {
   const said = async (name) => (await db.query(`SELECT COUNT(*) n FROM sound_events WHERE snd = '${name}'`)).rows[0].N;
