@@ -666,6 +666,49 @@ BEGIN
   RETURN best;
 END^
 
+-- BotChooseNBGItem (be_ai_goal.c): a nearby goal on the way, the item worth the most for its travel time among
+-- those under `range` seconds away (AINode_Seek_LTG's 150 hundredths) whose trip on to the long-term goal (`ltg`,
+-- an entity: the item sought, the teammate accompanied) takes no longer than going there straight; any item
+-- near enough when there is none. Travel times and the items considered are bot_choose_ltg's
+CREATE OR ALTER FUNCTION bot_choose_nbg (eid INTEGER, ltg INTEGER, range_ DOUBLE PRECISION) RETURNS INTEGER
+AS
+DECLARE x DOUBLE PRECISION; DECLARE y DOUBLE PRECISION; DECLARE z DOUBLE PRECISION; DECLARE t DOUBLE PRECISION;
+DECLARE lx DOUBLE PRECISION; DECLARE ly DOUBLE PRECISION; DECLARE lz DOUBLE PRECISION; DECLARE ltg_t DOUBLE PRECISION = 99999;
+DECLARE gid INTEGER; DECLARE cls VARCHAR(40); DECLARE gx DOUBLE PRECISION; DECLARE gy DOUBLE PRECISION; DECLARE gz DOUBLE PRECISION;
+DECLARE sol SMALLINT; DECLARE av DOUBLE PRECISION; DECLARE w DOUBLE PRECISION; DECLARE tt DOUBLE PRECISION;
+DECLARE best INTEGER; DECLARE bestw DOUBLE PRECISION = 0;
+BEGIN
+  t = now_();
+  SELECT e.x, e.y, e.z FROM ents e WHERE e.id = :eid INTO x, y, z;
+  IF (ltg IS NOT NULL) THEN
+  BEGIN
+    SELECT g.x, g.y, g.z FROM ents g WHERE g.id = :ltg INTO lx, ly, lz;
+    IF (lx IS NOT NULL) THEN ltg_t = vlen(lx - x, ly - y, (lz - z) * 2) / 320 + 0.1e0;
+  END
+  FOR SELECT g.id, g.item, g.x, g.y, g.z, g.solid, (SELECT a.avoid_until FROM bot_avoid a WHERE a.ent_id = :eid AND a.item_id = g.id)
+        FROM ents g JOIN item_defs i ON i.cls = g.item
+       WHERE g.classname = 'item' AND i.kind IN ('H', 'A', 'W', 'P') AND NOT (i.kind = 'P' AND i.bit = 32)
+         AND ABS(g.x - :x) < :range_ * 320 AND ABS(g.y - :y) < :range_ * 320
+        INTO gid, cls, gx, gy, gz, sol, av
+  DO
+  BEGIN
+    IF (sol <> 1 AND (av IS NULL OR av <= t)) THEN CONTINUE;
+    tt = vlen(gx - x, gy - y, (gz - z) * 2) / 320 + 0.1e0;
+    IF (tt >= range_) THEN CONTINUE;
+    IF (av IS NOT NULL AND av - t - tt * 0.9e0 > 0) THEN CONTINUE;
+    w = bot_item_weight(eid, cls);
+    IF (w > 0 AND w / tt > bestw) THEN
+    BEGIN
+      -- the trip back to the long-term goal must not take longer than going there now
+      IF (lx IS NULL OR vlen(lx - gx, ly - gy, (lz - gz) * 2) / 320 + 0.1e0 <= ltg_t) THEN
+      BEGIN
+        bestw = w / tt; best = gid;
+      END
+    END
+  END
+  RETURN best;
+END^
+
 -- the weapon a bot likes best among those it holds
 CREATE OR ALTER FUNCTION bot_best_weapon (eid INTEGER, dist DOUBLE PRECISION) RETURNS INTEGER
 AS
@@ -887,7 +930,7 @@ BEGIN
   EXECUTE PROCEDURE bot_chat_event(eid, 'death', attacker, mod_);   -- BotChat_Death
   UPDATE ents e SET e.solid = 0 WHERE e.id = :eid;
   EXECUTE PROCEDURE toss_client_items(eid);   -- the gun and the powerups fall (TossClientItems)
-  UPDATE ents e SET e.deadflag = 1, e.st = 'dead', e.solid = 0, e.movetype = 0, e.takedamage = 0, e.alpha = 1, e.enemy_id = NULL, e.goal_id = NULL,
+  UPDATE ents e SET e.deadflag = 1, e.st = 'dead', e.solid = 0, e.movetype = 0, e.takedamage = 0, e.alpha = 1, e.enemy_id = NULL, e.goal_id = NULL, e.nbg_id = NULL,
          e.respawn_time = :t + 2.5e0 + RAND() * 2, e.deaths = e.deaths + 1, e.vx = 0, e.vy = 0, e.vz = 0, e.quad_finished = 0,
          e.haste_finished = 0, e.invis_finished = 0, e.regen_finished = 0, e.enviro_finished = 0, e.nextthink = :t + 0.5e0 WHERE e.id = :eid;
   IF (hp < -40) THEN
@@ -912,7 +955,7 @@ BEGIN
   EXECUTE PROCEDURE select_spawn(eid) RETURNING_VALUES x, y, z, yaw;
   UPDATE ents e SET e.x = :x, e.y = :y, e.z = :z + 9, e.yaw = COALESCE(:yaw, 0), e.ideal_yaw = COALESCE(:yaw, 0), e.pitch = 0, e.vx = 0, e.vy = 0, e.vz = 0,
          e.solid = 3, e.movetype = 4, e.takedamage = 2, e.alpha = 0, e.deadflag = 0, e.health = 125, e.armor = 0, e.weapons = 3, e.weapon = 2,
-         e.flags = 32, e.st = 'stand', e.legs_anim = 22, e.legs_time = :t, e.torso_anim = 11, e.torso_time = :t, e.enemy_id = NULL, e.goal_id = NULL,
+         e.flags = 32, e.st = 'stand', e.legs_anim = 22, e.legs_time = :t, e.torso_anim = 11, e.torso_time = :t, e.enemy_id = NULL, e.goal_id = NULL, e.nbg_id = NULL, e.nbg_check = NULL,
          e.attack_finished = :t + 1, e.teleport_time = :t + 0.3e0, e.lx = NULL, e.nextthink = :t + 0.1e0, e.think = 'bot_think', e.respawn_time = 0,
          e.quad_finished = 0, e.haste_finished = 0, e.invis_finished = 0, e.regen_finished = 0, e.enviro_finished = 0, e.health_tick = :t + 1,
          e.yaw_speed = COALESCE(bot_cv(:eid, 'view_maxchange', NULL) / 10, bot_char((SELECT b.skill FROM bot_defs b WHERE b.name = e.bot), 'turn')) WHERE e.id = :eid;
@@ -1088,6 +1131,7 @@ DECLARE d DOUBLE PRECISION; DECLARE vis SMALLINT; DECLARE yaw DOUBLE PRECISION; 
 DECLARE ox DOUBLE PRECISION; DECLARE oy DOUBLE PRECISION; DECLARE match_done SMALLINT; DECLARE waiting SMALLINT; DECLARE hp INTEGER; DECLARE hesitate SMALLINT = 0; DECLARE fresh SMALLINT = 0;
 DECLARE aggr INTEGER; DECLARE ft DOUBLE PRECISION; DECLARE htick DOUBLE PRECISION; DECLARE haste DOUBLE PRECISION; DECLARE regen DOUBLE PRECISION;
 DECLARE gt SMALLINT; DECLARE busy SMALLINT = 0; DECLARE mate INTEGER;
+DECLARE nbg INTEGER; DECLARE nbg_u DOUBLE PRECISION; DECLARE nbg_c DOUBLE PRECISION; DECLARE ltg INTEGER;
 BEGIN
   t = now_();
   nt = t + 0.1e0;
@@ -1234,9 +1278,31 @@ BEGIN
       goal = bot_choose_ltg(eid);
       UPDATE ents e SET e.goal_id = :goal WHERE e.id = :eid;
     END
+    -- BotNearbyGoal (AINode_Seek_LTG): every half second an item within 1.5 s on the way to the long-term goal
+    -- (the item sought, or the teammate accompanied), gone for until it is taken or for 4 + 1.5 s (nbg_time)
+    SELECT e.nbg_id, e.nbg_until, e.nbg_check, IIF(:busy = 1, e.acc_id, :goal) FROM ents e WHERE e.id = :eid INTO nbg, nbg_u, nbg_c, ltg;
+    IF (nbg IS NOT NULL AND (nbg_u < t OR NOT EXISTS (SELECT 1 FROM ents g WHERE g.id = :nbg AND g.solid = 1))) THEN
+    BEGIN
+      nbg = NULL;
+      UPDATE ents e SET e.nbg_id = NULL WHERE e.id = :eid;
+    END
+    IF (nbg IS NULL AND COALESCE(nbg_c, 0) < t) THEN
+    BEGIN
+      nbg = bot_choose_nbg(eid, ltg, 1.5e0);
+      UPDATE ents e SET e.nbg_check = :t + 0.5e0, e.nbg_id = :nbg, e.nbg_until = IIF(:nbg IS NULL, NULL, :t + 5.5e0) WHERE e.id = :eid;
+    END
     -- nothing to do but roam: now and then a word (BotChat_Random, a chance in a hundred a think, then the character's)
     IF (RAND() < 0.005e0) THEN EXECUTE PROCEDURE bot_chat_event(eid, 'random', NULL, 0);
-    IF (busy = 1) THEN
+    IF (nbg IS NOT NULL) THEN
+    BEGIN
+      IF (BIN_AND(flags, 512) <> 0 AND tt < t AND hesitate = 0 AND bot_avoid_grenade(eid, spd) = 0) THEN
+      BEGIN
+        EXECUTE PROCEDURE bot_follow_route(eid, nbg, spd * 0.9e0) RETURNING_VALUES moved;
+        IF (moved < 0) THEN UPDATE ents e SET e.nbg_id = NULL WHERE e.id = :eid;
+        ELSE IF (moved = 0) THEN EXECUTE PROCEDURE move_to_goal(eid, nbg, spd * 0.9e0);
+      END
+    END
+    ELSE IF (busy = 1) THEN
     BEGIN
       IF (mate IS NOT NULL AND BIN_AND(flags, 512) <> 0 AND tt < t AND hesitate = 0 AND bot_avoid_grenade(eid, spd) = 0) THEN
       BEGIN

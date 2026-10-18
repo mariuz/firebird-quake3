@@ -493,7 +493,12 @@ A think:
    goal. An item the bot took is in `bot_avoid` for its respawn time (`BotSetAvoidGoalTime`): it is a
    goal again only when the trip takes longer than the wait (the avoid time less 0.9 of the travel
    time), so the bot times the quad and the armour it took; one another took is not known to come back.
-   The goal is kept while the bot is on the way and the item is there or back within 3 s;
+   The goal is kept while the bot is on the way and the item is there or back within 3 s. Every half
+   second it also looks for a nearby goal (`BotNearbyGoal`, `bot_choose_nbg`, botlib's
+   `BotChooseNBGItem`): the item worth the most for its travel time among those under 1.5 s away
+   whose trip on to the long-term goal (the item sought, or the teammate it accompanies) takes no
+   longer than going there straight, so a shard or a health on the way is picked up in passing. It goes
+   for that one first, until it is taken or for 5.5 s (`nbg_time`, 4 + 1.5);
 5. sets the legs animation from what happened (jump in the air, run when it moved, idle otherwise).
 
 `bot_char(skill, key)` is the five skill levels' characteristics boiled down from the original bot

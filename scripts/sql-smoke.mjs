@@ -533,6 +533,30 @@ if (pad) {
   assert(pm.M === 'major' && pm.S === 'daemia' && jump === 'sound/player/major/jump1.wav', `the player plays major/daemia at once, with its sounds (${pm.M}/${pm.S}, ${jump})`);
 }
 
+// BotNearbyGoal: an item on the way to the long-term goal, under 1.5 s off, is a nearby goal; one that would
+// take the bot further from the long-term goal, or one too far, is not (BotChooseNBGItem)
+{
+  const bot = (await db.query("SELECT FIRST 1 id FROM ents WHERE classname = 'bot' ORDER BY id")).rows[0]?.ID;
+  const items = (await db.query(`SELECT g.id, g.x, g.y, g.z, bot_item_weight(${bot ?? 0}, g.item) w FROM ents g JOIN item_defs i ON i.cls = g.item
+    WHERE g.classname = 'item' AND g.solid = 1 AND i.kind IN ('H', 'A', 'W') ORDER BY g.id`)).rows.filter((r) => r.W > 0);
+  if (bot && items.length >= 2) {
+    const [near, far] = items;
+    const b0 = (await db.query(`SELECT x, y, z FROM ents WHERE id = ${bot}`)).rows[0];
+    const put = (id, x, y, z) => db.exec(`UPDATE ents SET x = ${x}, y = ${y}, z = ${z} WHERE id = ${id}`);
+    // far from the arena's other items: the bot, the item 200 ahead, the long-term goal 400 past it
+    await put(bot, 9000, 9000, 9000); await put(near.ID, 9200, 9000, 9000); await put(far.ID, 9600, 9000, 9000);
+    const nbg = async () => (await db.query(`SELECT bot_choose_nbg(${bot}, ${far.ID}, 1.5) n FROM rdb$database`)).rows[0].N;
+    const onTheWay = await nbg();
+    await put(far.ID, 8900, 9000, 9000);   // the long-term goal behind the bot now
+    const behind = await nbg();
+    await put(near.ID, 9700, 9000, 9000); await put(far.ID, 9600, 9000, 9000);   // ahead, but 700 away (2.3 s)
+    const tooFar = await nbg();
+    await put(bot, b0.X, b0.Y, b0.Z); await put(near.ID, near.X, near.Y, near.Z); await put(far.ID, far.X, far.Y, far.Z);
+    assert(onTheWay === near.ID && behind !== near.ID && tooFar === null,
+      `a nearby goal: the item on the way (${onTheWay} = ${near.ID}), not the one ahead when the goal is behind (${behind}), none 2.3 s off (${tooFar})`);
+  } else console.log('(no bot or no wanted items for the nearby goal check)');
+}
+
 // the rail's colour (the "color1" userinfo): the trail and its mark carry the shooter's; the bots' are 4, red
 {
   await db.exec('EXECUTE PROCEDURE set_player_color(2)');
