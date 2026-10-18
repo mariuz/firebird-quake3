@@ -1132,7 +1132,7 @@ DECLARE ox DOUBLE PRECISION; DECLARE oy DOUBLE PRECISION; DECLARE match_done SMA
 DECLARE aggr INTEGER; DECLARE ft DOUBLE PRECISION; DECLARE htick DOUBLE PRECISION; DECLARE haste DOUBLE PRECISION; DECLARE regen DOUBLE PRECISION;
 DECLARE gt SMALLINT; DECLARE busy SMALLINT = 0; DECLARE mate INTEGER;
 DECLARE nbg INTEGER; DECLARE nbg_u DOUBLE PRECISION; DECLARE nbg_c DOUBLE PRECISION; DECLARE ltg INTEGER;
-DECLARE jx DOUBLE PRECISION; DECLARE jy DOUBLE PRECISION; DECLARE jt DOUBLE PRECISION;
+DECLARE jx DOUBLE PRECISION; DECLARE jy DOUBLE PRECISION; DECLARE jt DOUBLE PRECISION; DECLARE jf DOUBLE PRECISION;
 BEGIN
   t = now_();
   nt = t + 0.1e0;
@@ -1254,9 +1254,15 @@ BEGIN
         AND RAND() < bot_cv(eid, 'jumper', 0)) THEN
     BEGIN
       SELECT e.x, e.y FROM ents e WHERE e.id = :eid INTO jx, jy;
-      UPDATE ents e SET e.vx = (:jx - :ox) * 10, e.vy = (:jy - :oy) * 10, e.vz = 270, e.flags = BIN_AND(e.flags, BIN_NOT(512)),
-             e.attack_jump = :t + 1 WHERE e.id = :eid;
-      EXECUTE PROCEDURE snd(eid, 2, 'sound/player/' || COALESCE((SELECT e.pmodel FROM ents e WHERE e.id = :eid), 'sarge') || '/jump1.wav', 1, 1);
+      -- where it would come down (0.675 s in the air at 270 up): BotMoveInDirection predicts the move and makes
+      -- none that falls off a ledge or into lava, so no jump without a floor there
+      jf = wp_drop(jx + (jx - ox) * 6.75e0, jy + (jy - oy) * 6.75e0, z + 16, 160);
+      IF (jf IS NOT NULL AND jf > -99999 AND BIN_AND(point_contents(jx + (jx - ox) * 6.75e0, jy + (jy - oy) * 6.75e0, jf + 1), 24) = 0) THEN
+      BEGIN
+        UPDATE ents e SET e.vx = (:jx - :ox) * 10, e.vy = (:jy - :oy) * 10, e.vz = 270, e.flags = BIN_AND(e.flags, BIN_NOT(512)),
+               e.attack_jump = :t + 1 WHERE e.id = :eid;
+        EXECUTE PROCEDURE snd(eid, 2, 'sound/player/' || COALESCE((SELECT e.pmodel FROM ents e WHERE e.id = :eid), 'sarge') || '/jump1.wav', 1, 1);
+      END
     END
     -- keep facing the enemy
     UPDATE ents e SET e.ideal_yaw = vectoyaw(:ex - e.x, :ey - e.y) WHERE e.id = :eid;
