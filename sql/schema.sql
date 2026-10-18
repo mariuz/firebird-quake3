@@ -271,6 +271,7 @@ CREATE TABLE ents (
   nbg_until  DOUBLE PRECISION,
   nbg_check  DOUBLE PRECISION,
   attack_jump DOUBLE PRECISION,              -- a bot's attackjump_time: no jump in a fight before it
+  attack_crouch DOUBLE PRECISION,            -- a bot's attackcrouch_time: crouched in a fight until it
   st         VARCHAR(12) DEFAULT 'idle' NOT NULL,  -- bots: stand run attack pain die dead / doors: top bottom up down
   anim       VARCHAR(16),
   anim_frame INTEGER DEFAULT 0 NOT NULL,

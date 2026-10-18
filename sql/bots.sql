@@ -954,7 +954,7 @@ BEGIN
   EXECUTE PROCEDURE body_release(eid);
   EXECUTE PROCEDURE select_spawn(eid) RETURNING_VALUES x, y, z, yaw;
   UPDATE ents e SET e.x = :x, e.y = :y, e.z = :z + 9, e.yaw = COALESCE(:yaw, 0), e.ideal_yaw = COALESCE(:yaw, 0), e.pitch = 0, e.vx = 0, e.vy = 0, e.vz = 0,
-         e.solid = 3, e.movetype = 4, e.takedamage = 2, e.alpha = 0, e.deadflag = 0, e.viewheight = 26, e.health = 125, e.armor = 0, e.weapons = 3, e.weapon = 2,
+         e.solid = 3, e.movetype = 4, e.takedamage = 2, e.alpha = 0, e.deadflag = 0, e.viewheight = 26, e.maxz = 32, e.attack_crouch = NULL, e.health = 125, e.armor = 0, e.weapons = 3, e.weapon = 2,
          e.flags = 32, e.st = 'stand', e.legs_anim = 22, e.legs_time = :t, e.torso_anim = 11, e.torso_time = :t, e.enemy_id = NULL, e.goal_id = NULL, e.nbg_id = NULL, e.nbg_check = NULL,
          e.attack_finished = :t + 1, e.teleport_time = :t + 0.3e0, e.lx = NULL, e.nextthink = :t + 0.1e0, e.think = 'bot_think', e.respawn_time = 0,
          e.quad_finished = 0, e.haste_finished = 0, e.invis_finished = 0, e.regen_finished = 0, e.enviro_finished = 0, e.health_tick = :t + 1,
@@ -1133,6 +1133,10 @@ DECLARE aggr INTEGER; DECLARE ft DOUBLE PRECISION; DECLARE htick DOUBLE PRECISIO
 DECLARE gt SMALLINT; DECLARE busy SMALLINT = 0; DECLARE mate INTEGER;
 DECLARE nbg INTEGER; DECLARE nbg_u DOUBLE PRECISION; DECLARE nbg_c DOUBLE PRECISION; DECLARE ltg INTEGER;
 DECLARE jx DOUBLE PRECISION; DECLARE jy DOUBLE PRECISION; DECLARE jt DOUBLE PRECISION; DECLARE jf DOUBLE PRECISION;
+DECLARE wjump SMALLINT = 0; DECLARE crouch SMALLINT = 0; DECLARE ct_ DOUBLE PRECISION; DECLARE mz DOUBLE PRECISION;
+DECLARE tf DOUBLE PRECISION; DECLARE tx DOUBLE PRECISION; DECLARE ty DOUBLE PRECISION; DECLARE tz DOUBLE PRECISION;
+DECLARE tnx DOUBLE PRECISION; DECLARE tny DOUBLE PRECISION; DECLARE tnz DOUBLE PRECISION; DECLARE tsf INTEGER; DECLARE tct INTEGER;
+DECLARE tals SMALLINT; DECLARE tsts SMALLINT; DECLARE thit INTEGER;
 BEGIN
   t = now_();
   nt = t + 0.1e0;
@@ -1220,6 +1224,29 @@ BEGIN
     IF (aggr >= 50) THEN goal = NULL;
     ELSE IF (goal IS NULL) THEN goal = bot_retreat_goal(eid);
     UPDATE ents e SET e.goal_id = :goal WHERE e.id = :eid;
+    -- BotAttackMove's jump and crouch: fighting an enemy in sight (not running for an item) with an attack skill
+    -- of 0.2 or more; a second after the last crouch, a chance of its jumper characteristic each think to jump,
+    -- else of its croucher to crouch for croucher * 5 s (attackcrouch_time); crouched, it strafes at the
+    -- crouched speed (pm_duckScale, a quarter) and does not jump
+    IF (vis = 1 AND goal IS NULL AND bot_cv(eid, 'attack_skill', bot_char(skill, 'strafe')) >= 0.2e0) THEN
+    BEGIN
+      SELECT e.attack_crouch FROM ents e WHERE e.id = :eid INTO ct_;
+      IF (COALESCE(ct_, 0) < t - 1) THEN
+      BEGIN
+        IF (RAND() < bot_cv(eid, 'jumper', 0)) THEN wjump = 1;
+        ELSE IF (RAND() < bot_cv(eid, 'croucher', 0)) THEN
+        BEGIN
+          ct_ = t + bot_cv(eid, 'croucher', 0) * 5;
+          UPDATE ents e SET e.attack_crouch = :ct_ WHERE e.id = :eid;
+        END
+      END
+      IF (COALESCE(ct_, 0) > t) THEN
+      BEGIN
+        crouch = 1; wjump = 0; spd = spd * 0.25e0;
+        -- PM_CheckDuck: the box's top at 16, the eye at CROUCH_VIEWHEIGHT, 12
+        UPDATE ents e SET e.maxz = 16, e.viewheight = 12 WHERE e.id = :eid AND e.maxz <> 16;
+      END
+    END
     IF (bot_avoid_grenade(eid, spd) = 1) THEN BEGIN END
     ELSE IF (hesitate = 1) THEN BEGIN END
     ELSE IF (goal IS NOT NULL) THEN
@@ -1250,8 +1277,7 @@ BEGIN
     -- more, a chance of its jumper characteristic each think and not within a second of the last; it goes on
     -- the way it stepped (MOVE_JUMP with the strafe)
     SELECT e.attack_jump FROM ents e WHERE e.id = :eid INTO jt;
-    IF (vis = 1 AND goal IS NULL AND COALESCE(jt, 0) <= t AND bot_cv(eid, 'attack_skill', bot_char(skill, 'strafe')) >= 0.2e0
-        AND RAND() < bot_cv(eid, 'jumper', 0)) THEN
+    IF (wjump = 1 AND COALESCE(jt, 0) <= t) THEN
     BEGIN
       SELECT e.x, e.y FROM ents e WHERE e.id = :eid INTO jx, jy;
       -- where it would come down (0.675 s in the air at 270 up): BotMoveInDirection predicts the move and makes
@@ -1346,10 +1372,18 @@ BEGIN
       END
     END
   END
-  -- the legs follow the feet
-  SELECT e.x, e.y FROM ents e WHERE e.id = :eid INTO x, y;
+  -- out of the crouch when the fight's crouch is over, where the standing box fits (PM_CheckDuck)
+  SELECT e.x, e.y, e.z, e.maxz FROM ents e WHERE e.id = :eid INTO x, y, z, mz;
+  IF (crouch = 0 AND mz = 16) THEN
+  BEGIN
+    EXECUTE PROCEDURE trace_move(eid, -15, -15, -24, 15, 15, 32, x, y, z, x, y, z, 33619969)
+      RETURNING_VALUES tf, tx, ty, tz, tnx, tny, tnz, tsf, tct, tals, tsts, thit;
+    IF (tals = 0 AND tsts = 0) THEN BEGIN UPDATE ents e SET e.maxz = 32, e.viewheight = 26 WHERE e.id = :eid; mz = 32; END
+  END
+  -- the legs follow the feet (crouched: LEGS_WALKCR, LEGS_IDLECR)
   moved = IIF(ABS(x - ox) + ABS(y - oy) > 1, 1, 0);
   IF (BIN_AND(flags, 512) = 0) THEN BEGIN IF (legs NOT IN (18, 20)) THEN EXECUTE PROCEDURE set_anims(eid, 18, NULL); END
+  ELSE IF (mz = 16) THEN EXECUTE PROCEDURE set_anims(eid, IIF(moved = 1, 13, 23), NULL);
   ELSE IF (moved = 1 AND legs <> 15) THEN EXECUTE PROCEDURE set_anims(eid, 15, NULL);
   ELSE IF (moved = 0 AND legs <> 22) THEN EXECUTE PROCEDURE set_anims(eid, 22, NULL);
   UPDATE ents e SET e.nextthink = :nt WHERE e.id = :eid;

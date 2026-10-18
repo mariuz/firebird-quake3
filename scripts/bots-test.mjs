@@ -550,12 +550,16 @@ let lastMsg = 0;
 
 // a minute of play: the bots keep fragging each other, nobody is stuck in the void
 const padEdges = (await q('SELECT COUNT(*) n FROM wp_edges WHERE kind = 1'))[0].N;
-let flew = 0;
+let flew = 0, crouched = 0, crouchAnim = 0;
 let t0 = performance.now();
 for (let i = 0; i < 600; i++) {
   await tic(2);
   if (i % 3 === 0) for (const m of await q(`SELECT id, msg FROM messages WHERE id > ${lastMsg} ORDER BY id`)) { lastMsg = m.ID; if (talkers.test(m.MSG)) { chats++; if (chats <= 3) console.log('chat', m.MSG); } }
   if (padEdges && i % 2 === 0) flew += (await q("SELECT COUNT(*) n FROM ents WHERE classname = 'bot' AND health > 0 AND vz > 450 AND BIN_AND(flags, 512) = 0"))[0].N;
+  if (i % 2 === 1) {
+    const [c] = await q("SELECT COUNT(*) n, SUM(IIF(legs_anim IN (13, 23) AND viewheight = 12, 1, 0)) a FROM ents WHERE classname = 'bot' AND health > 0 AND maxz = 16");
+    crouched += c.N; crouchAnim += c.A ?? 0;
+  }
 }
 console.log(`1200 tics in ${(performance.now() - t0).toFixed(0)} ms`);
 assert(chats > 0, `the bots talked during the minute (${chats} lines)`);
@@ -568,6 +572,10 @@ assert(total !== 0 || board.some((r) => r.DEATHS > 0), 'frags were scored during
 const jumpers = (await q("SELECT COUNT(*) n FROM ents e JOIN bot_defs b ON b.name = e.bot JOIN bot_chatchar c ON c.bot = e.bot AND c.skill = b.skill AND c.ckey = 'jumper' WHERE e.classname = 'bot' AND c.val >= 0.5"))[0].N;
 const hopped = (await q("SELECT COUNT(*) n FROM ents WHERE classname = 'bot' AND attack_jump IS NOT NULL"))[0].N;
 if (jumpers > 0 && total > 0) assert(hopped > 0, `the jumpers jumped in their fights (${hopped} of ${jumpers} jumping characters)`);
+// and MOVE_CROUCH: the characters that crouch (a croucher of 0.3 or more) crouch in theirs, the box lowered, the crouched legs and eye
+const crouchers = (await q("SELECT COUNT(*) n FROM ents e JOIN bot_defs b ON b.name = e.bot JOIN bot_chatchar c ON c.bot = e.bot AND c.skill = b.skill AND c.ckey = 'croucher' WHERE e.classname = 'bot' AND c.val >= 0.3"))[0].N;
+if (crouchers > 0 && total > 0) assert(crouched > 0 && crouchAnim >= crouched * 0.8, `the crouchers crouched in their fights (${crouchers} crouching characters, crouched ${crouched} times, ${crouchAnim} with the crouched legs and eye)`);
+else console.log(`(crouching: ${crouchers} crouching characters, crouched ${crouched} times)`);
 const lost = (await q("SELECT COUNT(*) n FROM ents WHERE classname = 'bot' AND health > 0 AND cluster IS NULL"))[0].N;
 assert(lost === 0, 'no living bot is outside the world');
 const msgs = (await q('SELECT msg FROM messages ORDER BY id'));
