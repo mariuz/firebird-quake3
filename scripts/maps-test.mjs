@@ -137,6 +137,17 @@ async function moverLoops(map) {
   const on = new Set(String(fr?.LST ?? '').split(',').map(Number));
   const ok = lp.filter((l) => pak.has(l.S) && on.has(l.ID) && l.MAXX > l.MINX).length;
   assert(ok === lp.length, `${map}: ${ok} of ${lp.length} movers loop their noise (${[...new Set(lp.map((l) => l.S))].join(', ')})`);
+  // the sound goes with the mover (trap_S_UpdateEntityPosition): the frame's kind-11 rows follow a moving one
+  const at = async () => new Map((await q('SELECT i1, d1, d2, d3 FROM frame_all(0, 2147483647, 2147483647, 0) WHERE kind = 11')).map((r) => [r.I1, [r.D1, r.D2, r.D3]]));
+  const before = await at();
+  const moving = (await q("SELECT e.id FROM ents e WHERE e.loop_sound IS NOT NULL AND e.classname = 'func_bobbing'")).map((r) => r.ID);
+  for (let i = 0; i < 10; i++) await q('SELECT * FROM q3_tic(1, 0, 0, 0, 0, 0, 0, 1, 0)');
+  const after = await at();
+  const [o] = moving.length ? await q(`SELECT e.x + (e.minx + e.maxx) / 2 x, e.y + (e.miny + e.maxy) / 2 y, e.z + (e.minz + e.maxz) / 2 z FROM ents e WHERE e.id = ${moving[0]}`) : [];
+  const moved = moving.filter((id) => before.get(id) && after.get(id) && Math.hypot(...after.get(id).map((v, k) => v - before.get(id)[k])) > 0.5).length;
+  const same = !o || Math.hypot(after.get(moving[0])[0] - o.X, after.get(moving[0])[1] - o.Y, after.get(moving[0])[2] - o.Z) < 0.01;
+  assert(before.size === lp.length && same && (moving.length === 0 || moved > 0),
+    `${map}: the looping sounds go with their movers (${before.size} placed, ${moved} of ${moving.length} moving ones followed)`);
 }
 
 for (const m of index) {

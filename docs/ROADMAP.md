@@ -81,7 +81,7 @@ fuzzy logic from the botfiles. What that leaves out:
 | **File system** | the page stacks the demo's pak, the pk3s picked from disk and one hosted map pack (`PakSet`); the game searches every `pak*.pk3` in `baseq3` and a mod directory at once, and a picked pk3's models, sounds and bot files are not read again (its maps and shaders are) |
 | **Capsule traces** | players use a box; Quake III traces players as capsules against other players (`cm_trace.c` with `capsule`) |
 | **The menu, key binding** | the page's controls do this, the name, the model and the rail's colour played among them (*Name*, *Model*: every player model of the pak with its own skins, *Rail*: `color1`); no key binding |
-| **Sound** | OpenAL-style spatialisation exists; missing: underwater low-pass, doppler, a looping mover's sound following it as it moves (a mover's `noise` loops from where its brush stands at the start: oa_shouse's bobbing fires), the `s_musicvolume` crossfades |
+| **Sound** | OpenAL-style spatialisation exists; missing: underwater low-pass, doppler, the `s_musicvolume` crossfades |
 
 ## 7. Performance and scale
 

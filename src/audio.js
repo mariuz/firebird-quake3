@@ -128,12 +128,22 @@ export class Q3Audio {
   setSpeakers(rows) {
     this.stopSpeakers();
     this.speakers = rows.map(([id, x, y, z, name, vol, attn, on]) => ({ id, x, y, z, name, vol: vol || 1, attn: attn < 0 ? 0 : attn, on: on === 1 }));
+    this.speakerById = null;
     if (this.ctx) this.startSpeakers();
   }
 
   setSpeakersOn(ids) {
     const on = new Set(ids);
     for (const s of this.speakers) s.on = on.has(s.id);
+  }
+
+  /** rows: [id, x, y, z], a looping mover's sound where its brush is now (trap_S_UpdateEntityPosition) */
+  moveSpeakers(rows) {
+    if (!this.speakerById || this.speakerById.size === 0) this.speakerById = new Map(this.speakers.map(s => [s.id, s]));
+    for (const [id, x, y, z] of rows) {
+      const s = this.speakerById.get(id);
+      if (s) { s.x = x; s.y = y; s.z = z; }
+    }
   }
 
   loop(buf, dest) {
@@ -161,6 +171,7 @@ export class Q3Audio {
   stopSpeakers() {
     for (const s of this.speakers) { if (s.src) { try { s.src.stop(); } catch { /* ended */ } } s.src = null; }
     this.speakers = [];
+    this.speakerById = null;
   }
 
   /** Called every frame with the listener: the looped speakers follow the player. */

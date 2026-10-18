@@ -405,6 +405,7 @@ async function frame() {
     if (ticked) { prevPose = curPose; curPose = poseOf(fr); }
     interpolateFrame(fr, alpha);
     if (fr.speakers) audio.setSpeakersOn(fr.speakers);
+    if (fr.loopsAt.length) audio.moveSpeakers(fr.loopsAt);
     perf.faces = performance.now() - t;
     perf.rows = fr.faces.length;
     const listener = { x: view.PX, y: view.PY, z: view.VIEW_Z, yaw: view.YAW };

@@ -475,7 +475,7 @@ export class FrameState {
   parse(rows) {
     const faces = [], ents = [], sounds = [], fx = [];
     let speakers = null, eye = null;
-    const messages = [];
+    const messages = [], loopsAt = [];
     this.brushAngles.clear();
     for (const r of rows) {
       switch (r[0]) {
@@ -488,11 +488,12 @@ export class FrameState {
         case 7: speakers = r[16] ? r[16].split(',').map(Number) : []; break;
         case 9: messages.push({ id: r[1], time: r[6], text: r[15] }); break;
         case 10: eye = [r[6], r[7], r[8]]; break;
+        case 11: loopsAt.push([r[1], r[6], r[7], r[8]]); break;
         default: break;
       }
     }
     this.messages = messages;
-    return { faces, ents, sounds, fx, speakers, messages, eye };
+    return { faces, ents, sounds, fx, speakers, messages, eye, loopsAt };
   }
 
   /** CG_BubbleTrail: a bubble every `spacing` units from a to b, drifting up with a little jitter, a second
