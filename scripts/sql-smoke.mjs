@@ -109,14 +109,17 @@ const c = (await db.query(`SELECT point_contents(${s.PX}, ${s.PY}, ${s.PZ}) c FR
 assert((c & 1) === 0, `player is not inside a wall after walking into things (contents ${c})`);
 
 // back to a spawn point (on q3dm17 the walk ends in the void), then jump
+// (the bots held for it: the spawn point is picked away from them, but one may walk onto it, or over us)
 await db.exec('EXECUTE PROCEDURE player_respawn');
 await db.exec("UPDATE ents SET flags = BIN_OR(flags, 16) WHERE classname = 'player'");
-for (let i = 0; i < 10; i++) s = await tic([1, 0, 0, 0, 0, 0, 0, 1, 0]);
+await db.exec("UPDATE ents SET nextthink = 1e9 WHERE classname = 'bot' AND deadflag = 0");
+for (let i = 0; i < 10 || (i < 60 && s.ONGROUND !== 1); i++) s = await tic([1, 0, 0, 0, 0, 0, 0, 1, 0]);
 const zBefore = s.PZ;
 s = await tic([1, 0, 0, 0, 0, 0, 1, 1, 0]);
 let peak = s.PZ;
 for (let i = 0; i < 12; i++) { s = await tic([1, 0, 0, 0, 0, 0, 0, 1, 0]); peak = Math.max(peak, s.PZ); }
-assert(peak - zBefore > 20, `jumping gained height (${(peak - zBefore).toFixed(1)} units)`);
+await db.exec("UPDATE ents SET nextthink = 0 WHERE classname = 'bot' AND nextthink > 1e8");
+assert(peak - zBefore > 20, `jumping gained height (${(peak - zBefore).toFixed(1)} units, from ${s.PX.toFixed(0)} ${s.PY.toFixed(0)} ${zBefore.toFixed(0)})`);
 for (let i = 0; i < 60 && s.ONGROUND !== 1; i++) s = await tic([1, 0, 0, 0, 0, 0, 0, 1, 0]);
 assert(s.ONGROUND === 1, 'landed again');
 
