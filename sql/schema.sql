@@ -270,6 +270,7 @@ CREATE TABLE ents (
   nbg_id     INTEGER,                       -- a bot's nearby goal (BotNearbyGoal), its deadline (nbg_time) and the next check
   nbg_until  DOUBLE PRECISION,
   nbg_check  DOUBLE PRECISION,
+  attack_jump DOUBLE PRECISION,              -- a bot's attackjump_time: no jump in a fight before it
   st         VARCHAR(12) DEFAULT 'idle' NOT NULL,  -- bots: stand run attack pain die dead / doors: top bottom up down
   anim       VARCHAR(16),
   anim_frame INTEGER DEFAULT 0 NOT NULL,

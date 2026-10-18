@@ -1132,6 +1132,7 @@ DECLARE ox DOUBLE PRECISION; DECLARE oy DOUBLE PRECISION; DECLARE match_done SMA
 DECLARE aggr INTEGER; DECLARE ft DOUBLE PRECISION; DECLARE htick DOUBLE PRECISION; DECLARE haste DOUBLE PRECISION; DECLARE regen DOUBLE PRECISION;
 DECLARE gt SMALLINT; DECLARE busy SMALLINT = 0; DECLARE mate INTEGER;
 DECLARE nbg INTEGER; DECLARE nbg_u DOUBLE PRECISION; DECLARE nbg_c DOUBLE PRECISION; DECLARE ltg INTEGER;
+DECLARE jx DOUBLE PRECISION; DECLARE jy DOUBLE PRECISION; DECLARE jt DOUBLE PRECISION;
 BEGIN
   t = now_();
   nt = t + 0.1e0;
@@ -1244,6 +1245,18 @@ BEGIN
         UPDATE ents e SET e.lefty = :lefty WHERE e.id = :eid;
         IF (d < 120) THEN moved = step_direction(eid, anglemod(vectoyaw(ex - x, ey - y) + 180), spd);
       END
+    END
+    -- BotAttackMove's jump: fighting an enemy in sight (not running for an item), an attack skill of 0.2 or
+    -- more, a chance of its jumper characteristic each think and not within a second of the last; it goes on
+    -- the way it stepped (MOVE_JUMP with the strafe)
+    SELECT e.attack_jump FROM ents e WHERE e.id = :eid INTO jt;
+    IF (vis = 1 AND goal IS NULL AND COALESCE(jt, 0) <= t AND bot_cv(eid, 'attack_skill', bot_char(skill, 'strafe')) >= 0.2e0
+        AND RAND() < bot_cv(eid, 'jumper', 0)) THEN
+    BEGIN
+      SELECT e.x, e.y FROM ents e WHERE e.id = :eid INTO jx, jy;
+      UPDATE ents e SET e.vx = (:jx - :ox) * 10, e.vy = (:jy - :oy) * 10, e.vz = 270, e.flags = BIN_AND(e.flags, BIN_NOT(512)),
+             e.attack_jump = :t + 1 WHERE e.id = :eid;
+      EXECUTE PROCEDURE snd(eid, 2, 'sound/player/' || COALESCE((SELECT e.pmodel FROM ents e WHERE e.id = :eid), 'sarge') || '/jump1.wav', 1, 1);
     END
     -- keep facing the enemy
     UPDATE ents e SET e.ideal_yaw = vectoyaw(:ex - e.x, :ey - e.y) WHERE e.id = :eid;

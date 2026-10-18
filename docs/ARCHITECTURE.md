@@ -514,7 +514,9 @@ bot's skill, the skill's block or the two around it interpolated as botlib does,
 turning 1 to 360). `CHARACTERISTIC_REACTIONTIME` is the wait before the first shot; `ALERTNESS` the
 notice range, 900 + 4000 × it, and with the files the field of view is `BotFindEnemy`'s, 90 degrees up
 close widening to 180 at 810 units; `VIEW_MAXCHANGE` the turning (a tenth of it a think);
-`ATTACK_SKILL` how often it circle-strafes; `FIRETHROTTLE` a pause of its length one shot in (1 − it);
+`ATTACK_SKILL` how often it circle-strafes; `JUMPER` the chance a think that it jumps in a fight
+(`BotAttackMove`'s `MOVE_JUMP`: with the enemy in sight, an attack skill of 0.2 or more, not within a second
+of the last, `ents.attack_jump`; it flies on the way it stepped); `FIRETHROTTLE` a pause of its length one shot in (1 − it);
 `AIM_ACCURACY` (or `AIM_ACCURACY_RAILGUN` … for the gun in hand) the scatter, `BotAimAtEnemy`'s
 0.3 × (1 − accuracy) on each part of the aim's direction under 0.8 and none above, a hitscan gun's
 accuracy × 0.6 at the muzzle rising to × 1 at 150 units; and an `AIM_SKILL` over 0.5 leads

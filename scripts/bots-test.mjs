@@ -564,6 +564,10 @@ const board = await q('SELECT * FROM scoreboard');
 console.log('scores', board.map((r) => `${r.NAME.trim()} ${r.FRAGS}/${r.DEATHS}`).join(', '));
 const total = board.reduce((a, r) => a + r.FRAGS, 0);
 assert(total !== 0 || board.some((r) => r.DEATHS > 0), 'frags were scored during a minute of play');
+// BotAttackMove's MOVE_JUMP: the characters that jump (Daemia, Visor, Grunt …) hop in their fights
+const jumpers = (await q("SELECT COUNT(*) n FROM ents e JOIN bot_defs b ON b.name = e.bot JOIN bot_chatchar c ON c.bot = e.bot AND c.skill = b.skill AND c.ckey = 'jumper' WHERE e.classname = 'bot' AND c.val >= 0.5"))[0].N;
+const hopped = (await q("SELECT COUNT(*) n FROM ents WHERE classname = 'bot' AND attack_jump IS NOT NULL"))[0].N;
+if (jumpers > 0 && total > 0) assert(hopped > 0, `the jumpers jumped in their fights (${hopped} of ${jumpers} jumping characters)`);
 const lost = (await q("SELECT COUNT(*) n FROM ents WHERE classname = 'bot' AND health > 0 AND cluster IS NULL"))[0].N;
 assert(lost === 0, 'no living bot is outside the world');
 const msgs = (await q('SELECT msg FROM messages ORDER BY id'));
