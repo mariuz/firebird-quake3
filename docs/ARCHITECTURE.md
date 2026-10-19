@@ -418,7 +418,9 @@ linearly with distance, a trace checks that the target is not behind a wall.
 Items (`item_touch`) are `g_items.c`: health counts above the maximum and decays, armour caps at 200,
 weapons give their ammo, every item respawns after the `respawn` time `item_defs` copied from
 `bg_itemlist`, powerups stack their time (the bots take every one but flight, `bot_item_touch`), holdables (medkit, teleporter) wait for the Enter key (the
-teleporter sends you to a `select_spawn` spot, as `Use_Teleporter` does); `item_respawn` makes the
+teleporter sends you to a `select_spawn` spot, as `Use_Teleporter` does; a bot carries one in `ents.hold_item`
+and uses it in a fight as `BotBattleUseItems` does: the teleporter under 40 health, the medkit under 60,
+`bot_use_items`); `item_respawn` makes the
 item solid again and plays the respawn sound; a picked-up item is not drawn because `alpha = 1`
 hides it from the frame query. The dead drop what they carried (`toss_client_items`, `TossClientItems`,
 from `player_die` and `bot_die`): the gun in hand when it is better than the machinegun and loaded, and
@@ -486,8 +488,7 @@ A think:
    skill 3). Before all of it a grenade within 160 units (`BotCheckSnapshot`'s avoid spot) makes it step
    straight away, or 60 degrees to either side (`bot_avoid_grenade`); roaming too;
 4. with nothing in sight: goes for its long-term goal (`bot_choose_ltg`, botlib's `BotChooseLTGItem`)
-   along the graph, or wanders with random turns when there is no route. Every item (but holdables and
-   the flight) is weighed by the bot's own item weights, `bot_item_weight`: the pak's
+   along the graph, or wanders with random turns when there is no route. Every item (but the flight) is weighed by the bot's own item weights, `bot_item_weight`: the pak's
    `botfiles/bots/NAME_i.c` with `fw_items.c`, read at load by `src/itemweights.js` into `bot_iw` rows
    (a switch on an inventory value, `case N` meaning under N, two levels deep, `balance(w, …)` the
    weight w), evaluated against `bot_inv` (health, armour, guns held, powerups, and the ammunition the

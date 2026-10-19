@@ -397,6 +397,36 @@ if (item) {
         `out of ammunition its gun weighs ${emptyW} and it takes another (${other}), fires none (${dryShot}); loaded a shot uses one (${shot}, ${left} left); rockets 3 + a box: ${box}, + the launcher: ${shortOf}; 20 + the launcher: ${one}; at most 200 (${capped})`);
     } else console.log(`(the favourite gun ${chosen} uses no ammunition: the ammunition check skipped)`);
   }
+
+  // the holdables: a bot takes one when it has none (BG_CanItemBeGrabbed), weighs a second at nothing
+  // (fw_items.c reads INVENTORY_MEDKIT), and in a fight uses the medkit under 60 health (the maximum + 25) and
+  // the personal teleporter under 40 (to a spawn point) (BotBattleUseItems)
+  {
+    const hold = async () => (await q(`SELECT hold_item h, health hp, x, y FROM ents WHERE id = ${b}`))[0];
+    const touch = async (cls) => {
+      const [it] = await q(`SELECT id FROM spawn_item('${cls}', ${pp.X + 3000}, ${pp.Y}, ${pp.Z + 3000}, 1, 0, 0)`);
+      await db.exec(`EXECUTE PROCEDURE bot_item_touch(${it.ID}, ${b})`);
+      const left = (await q(`SELECT solid s FROM ents WHERE id = ${it.ID}`))[0].S;
+      await db.exec(`DELETE FROM ents WHERE id = ${it.ID}`);
+      return left;
+    };
+    const use = async () => (await q(`SELECT bot_use_items(${b}) u FROM rdb$database`))[0].U;
+    await set('hold_item = 0, health = 100');
+    const wNone = (await q(`SELECT bot_item_weight(${b}, 'holdable_medkit') w FROM rdb$database`))[0].W;
+    await touch('holdable_medkit');
+    const kit = (await hold()).H;
+    const wHeld = (await q(`SELECT bot_item_weight(${b}, 'holdable_medkit') w, bot_inv(${b}, 'INVENTORY_MEDKIT') i FROM rdb$database`))[0];
+    const stays = await touch('holdable_teleporter');
+    await set('health = 70'); await use(); const at70 = await hold();
+    await set('health = 50'); await use(); const healed = await hold();
+    await touch('holdable_teleporter');
+    await set('health = 30'); const before = await hold();
+    const went = await use(); const after = await hold();
+    assert(kit === 2 && wHeld.I === 1 && wHeld.W === 0 && stays === 1 && at70.H === 2 && at70.HP === 70 && healed.H === 0 && healed.HP === 125
+      && went === 1 && after.H === 0 && Math.hypot(after.X - before.X, after.Y - before.Y) > 1,
+      `holdables: the medkit taken (${kit}), a second weighs ${wHeld.W} (${wNone} with none) and the teleporter is left (${stays}); at 70 health the medkit kept (${at70.H}), at 50 used: ${healed.HP}; the teleporter at 30 health: ${went ? 'teleported' : 'stayed'} ${Math.hypot(after.X - before.X, after.Y - before.Y).toFixed(0)} units`);
+    await set(`hold_item = 0, health = 100, x = ${pp.X + 1000}, y = ${pp.Y}, z = ${pp.Z}`);
+  }
   await set(`weapons = 3, enemy_id = NULL, x = ${me.X}, y = ${me.Y}, z = ${me.Z}`);
   await db.exec(`EXECUTE PROCEDURE link_ent(${b})`);
 }

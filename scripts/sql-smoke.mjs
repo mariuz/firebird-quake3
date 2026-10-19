@@ -320,6 +320,10 @@ if (pad) {
   await db.exec('UPDATE game SET warmup_end = time_ + 3.5, warmup_said = 4 WHERE id = 1');
   // (the bots hold still: once it is over, a rocket of theirs could knock us into q3dm17's void)
   await db.exec("UPDATE ents SET nextthink = 1e9 WHERE classname = 'bot'");
+  // (alive, with the railgun up: a rocket of the section before may have thrown us into the void)
+  if ((await db.query("SELECT deadflag d FROM ents WHERE id = (SELECT ent_id FROM player WHERE id = 1)")).rows[0].D) await db.exec('EXECUTE PROCEDURE player_respawn');
+  await db.exec("DELETE FROM ents WHERE classname IN ('rocket', 'grenade', 'plasma', 'bfg')");
+  await db.exec('UPDATE player SET weapons = 511, weapon = 64, pending_weapon = 0, weaponstate = 0, slugs = 50 WHERE id = 1');
   const ammo = (await db.query('SELECT slugs FROM player')).rows[0].SLUGS;
   for (let i = 0; i < 80; i++) {
     s = await tic([1, 0, 0, 0, 0, 1, 0, 1, 0]);

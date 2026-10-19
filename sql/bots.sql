@@ -628,6 +628,8 @@ BEGIN
   bit_ = CASE v WHEN 'INVENTORY_BULLETS' THEN 2 WHEN 'INVENTORY_SHELLS' THEN 3 WHEN 'INVENTORY_GRENADES' THEN 4 WHEN 'INVENTORY_ROCKETS' THEN 5
                 WHEN 'INVENTORY_LIGHTNINGAMMO' THEN 6 WHEN 'INVENTORY_SLUGS' THEN 7 WHEN 'INVENTORY_CELLS' THEN 8 WHEN 'INVENTORY_BFGAMMO' THEN 9 ELSE 0 END;
   IF (bit_ > 0) THEN RETURN ent_ammo(eid, bit_);
+  IF (v = 'INVENTORY_TELEPORTER') THEN RETURN IIF((SELECT e.hold_item FROM ents e WHERE e.id = :eid) = 1, 1, 0);
+  IF (v = 'INVENTORY_MEDKIT') THEN RETURN IIF((SELECT e.hold_item FROM ents e WHERE e.id = :eid) = 2, 1, 0);
   RETURN CASE v WHEN 'INVENTORY_QUAD' THEN IIF(qf > t, 1, 0) WHEN 'INVENTORY_HASTE' THEN IIF(hf > t, 1, 0) WHEN 'INVENTORY_INVISIBILITY' THEN IIF(inf > t, 1, 0)
                 WHEN 'INVENTORY_REGEN' THEN IIF(rf > t, 1, 0) WHEN 'INVENTORY_ENVIRONMENTSUIT' THEN IIF(ef > t, 1, 0) ELSE 0 END;
 END^
@@ -660,8 +662,8 @@ END^
 -- takes to get there (a straight line at run speed, height counted twice, for the AAS's travel time). One it
 -- took itself and that is still to come back is a goal when the trip takes longer than the wait (avoid time
 -- minus 0.9 of the travel time, as botlib has it): the bot times it. One gone that another took is not known
--- to come back. Holdables are left out (the bots carry none), and the flight (they have no use for it);
--- ammunition is weighed by how much of it the bot has (fw_items.c's INVENTORY_ROCKETS …)
+-- to come back. The flight is left out (they have no use for it); ammunition is weighed by how much of it
+-- the bot has (fw_items.c's INVENTORY_ROCKETS …), a holdable by whether it carries one
 CREATE OR ALTER FUNCTION bot_choose_ltg (eid INTEGER) RETURNS INTEGER
 AS
 DECLARE x DOUBLE PRECISION; DECLARE y DOUBLE PRECISION; DECLARE z DOUBLE PRECISION; DECLARE t DOUBLE PRECISION;
@@ -673,7 +675,7 @@ BEGIN
   SELECT e.x, e.y, e.z FROM ents e WHERE e.id = :eid INTO x, y, z;
   FOR SELECT g.id, g.item, g.x, g.y, g.z, g.solid, (SELECT a.avoid_until FROM bot_avoid a WHERE a.ent_id = :eid AND a.item_id = g.id)
         FROM ents g JOIN item_defs i ON i.cls = g.item
-       WHERE g.classname = 'item' AND i.kind IN ('H', 'A', 'W', 'P', 'M') AND NOT (i.kind = 'P' AND i.bit = 32)
+       WHERE g.classname = 'item' AND i.kind IN ('H', 'A', 'W', 'P', 'M', 'O') AND NOT (i.kind = 'P' AND i.bit = 32)
         INTO gid, cls, gx, gy, gz, sol, av
   DO
   BEGIN
@@ -707,7 +709,7 @@ BEGIN
   END
   FOR SELECT g.id, g.item, g.x, g.y, g.z, g.solid, (SELECT a.avoid_until FROM bot_avoid a WHERE a.ent_id = :eid AND a.item_id = g.id)
         FROM ents g JOIN item_defs i ON i.cls = g.item
-       WHERE g.classname = 'item' AND i.kind IN ('H', 'A', 'W', 'P', 'M') AND NOT (i.kind = 'P' AND i.bit = 32)
+       WHERE g.classname = 'item' AND i.kind IN ('H', 'A', 'W', 'P', 'M', 'O') AND NOT (i.kind = 'P' AND i.bit = 32)
          AND ABS(g.x - :x) < :range_ * 320 AND ABS(g.y - :y) < :range_ * 320
         INTO gid, cls, gx, gy, gz, sol, av
   DO
@@ -930,6 +932,12 @@ BEGIN
            e.haste_finished = IIF(:bit_ = 4, MAXVALUE(e.haste_finished, now_()) + :qty, e.haste_finished),
            e.invis_finished = IIF(:bit_ = 8, MAXVALUE(e.invis_finished, now_()) + :qty, e.invis_finished),
            e.regen_finished = IIF(:bit_ = 16, MAXVALUE(e.regen_finished, now_()) + :qty, e.regen_finished) WHERE e.id = :other;
+  ELSE IF (kind = 'O') THEN
+  BEGIN
+    -- Pickup_Holdable; BG_CanItemBeGrabbed: one at a time
+    IF (EXISTS (SELECT 1 FROM ents e WHERE e.id = :other AND e.hold_item <> 0)) THEN EXIT;
+    UPDATE ents e SET e.hold_item = :bit_ WHERE e.id = :other;
+  END
   ELSE IF (kind = 'M') THEN
   BEGIN
     -- Pickup_Ammo; BG_CanItemBeGrabbed leaves it at 200
@@ -941,6 +949,29 @@ BEGIN
   EXECUTE PROCEDURE item_taken(item, IIF(kind = 'W', 5, resp));
   -- botlib's avoid goal: this one comes back in its respawn time
   UPDATE OR INSERT INTO bot_avoid (ent_id, item_id, avoid_until) VALUES (:other, :item, now_() + IIF(:kind = 'W', 5, :resp)) MATCHING (ent_id, item_id);
+END^
+
+-- BotBattleUseItems (ai_dmq3.c): in a fight, under 40 health a bot with the personal teleporter uses it (to a
+-- spawn point, SelectSpawnPoint), under 60 one with the medkit (its health to the maximum + 25). Returns 1
+-- when it teleported (the think is over: it is elsewhere)
+CREATE OR ALTER FUNCTION bot_use_items (eid INTEGER) RETURNS SMALLINT
+AS
+DECLARE hp INTEGER; DECLARE h SMALLINT; DECLARE x DOUBLE PRECISION; DECLARE y DOUBLE PRECISION; DECLARE z DOUBLE PRECISION; DECLARE yaw DOUBLE PRECISION;
+BEGIN
+  SELECT e.health, e.hold_item FROM ents e WHERE e.id = :eid INTO hp, h;
+  IF (h = 1 AND hp < 40) THEN
+  BEGIN
+    UPDATE ents e SET e.hold_item = 0 WHERE e.id = :eid;
+    EXECUTE PROCEDURE select_spawn(eid) RETURNING_VALUES x, y, z, yaw;
+    IF (x IS NOT NULL) THEN EXECUTE PROCEDURE teleport_ent(eid, x, y, z, COALESCE(yaw, 0));
+    RETURN 1;
+  END
+  IF (h = 2 AND hp < 60) THEN
+  BEGIN
+    UPDATE ents e SET e.hold_item = 0, e.health = e.max_health + 25 WHERE e.id = :eid;
+    EXECUTE PROCEDURE snd(eid, 3, 'sound/items/use_medkit.wav', 1, 1);
+  END
+  RETURN 0;
 END^
 
 -- ── pain, death, respawn ─────────────────────────────────────────────────
@@ -997,7 +1028,7 @@ BEGIN
   EXECUTE PROCEDURE body_release(eid);
   EXECUTE PROCEDURE select_spawn(eid) RETURNING_VALUES x, y, z, yaw;
   UPDATE ents e SET e.x = :x, e.y = :y, e.z = :z + 9, e.yaw = COALESCE(:yaw, 0), e.ideal_yaw = COALESCE(:yaw, 0), e.pitch = 0, e.vx = 0, e.vy = 0, e.vz = 0,
-         e.solid = 3, e.movetype = 4, e.takedamage = 2, e.alpha = 0, e.deadflag = 0, e.viewheight = 26, e.maxz = 32, e.attack_crouch = NULL, e.health = 125, e.armor = 0, e.weapons = 3, e.weapon = 2,
+         e.solid = 3, e.movetype = 4, e.takedamage = 2, e.alpha = 0, e.deadflag = 0, e.viewheight = 26, e.maxz = 32, e.attack_crouch = NULL, e.hold_item = 0, e.health = 125, e.armor = 0, e.weapons = 3, e.weapon = 2,
          e.ammo2 = IIF((SELECT g.gametype FROM game g WHERE g.id = 1) = 3, 50, 100), e.ammo3 = 0, e.ammo4 = 0, e.ammo5 = 0, e.ammo6 = 0, e.ammo7 = 0, e.ammo8 = 0, e.ammo9 = 0,
          e.flags = 32, e.st = 'stand', e.legs_anim = 22, e.legs_time = :t, e.torso_anim = 11, e.torso_time = :t, e.enemy_id = NULL, e.goal_id = NULL, e.nbg_id = NULL, e.nbg_check = NULL,
          e.attack_finished = :t + 1, e.teleport_time = :t + 0.3e0, e.lx = NULL, e.nextthink = :t + 0.1e0, e.think = 'bot_think', e.respawn_time = 0,
@@ -1247,6 +1278,12 @@ BEGIN
     UPDATE ents e SET e.enemy_id = :enemy, e.search_time = :srch, e.st = 'run', e.ideal_yaw = vectoyaw(:ex - :x, :ey - :y), e.goal_id = IIF(:fresh = 1, NULL, e.goal_id),
            e.attack_finished = :af WHERE e.id = :eid;
     EXECUTE PROCEDURE change_yaw(eid);
+    -- BotBattleUseItems: under 40 health it teleports away, under 60 it uses its medkit
+    IF (bot_use_items(eid) = 1) THEN
+    BEGIN
+      UPDATE ents e SET e.nextthink = :nt WHERE e.id = :eid;
+      EXIT;
+    END
     -- in the air (a jump pad, a knock): nothing to do but aim
     IF (BIN_AND(flags, 512) = 0 OR tt > t) THEN
     BEGIN
