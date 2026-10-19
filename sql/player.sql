@@ -406,7 +406,8 @@ BEGIN
          e.solid = 3, e.movetype = 3, e.clipmask = 33619969, e.health = 125, e.max_health = 100, e.takedamage = 2, e.mass = 200,
          e.flags = BIN_AND(e.flags, 16), e.deadflag = 0, e.model_id = NULL, e.alpha = 1, e.legs_anim = 22, e.legs_time = :t, e.torso_anim = 11, e.torso_time = :t,
          e.weapon = 2, e.teleport_time = :t + 0.3e0, e.lx = NULL WHERE e.id = :pe;
-  UPDATE player p SET p.armor = 0, p.bullets = 100, p.shells = 0, p.grenades = 0, p.rockets = 0, p.lightning = 0, p.slugs = 0, p.cells = 0, p.bfg = 0,
+  -- (ClientSpawn: the machinegun with 100 bullets, 50 in team play)
+  UPDATE player p SET p.armor = 0, p.bullets = IIF((SELECT g.gametype FROM game g WHERE g.id = 1) = 3, 50, 100), p.shells = 0, p.grenades = 0, p.rockets = 0, p.lightning = 0, p.slugs = 0, p.cells = 0, p.bfg = 0,
          p.weapons = 3, p.weapon = 2, p.pending_weapon = 0, p.weaponstate = 0, p.attack_finished = :t + 0.3e0, p.attack_start = 0, p.pain_finished = 0, p.punchangle = 0, p.view_ofs = 26, p.ducked = 0,
          p.dmg_take = 0, p.dmg_save = 0, p.dmg_time = -10, p.bonus_time = -10, p.quad_finished = 0, p.haste_finished = 0, p.invis_finished = 0, p.regen_finished = 0, p.enviro_finished = 0, p.flight_finished = 0,
          p.holdable = 0, p.jump_released = 1, p.air_finished = :t + 12, p.drown_dmg = 2, p.pitch = 0, p.stepz = 0, p.dead_time = 0, p.weapon_sound = 0, p.health_decay = :t + 1, p.spawn_protect = :t + 0.5e0 WHERE p.id = 1;

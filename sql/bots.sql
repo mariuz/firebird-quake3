@@ -295,13 +295,13 @@ END^
 -- BotMoveToGoal over the waypoint graph (waypoints.sql): a step along the route to the target entity.
 -- Returns 1 when it stepped, 0 when the step was blocked, -1 when there is no route at all
 -- BotCanAndWantsToRocketJump: a rocket launcher, 60 health at least and 90 unless it has 40 armour, no quad,
--- and a character that likes weapon jumping (0.5 or more). The bots' ammunition is not counted here
+-- and a character that likes weapon jumping (0.5 or more), with three rockets at least
 CREATE OR ALTER FUNCTION bot_can_rj (eid INTEGER) RETURNS SMALLINT
 AS
 DECLARE w INTEGER; DECLARE hp INTEGER; DECLARE av INTEGER; DECLARE qf DOUBLE PRECISION;
 BEGIN
   SELECT e.weapons, e.health, e.armor, e.quad_finished FROM ents e WHERE e.id = :eid INTO w, hp, av, qf;
-  IF (w IS NULL OR BIN_AND(w, 16) = 0 OR hp < 60 OR (hp < 90 AND COALESCE(av, 0) < 40) OR qf > now_()) THEN RETURN 0;
+  IF (w IS NULL OR BIN_AND(w, 16) = 0 OR ent_ammo(eid, 5) < 3 OR hp < 60 OR (hp < 90 AND COALESCE(av, 0) < 40) OR qf > now_()) THEN RETURN 0;
   IF (EXISTS (SELECT 1 FROM ents e JOIN bot_defs b ON b.name = e.bot JOIN bot_chatchar c ON c.bot = e.bot AND c.skill = b.skill AND c.ckey = 'weaponjumping'
                WHERE e.id = :eid AND c.val < 0.5e0)) THEN RETURN 0;
   RETURN 1;
@@ -320,6 +320,7 @@ BEGIN
          e.flags = BIN_AND(e.flags, BIN_NOT(512)), e.attack_finished = MAXVALUE(e.attack_finished, now_() + 0.8e0) WHERE e.id = :eid;
   EXECUTE PROCEDURE eye_of(eid) RETURNING_VALUES ex, ey, ez, fx, fy, fz;
   EXECUTE PROCEDURE fire_weapon(eid, 16, ex, ey, ez - 14, 0, 0, -1, 1);
+  EXECUTE PROCEDURE bot_add_ammo(eid, 5, -1);
   EXECUTE PROCEDURE snd(eid, 2, 'sound/player/' || COALESCE(pm, 'sarge') || '/jump1.wav', 1, 1);
   EXECUTE PROCEDURE set_anims(eid, 18, 7);
   UPDATE bot_routes r SET r.rj_x = :tx, r.rj_y = :ty, r.rj_z = :tz, r.rj_until = now_() + 3, r.rj_hold = NULL WHERE r.ent_id = :eid;
@@ -606,7 +607,7 @@ BEGIN
 END^
 
 -- An inventory value of the botfiles' (inv.h's INVENTORY_*) for a bot: health, armour, a gun held (1 or 0),
--- the powerups it carries; ammunition is 50 for a gun held and 0 for one not (the bots count none)
+-- the powerups it carries; its ammunition of each kind
 CREATE OR ALTER FUNCTION bot_inv (eid INTEGER, v VARCHAR(32)) RETURNS DOUBLE PRECISION
 AS
 DECLARE hp INTEGER; DECLARE av INTEGER; DECLARE w INTEGER; DECLARE bit_ INTEGER; DECLARE t DOUBLE PRECISION;
@@ -624,9 +625,9 @@ BEGIN
                 WHEN 'INVENTORY_ROCKETLAUNCHER' THEN 16 WHEN 'INVENTORY_LIGHTNING' THEN 32 WHEN 'INVENTORY_RAILGUN' THEN 64 WHEN 'INVENTORY_PLASMAGUN' THEN 128
                 WHEN 'INVENTORY_BFG10K' THEN 256 ELSE 0 END;
   IF (bit_ > 0) THEN RETURN IIF(BIN_AND(w, bit_) <> 0, 1, 0);
-  bit_ = CASE v WHEN 'INVENTORY_BULLETS' THEN 2 WHEN 'INVENTORY_SHELLS' THEN 4 WHEN 'INVENTORY_GRENADES' THEN 8 WHEN 'INVENTORY_ROCKETS' THEN 16
-                WHEN 'INVENTORY_LIGHTNINGAMMO' THEN 32 WHEN 'INVENTORY_SLUGS' THEN 64 WHEN 'INVENTORY_CELLS' THEN 128 WHEN 'INVENTORY_BFGAMMO' THEN 256 ELSE 0 END;
-  IF (bit_ > 0) THEN RETURN IIF(BIN_AND(w, bit_) <> 0, 50, 0);
+  bit_ = CASE v WHEN 'INVENTORY_BULLETS' THEN 2 WHEN 'INVENTORY_SHELLS' THEN 3 WHEN 'INVENTORY_GRENADES' THEN 4 WHEN 'INVENTORY_ROCKETS' THEN 5
+                WHEN 'INVENTORY_LIGHTNINGAMMO' THEN 6 WHEN 'INVENTORY_SLUGS' THEN 7 WHEN 'INVENTORY_CELLS' THEN 8 WHEN 'INVENTORY_BFGAMMO' THEN 9 ELSE 0 END;
+  IF (bit_ > 0) THEN RETURN ent_ammo(eid, bit_);
   RETURN CASE v WHEN 'INVENTORY_QUAD' THEN IIF(qf > t, 1, 0) WHEN 'INVENTORY_HASTE' THEN IIF(hf > t, 1, 0) WHEN 'INVENTORY_INVISIBILITY' THEN IIF(inf > t, 1, 0)
                 WHEN 'INVENTORY_REGEN' THEN IIF(rf > t, 1, 0) WHEN 'INVENTORY_ENVIRONMENTSUIT' THEN IIF(ef > t, 1, 0) ELSE 0 END;
 END^
@@ -659,8 +660,8 @@ END^
 -- takes to get there (a straight line at run speed, height counted twice, for the AAS's travel time). One it
 -- took itself and that is still to come back is a goal when the trip takes longer than the wait (avoid time
 -- minus 0.9 of the travel time, as botlib has it): the bot times it. One gone that another took is not known
--- to come back. Ammunition and holdables are left out (the bots count no ammunition and carry no holdable),
--- and the flight (they have no use for it)
+-- to come back. Holdables are left out (the bots carry none), and the flight (they have no use for it);
+-- ammunition is weighed by how much of it the bot has (fw_items.c's INVENTORY_ROCKETS …)
 CREATE OR ALTER FUNCTION bot_choose_ltg (eid INTEGER) RETURNS INTEGER
 AS
 DECLARE x DOUBLE PRECISION; DECLARE y DOUBLE PRECISION; DECLARE z DOUBLE PRECISION; DECLARE t DOUBLE PRECISION;
@@ -672,7 +673,7 @@ BEGIN
   SELECT e.x, e.y, e.z FROM ents e WHERE e.id = :eid INTO x, y, z;
   FOR SELECT g.id, g.item, g.x, g.y, g.z, g.solid, (SELECT a.avoid_until FROM bot_avoid a WHERE a.ent_id = :eid AND a.item_id = g.id)
         FROM ents g JOIN item_defs i ON i.cls = g.item
-       WHERE g.classname = 'item' AND i.kind IN ('H', 'A', 'W', 'P') AND NOT (i.kind = 'P' AND i.bit = 32)
+       WHERE g.classname = 'item' AND i.kind IN ('H', 'A', 'W', 'P', 'M') AND NOT (i.kind = 'P' AND i.bit = 32)
         INTO gid, cls, gx, gy, gz, sol, av
   DO
   BEGIN
@@ -706,7 +707,7 @@ BEGIN
   END
   FOR SELECT g.id, g.item, g.x, g.y, g.z, g.solid, (SELECT a.avoid_until FROM bot_avoid a WHERE a.ent_id = :eid AND a.item_id = g.id)
         FROM ents g JOIN item_defs i ON i.cls = g.item
-       WHERE g.classname = 'item' AND i.kind IN ('H', 'A', 'W', 'P') AND NOT (i.kind = 'P' AND i.bit = 32)
+       WHERE g.classname = 'item' AND i.kind IN ('H', 'A', 'W', 'P', 'M') AND NOT (i.kind = 'P' AND i.bit = 32)
          AND ABS(g.x - :x) < :range_ * 320 AND ABS(g.y - :y) < :range_ * 320
         INTO gid, cls, gx, gy, gz, sol, av
   DO
@@ -749,6 +750,9 @@ BEGIN
     END
     IF (best IS NOT NULL) THEN RETURN best;
   END
+  -- (without the files: the guns with ammunition, by distance)
+  w = BIN_AND(w, 1 + IIF(ent_ammo(eid, 2) > 0, 2, 0) + IIF(ent_ammo(eid, 3) > 0, 4, 0) + IIF(ent_ammo(eid, 4) > 0, 8, 0) + IIF(ent_ammo(eid, 5) > 0, 16, 0)
+                   + IIF(ent_ammo(eid, 6) > 0, 32, 0) + IIF(ent_ammo(eid, 7) > 0, 64, 0) + IIF(ent_ammo(eid, 8) > 0, 128, 0) + IIF(ent_ammo(eid, 9) > 0, 256, 0));
   IF (BIN_AND(w, 64) <> 0 AND dist > 500) THEN RETURN 64;
   IF (BIN_AND(w, 16) <> 0 AND dist > 180) THEN RETURN 16;
   IF (BIN_AND(w, 32) <> 0 AND dist < 700) THEN RETURN 32;
@@ -766,7 +770,8 @@ END^
 -- BotAggression (ai_dmq3.c): how keen on a fight the bot is, 0 to 100. With the quad 70 (unless it holds the
 -- gauntlet far from the enemy); none with the enemy 200 above, under 60 health, or under 80 without 40 armour;
 -- else by the best gun it holds: BFG 100, railgun 95, lightning and rockets 90, plasma 85, grenades 80,
--- shotgun 50, nothing better 0. The port's bots count no ammunition: a gun held is a gun loaded.
+-- shotgun 50, nothing better 0; each gun with enough ammunition for a fight (more than 7 for the BFG, 5 slugs,
+-- 50 lightning, 5 rockets, 40 cells, 10 grenades, 10 shells).
 -- BotWantsToRetreat is under 50, BotWantsToChase over 50.
 CREATE OR ALTER FUNCTION bot_aggression (eid INTEGER, enemy INTEGER) RETURNS INTEGER
 AS
@@ -780,12 +785,14 @@ BEGIN
   IF (ez - z > 200) THEN RETURN 0;
   IF (hp < 60) THEN RETURN 0;
   IF (hp < 80 AND COALESCE(av, 0) < 40) THEN RETURN 0;
-  IF (BIN_AND(w, 256) <> 0) THEN RETURN 100;
-  IF (BIN_AND(w, 64) <> 0) THEN RETURN 95;
-  IF (BIN_AND(w, 32 + 16) <> 0) THEN RETURN 90;
-  IF (BIN_AND(w, 128) <> 0) THEN RETURN 85;
-  IF (BIN_AND(w, 8) <> 0) THEN RETURN 80;
-  IF (BIN_AND(w, 4) <> 0) THEN RETURN 50;
+  -- (a gun with enough ammunition for a fight)
+  IF (BIN_AND(w, 256) <> 0 AND ent_ammo(eid, 9) > 7) THEN RETURN 100;
+  IF (BIN_AND(w, 64) <> 0 AND ent_ammo(eid, 7) > 5) THEN RETURN 95;
+  IF (BIN_AND(w, 32) <> 0 AND ent_ammo(eid, 6) > 50) THEN RETURN 90;
+  IF (BIN_AND(w, 16) <> 0 AND ent_ammo(eid, 5) > 5) THEN RETURN 90;
+  IF (BIN_AND(w, 128) <> 0 AND ent_ammo(eid, 8) > 40) THEN RETURN 85;
+  IF (BIN_AND(w, 8) <> 0 AND ent_ammo(eid, 4) > 10) THEN RETURN 80;
+  IF (BIN_AND(w, 4) <> 0 AND ent_ammo(eid, 3) > 10) THEN RETURN 50;
   RETURN 0;
 END^
 
@@ -872,6 +879,17 @@ BEGIN
       RETURNING_VALUES tf, ttx, tty, ttz, tnx, tny, tnz, tsf, tct, tas, tss, thit;
     IF (thit IS NOT NULL AND thit <> enemy AND on_same_team(eid, thit) = 1) THEN EXIT;
   END
+  -- PM_Weapon: a gun out of ammunition does not fire (EV_NOAMMO) and loses half a second; BotChooseWeapon's
+  -- weights, which count the ammunition, take another. A shot uses one
+  IF (weapon_ammo(w) > 0) THEN
+  BEGIN
+    IF (ent_ammo(eid, weapon_ammo(w)) <= 0) THEN
+    BEGIN
+      UPDATE ents e SET e.attack_finished = now_() + 0.5e0 WHERE e.id = :eid;
+      EXIT;
+    END
+    EXECUTE PROCEDURE bot_add_ammo(eid, weapon_ammo(w), -1);
+  END
   EXECUTE PROCEDURE fire_weapon(eid, w, ex + fx * 14, ey + fy * 14, ez + fz * 14, dx, dy, dz, 1);
   EXECUTE PROCEDURE set_anims(eid, NULL, IIF(w = 1, 8, 7));
 END^
@@ -899,8 +917,12 @@ BEGIN
   END
   ELSE IF (kind = 'W') THEN
   BEGIN
-    IF (BIN_AND(have, bit_) <> 0 AND RAND() < 0.7e0) THEN EXIT;   -- usually leaves what it has
+    -- Pickup_Weapon: the gun and its quantity of ammunition; a gun of the map's (not one dropped, not in team
+    -- play) gives only what is short of that quantity, or a single shot when the bot has as much already
+    IF (NOT EXISTS (SELECT 1 FROM ents i WHERE i.id = :item AND i.think = 'remove') AND (SELECT g.gametype FROM game g WHERE g.id = 1) <> 3) THEN
+      qty = IIF(ent_ammo(other, weapon_ammo(bit_)) < qty, qty - ent_ammo(other, weapon_ammo(bit_)), 1);
     UPDATE ents e SET e.weapons = BIN_OR(e.weapons, :bit_) WHERE e.id = :other;
+    IF (weapon_ammo(bit_) > 0) THEN EXECUTE PROCEDURE bot_add_ammo(other, weapon_ammo(bit_), qty);
   END
   ELSE IF (kind = 'P' AND bit_ <> 32) THEN
     UPDATE ents e SET e.quad_finished = IIF(:bit_ = 1, MAXVALUE(e.quad_finished, now_()) + :qty, e.quad_finished),
@@ -910,7 +932,9 @@ BEGIN
            e.regen_finished = IIF(:bit_ = 16, MAXVALUE(e.regen_finished, now_()) + :qty, e.regen_finished) WHERE e.id = :other;
   ELSE IF (kind = 'M') THEN
   BEGIN
-    IF (RAND() < 0.5e0) THEN EXIT;
+    -- Pickup_Ammo; BG_CanItemBeGrabbed leaves it at 200
+    IF (ent_ammo(other, bit_) >= 200) THEN EXIT;
+    EXECUTE PROCEDURE bot_add_ammo(other, bit_, qty);
   END
   ELSE EXIT;
   EXECUTE PROCEDURE snd(other, 3, snd_, 1, 1);
@@ -974,6 +998,7 @@ BEGIN
   EXECUTE PROCEDURE select_spawn(eid) RETURNING_VALUES x, y, z, yaw;
   UPDATE ents e SET e.x = :x, e.y = :y, e.z = :z + 9, e.yaw = COALESCE(:yaw, 0), e.ideal_yaw = COALESCE(:yaw, 0), e.pitch = 0, e.vx = 0, e.vy = 0, e.vz = 0,
          e.solid = 3, e.movetype = 4, e.takedamage = 2, e.alpha = 0, e.deadflag = 0, e.viewheight = 26, e.maxz = 32, e.attack_crouch = NULL, e.health = 125, e.armor = 0, e.weapons = 3, e.weapon = 2,
+         e.ammo2 = IIF((SELECT g.gametype FROM game g WHERE g.id = 1) = 3, 50, 100), e.ammo3 = 0, e.ammo4 = 0, e.ammo5 = 0, e.ammo6 = 0, e.ammo7 = 0, e.ammo8 = 0, e.ammo9 = 0,
          e.flags = 32, e.st = 'stand', e.legs_anim = 22, e.legs_time = :t, e.torso_anim = 11, e.torso_time = :t, e.enemy_id = NULL, e.goal_id = NULL, e.nbg_id = NULL, e.nbg_check = NULL,
          e.attack_finished = :t + 1, e.teleport_time = :t + 0.3e0, e.lx = NULL, e.nextthink = :t + 0.1e0, e.think = 'bot_think', e.respawn_time = 0,
          e.quad_finished = 0, e.haste_finished = 0, e.invis_finished = 0, e.regen_finished = 0, e.enviro_finished = 0, e.health_tick = :t + 1,
@@ -1438,6 +1463,7 @@ BEGIN
          e.minx = -15, e.miny = -15, e.minz = -24, e.maxx = 15, e.maxy = 15, e.maxz = 32, e.viewheight = 26,
          e.solid = 3, e.movetype = 4, e.clipmask = 33619969, e.health = 125, e.max_health = 100, e.takedamage = 2, e.mass = 200, e.flags = 32,
          e.yaw_speed = bot_char((SELECT b.skill FROM bot_defs b WHERE b.name = :bname), 'turn'), e.st = 'stand', e.weapons = 3, e.weapon = 2, e.legs_time = :t, e.torso_time = :t,
+         e.ammo2 = IIF((SELECT g.gametype FROM game g WHERE g.id = 1) = 3, 50, 100),
          e.think = 'bot_think', e.nextthink = :t + 0.5e0 + RAND() * 0.5e0, e.attack_finished = :t + 2, e.enter_time = :t WHERE e.id = :id;
   -- its turning from its character file (CHARACTERISTIC_VIEW_MAXCHANGE degrees a second, a think a tenth of it)
   UPDATE ents e SET e.yaw_speed = COALESCE(bot_cv(:id, 'view_maxchange', NULL) / 10, e.yaw_speed) WHERE e.id = :id;

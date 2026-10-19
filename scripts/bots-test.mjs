@@ -164,13 +164,14 @@ if (item) {
   const me = (await q(`SELECT z FROM ents WHERE id = ${pe}`))[0];
   await set(`health = 100, armor = 0, weapons = 3, quad_finished = 0, z = ${me.Z}`);
   const mg = await aggr();
-  await set('weapons = 3 + 64'); const rail = await aggr();
+  await set('weapons = 3 + 64, ammo7 = 3'); const dry = await aggr();   // (a railgun with 3 slugs is no railgun to fight with)
+  await set('weapons = 3 + 64, ammo2 = 100, ammo3 = 50, ammo4 = 50, ammo5 = 50, ammo6 = 100, ammo7 = 50, ammo8 = 100, ammo9 = 50'); const rail = await aggr();
   await set('health = 70'); const hurt = await aggr();
   await set('armor = 50'); const armoured = await aggr();
   await set('health = 50'); const low = await aggr();
   await set(`weapons = 3, health = 100, quad_finished = 1e9, weapon = 2`); const quad = await aggr();
-  assert(mg === 0 && rail === 95 && hurt === 0 && armoured === 95 && low === 0 && quad === 70,
-    `aggression: machinegun ${mg}, railgun ${rail}, at 70 health ${hurt} (with 50 armour ${armoured}), at 50 ${low}, quad ${quad}`);
+  assert(mg === 0 && dry === 0 && rail === 95 && hurt === 0 && armoured === 95 && low === 0 && quad === 70,
+    `aggression: machinegun ${mg}, railgun with 3 slugs ${dry}, railgun ${rail}, at 70 health ${hurt} (with 50 armour ${armoured}), at 50 ${low}, quad ${quad}`);
   await set('quad_finished = 0, health = 100, armor = 0');
   // the retreat's goal is an item in sight; a health item first when hurt (the bot stands on one)
   const hi = (await q("SELECT FIRST 1 e.x, e.y, e.z FROM ents e JOIN item_defs d ON d.cls = e.item WHERE d.kind = 'H' AND e.solid = 1 ORDER BY e.id"))[0];
@@ -244,7 +245,7 @@ if (item) {
     const find = async () => (await q(`SELECT bot_find_target(${b}) t FROM rdb$database`))[0].T;
     if ((await q(`SELECT visible(${b}, ${b2}) v FROM rdb$database`))[0].V === 1) {
       const weak = await find();
-      await bset(b, 'weapons = 67');
+      await bset(b, 'weapons = 67, ammo2 = 100, ammo3 = 50, ammo4 = 50, ammo5 = 50, ammo6 = 100, ammo7 = 50, ammo8 = 100, ammo9 = 50');
       const armed = await find();
       await bset(b, 'weapons = 3');
       await bset(b2, `yaw = ${spot.YAW + 180}`);
@@ -354,7 +355,7 @@ if (item) {
 
   // BotChooseBestFightWeapon: with every gun, the one its character weighs the most (bots/NAME_w.c); the
   // lightning gun weighs a tenth past 768 across
-  await set(`weapons = 511, enemy_id = ${pe}`);
+  await set(`weapons = 511, ammo2 = 100, ammo3 = 50, ammo4 = 50, ammo5 = 50, ammo6 = 100, ammo7 = 50, ammo8 = 100, ammo9 = 50, enemy_id = ${pe}`);
   const gw = [];
   for (let bit = 1; bit <= 256; bit *= 2) gw.push([bit, (await q(`SELECT bot_item_weight(${b}, 'weapon:${bit}') w FROM rdb$database`))[0].W]);
   const fav = gw.reduce((a, c) => (c[1] > a[1] ? c : a));
@@ -364,6 +365,38 @@ if (item) {
   await set(`x = ${pp.X + 1000}, y = ${pp.Y}`); const lgFar = (await q(`SELECT bot_item_weight(${b}, 'weapon:32') w FROM rdb$database`))[0].W;
   assert(chosen === fav[0] && fav[1] > 0 && lgNear > 0 && Math.abs(lgFar - Math.trunc(lgNear * 0.1)) < 1e-6,
     `the favourite gun (${gw.map(([k, v]) => `${k}:${v}`).join(' ')}): ${chosen}; the lightning gun ${lgNear} near, ${lgFar} far`);
+
+  // its ammunition (ps.ammo): the favourite gun emptied weighs nothing (fw_weap.c's weights count the ammunition)
+  // and another is chosen; empty it does not fire (PM_Weapon's EV_NOAMMO), loaded a shot uses one; an ammunition
+  // box adds its quantity (Pickup_Ammo), the map's gun only what is short of its quantity, or one (Pickup_Weapon)
+  {
+    const ak = { 2: 2, 4: 3, 8: 4, 16: 5, 32: 6, 64: 7, 128: 8, 256: 9 }[chosen];
+    if (ak) {
+      const ammo = async (k) => (await q(`SELECT ammo${k} n FROM ents WHERE id = ${b}`))[0].N;
+      const shots = async () => (await q(`SELECT acc_shots n FROM ents WHERE id = ${b}`))[0].N;
+      await set(`ammo${ak} = 0, weapon = ${chosen}`);
+      const emptyW = (await q(`SELECT bot_item_weight(${b}, 'weapon:${chosen}') w FROM rdb$database`))[0].W;
+      const other = (await q(`SELECT bot_best_weapon(${b}, 300) w FROM rdb$database`))[0].W;
+      let s0 = await shots();
+      await db.exec(`EXECUTE PROCEDURE bot_fire(${b})`);
+      const dryShot = (await shots()) - s0;
+      await set(`ammo${ak} = 2`);
+      s0 = await shots();
+      await db.exec(`EXECUTE PROCEDURE bot_fire(${b})`);
+      const shot = (await shots()) - s0, left = await ammo(ak);
+      const touch = async (cls) => {
+        const [it] = await q(`SELECT id FROM spawn_item('${cls}', ${pp.X + 3000}, ${pp.Y}, ${pp.Z + 3000}, 1, 0, 0)`);
+        await db.exec(`EXECUTE PROCEDURE bot_item_touch(${it.ID}, ${b})`);
+        await db.exec(`DELETE FROM ents WHERE id = ${it.ID}`);
+      };
+      await set('ammo5 = 3'); await touch('ammo_rockets'); const box = await ammo(5);
+      await touch('weapon_rocketlauncher'); const shortOf = await ammo(5);
+      await set('ammo5 = 20'); await touch('weapon_rocketlauncher'); const one = await ammo(5);
+      await set('ammo5 = 198'); await touch('ammo_rockets'); const capped = await ammo(5);
+      assert(emptyW === 0 && other !== chosen && dryShot === 0 && shot === 1 && left === 1 && box === 8 && shortOf === 10 && one === 21 && capped === 200,
+        `out of ammunition its gun weighs ${emptyW} and it takes another (${other}), fires none (${dryShot}); loaded a shot uses one (${shot}, ${left} left); rockets 3 + a box: ${box}, + the launcher: ${shortOf}; 20 + the launcher: ${one}; at most 200 (${capped})`);
+    } else console.log(`(the favourite gun ${chosen} uses no ammunition: the ammunition check skipped)`);
+  }
   await set(`weapons = 3, enemy_id = NULL, x = ${me.X}, y = ${me.Y}, z = ${me.Z}`);
   await db.exec(`EXECUTE PROCEDURE link_ent(${b})`);
 }
@@ -380,7 +413,7 @@ if (item) {
     await db.exec(`UPDATE ents SET st = 'dead', deadflag = 1, health = 0, solid = 0, respawn_time = 1e9, enemy_id = NULL WHERE classname = 'bot' AND id <> ${b}`);
     await db.exec(`UPDATE ents SET flags = BIN_OR(flags, 64) WHERE id = ${pe}`);   // notarget: nothing to fight
     const tgt = (await q(`SELECT id FROM spawn_ent('info_notnull', ${e.BX}, ${e.BY_}, ${e.BZ})`))[0].ID;
-    await db.exec(`UPDATE ents SET x = ${e.AX + 20}, y = ${e.AY + 10}, z = ${e.AZ - 1}, vx = 0, vy = 0, vz = 0, health = 100, armor = 0, weapons = BIN_OR(weapons, 16), quad_finished = 0,
+    await db.exec(`UPDATE ents SET x = ${e.AX + 20}, y = ${e.AY + 10}, z = ${e.AZ - 1}, vx = 0, vy = 0, vz = 0, health = 100, armor = 0, weapons = BIN_OR(weapons, 16), ammo5 = 50, quad_finished = 0,
                    nextthink = 1e9, flags = BIN_OR(flags, 512), enemy_id = NULL, st = 'run' WHERE id = ${b}`);
     await db.exec(`EXECUTE PROCEDURE link_ent(${b})`);
     await db.exec(`DELETE FROM bot_routes WHERE ent_id = ${b}`);
@@ -535,7 +568,7 @@ if (item) {
     if (place) break;
   }
   if (place) { await db.exec(`UPDATE ents SET x = ${place[0]}, y = ${place[1]}, z = ${place[2]}, yaw = ${place[3]}, vx = 0, vy = 0, vz = 0 WHERE id = ${b}`); await db.exec(`EXECUTE PROCEDURE link_ent(${b})`); }
-  await db.exec(`UPDATE ents SET weapons = BIN_OR(weapons, 16), weapon = 16, quad_finished = ${t0 + 12.5}, haste_finished = 0, invis_finished = 0, regen_finished = 0, enviro_finished = 0, health = 100 WHERE id = ${b}`);
+  await db.exec(`UPDATE ents SET weapons = BIN_OR(weapons, 16), weapon = 16, ammo5 = 10, quad_finished = ${t0 + 12.5}, haste_finished = 0, invis_finished = 0, regen_finished = 0, enviro_finished = 0, health = 100 WHERE id = ${b}`);
   const at = (await q(`SELECT x, y, z FROM ents WHERE id = ${b}`))[0];
   await db.exec(`EXECUTE PROCEDURE bot_die(${b}, ${pe}, 6)`);
   const thrown = await q(`SELECT id, TRIM(item) item, count_, vz, nextthink FROM ents WHERE classname = 'item' AND think = 'remove' AND id > ${last} ORDER BY id`);

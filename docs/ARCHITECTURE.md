@@ -486,12 +486,14 @@ A think:
    skill 3). Before all of it a grenade within 160 units (`BotCheckSnapshot`'s avoid spot) makes it step
    straight away, or 60 degrees to either side (`bot_avoid_grenade`); roaming too;
 4. with nothing in sight: goes for its long-term goal (`bot_choose_ltg`, botlib's `BotChooseLTGItem`)
-   along the graph, or wanders with random turns when there is no route. Every item (but ammunition,
-   holdables and the flight) is weighed by the bot's own item weights, `bot_item_weight`: the pak's
+   along the graph, or wanders with random turns when there is no route. Every item (but holdables and
+   the flight) is weighed by the bot's own item weights, `bot_item_weight`: the pak's
    `botfiles/bots/NAME_i.c` with `fw_items.c`, read at load by `src/itemweights.js` into `bot_iw` rows
    (a switch on an inventory value, `case N` meaning under N, two levels deep, `balance(w, …)` the
-   weight w), evaluated against `bot_inv` (health, armour, guns held, powerups; ammunition 50 for a gun
-   held). Sarge with no armour weighs the red armour 180 and 40 at 150, a rocket launcher 120 and 1
+   weight w), evaluated against `bot_inv` (health, armour, guns held, powerups, and the ammunition the
+   bot counts as the player does: `ents.ammo2` … `ammo9`, 100 bullets at the spawn and 50 in team play, a
+   shot using one, an empty gun not firing and weighing nothing, `Pickup_Ammo` and `Pickup_Weapon`'s rules
+   in `bot_item_touch`: a gun of the map's gives what is short of its quantity, or one shot). Sarge with no armour weighs the red armour 180 and 40 at 150, a rocket launcher 120 and 1
    once held. The weight over the travel time (a straight line at run speed, height twice) picks the
    goal. An item the bot took is in `bot_avoid` for its respawn time (`BotSetAvoidGoalTime`): it is a
    goal again only when the trip takes longer than the wait (the avoid time less 0.9 of the travel

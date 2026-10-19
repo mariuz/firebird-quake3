@@ -74,7 +74,7 @@ const foe = blue[0], foe2 = blue[1];
   assert(dir && mateSees !== pe && foeSees === mate.ID, `a bot never picks a teammate (red ${mate.BOT} facing us: ${mateSees ?? 'nobody'}; blue ${foe.BOT} behind it: ${foeSees === mate.ID ? mate.BOT : foeSees})`);
   // blue at 300 aims at us: with red between it fires (the rocket finds the red one first, as it may);
   // with a blue teammate between it holds its fire
-  await db.exec(`UPDATE ents SET enemy_id = ${pe}, weapons = BIN_OR(weapons, 16), weapon = 16 WHERE id = ${foe.ID}`);
+  await db.exec(`UPDATE ents SET enemy_id = ${pe}, weapons = BIN_OR(weapons, 16), weapon = 16, ammo5 = 20 WHERE id = ${foe.ID}`);
   const rockets = async () => (await q("SELECT COUNT(*) n FROM ents WHERE classname = 'rocket'"))[0].N;
   const r0 = await rockets();
   await db.exec(`EXECUTE PROCEDURE bot_fire(${foe.ID})`);
@@ -150,6 +150,9 @@ const foe = blue[0], foe2 = blue[1];
 // and orders the team (BotTeamOrders, three: the second accompanies the first, the third roams)
 {
   await loadMap(db, pak, res, mapName, { skill: 3, bots: 4, gametype: 3, team: 1 });
+  // (ClientSpawn: in team play the machinegun comes with 50 bullets, not 100)
+  const mg = (await q("SELECT (SELECT bullets FROM player) p, MIN(ammo2) lo, MAX(ammo2) hi FROM ents WHERE classname = 'bot'"))[0];
+  assert(mg.P === 50 && mg.LO === 50 && mg.HI === 50, `in team play everyone starts with 50 bullets (the player ${mg.P}, the bots ${mg.LO} to ${mg.HI})`);
   const me = (await q('SELECT ent_id e FROM player'))[0].E;
   await db.exec(`UPDATE ents SET flags = BIN_OR(flags, 16 + 64) WHERE id = ${me}`);
   const team = async (tm) => (await q(`SELECT id, bot FROM ents WHERE classname IN ('player', 'bot') AND pteam = ${tm} ORDER BY IIF(classname = 'player', 0, 1), id`));
@@ -198,7 +201,7 @@ const foe = blue[0], foe2 = blue[1];
 
   // TossClientItems in team play: the gun falls, the powerups do not
   const last = (await q('SELECT MAX(id) m FROM ents'))[0].M;
-  await db.exec(`UPDATE ents SET weapons = BIN_OR(weapons, 64), weapon = 64, quad_finished = (SELECT time_ + 10 FROM game) WHERE id = ${b2.ID}`);
+  await db.exec(`UPDATE ents SET weapons = BIN_OR(weapons, 64), weapon = 64, ammo7 = 10, quad_finished = (SELECT time_ + 10 FROM game) WHERE id = ${b2.ID}`);
   await db.exec(`EXECUTE PROCEDURE bot_die(${b2.ID}, ${red[0].ID}, 17)`);
   const fell = (await q(`SELECT TRIM(item) i FROM ents WHERE classname = 'item' AND think = 'remove' AND id > ${last}`)).map((r) => r.I);
   assert(fell.join() === 'weapon_railgun', `a bot killed in team play drops its gun but not its quad (${fell.join(', ')})`);

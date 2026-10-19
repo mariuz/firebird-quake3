@@ -924,6 +924,29 @@ BEGIN
 END^
 
 -- Add_Ammo: up to 200
+-- anyone's ammunition of a kind (2 bullets … 9 BFG): the player's from player, a bot's from its entity
+CREATE OR ALTER FUNCTION ent_ammo (eid INTEGER, idx SMALLINT) RETURNS INTEGER
+AS
+DECLARE n INTEGER;
+BEGIN
+  IF (eid = player_ent()) THEN RETURN ammo_count(idx);
+  SELECT CASE :idx WHEN 2 THEN e.ammo2 WHEN 3 THEN e.ammo3 WHEN 4 THEN e.ammo4 WHEN 5 THEN e.ammo5 WHEN 6 THEN e.ammo6 WHEN 7 THEN e.ammo7
+                   WHEN 8 THEN e.ammo8 WHEN 9 THEN e.ammo9 ELSE 0 END FROM ents e WHERE e.id = :eid INTO n;
+  RETURN COALESCE(n, 0);
+END^
+
+-- Add_Ammo for a bot: at most 200 (n may be -1, a shot)
+CREATE OR ALTER PROCEDURE bot_add_ammo (eid INTEGER, idx SMALLINT, n INTEGER)
+AS
+BEGIN
+  UPDATE ents e SET
+    e.ammo2 = IIF(:idx = 2, MAXVALUE(0, MINVALUE(200, e.ammo2 + :n)), e.ammo2), e.ammo3 = IIF(:idx = 3, MAXVALUE(0, MINVALUE(200, e.ammo3 + :n)), e.ammo3),
+    e.ammo4 = IIF(:idx = 4, MAXVALUE(0, MINVALUE(200, e.ammo4 + :n)), e.ammo4), e.ammo5 = IIF(:idx = 5, MAXVALUE(0, MINVALUE(200, e.ammo5 + :n)), e.ammo5),
+    e.ammo6 = IIF(:idx = 6, MAXVALUE(0, MINVALUE(200, e.ammo6 + :n)), e.ammo6), e.ammo7 = IIF(:idx = 7, MAXVALUE(0, MINVALUE(200, e.ammo7 + :n)), e.ammo7),
+    e.ammo8 = IIF(:idx = 8, MAXVALUE(0, MINVALUE(200, e.ammo8 + :n)), e.ammo8), e.ammo9 = IIF(:idx = 9, MAXVALUE(0, MINVALUE(200, e.ammo9 + :n)), e.ammo9)
+   WHERE e.id = :eid;
+END^
+
 CREATE OR ALTER PROCEDURE add_ammo (idx SMALLINT, n INTEGER)
 AS
 BEGIN
@@ -1007,15 +1030,14 @@ BEGIN
   END
   ELSE IF (kind = 'W') THEN
   BEGIN
-    -- Pickup_Weapon: the weapon and its ammo (at least the quantity when it is new)
-    IF (BIN_AND(have, bit_) = 0) THEN
-    BEGIN
-      UPDATE player p SET p.weapons = BIN_OR(p.weapons, :bit_) WHERE p.id = 1;
-      IF (ammo_count(weapon_ammo(bit_)) < qty) THEN EXECUTE PROCEDURE add_ammo(weapon_ammo(bit_), qty - ammo_count(weapon_ammo(bit_)));
-      -- cg_autoswitch: a new weapon comes up
-      IF (w <> bit_ AND bit_ > 2) THEN UPDATE player p SET p.pending_weapon = :bit_, p.weapon_time = :t + 0.2e0, p.weaponstate = 2 WHERE p.id = 1 AND p.pending_weapon = 0;
-    END
-    ELSE EXECUTE PROCEDURE add_ammo(weapon_ammo(bit_), IIF(bit_ = 2, 40, qty));
+    -- Pickup_Weapon: the weapon and its quantity of ammunition; a gun of the map's (not one dropped, not in team
+    -- play) gives only what is short of that quantity, or a single shot when there is as much already
+    IF (NOT EXISTS (SELECT 1 FROM ents i WHERE i.id = :item AND i.think = 'remove') AND (SELECT g.gametype FROM game g WHERE g.id = 1) <> 3) THEN
+      qty = IIF(ammo_count(weapon_ammo(bit_)) < qty, qty - ammo_count(weapon_ammo(bit_)), 1);
+    UPDATE player p SET p.weapons = BIN_OR(p.weapons, :bit_) WHERE p.id = 1;
+    IF (weapon_ammo(bit_) > 0) THEN EXECUTE PROCEDURE add_ammo(weapon_ammo(bit_), qty);
+    -- cg_autoswitch: a new weapon comes up
+    IF (BIN_AND(have, bit_) = 0 AND w <> bit_ AND bit_ > 2) THEN UPDATE player p SET p.pending_weapon = :bit_, p.weapon_time = :t + 0.2e0, p.weaponstate = 2 WHERE p.id = 1 AND p.pending_weapon = 0;
   END
   ELSE IF (kind = 'P') THEN
   BEGIN
@@ -1579,8 +1601,10 @@ BEGIN
     loaded = IIF(ammo_count(weapon_ammo(w)) > 0, 1, 0);
   END
   ELSE
-    -- (the bots count no ammunition: a gun held is loaded)
+  BEGIN
     SELECT e.weapon, e.quad_finished, e.enviro_finished, e.haste_finished, e.invis_finished, e.regen_finished FROM ents e WHERE e.id = :eid INTO w, q, en, ha, iv, rg;
+    loaded = IIF(ent_ammo(eid, weapon_ammo(w)) > 0, 1, 0);
+  END
   IF (w > 2 AND loaded = 1) THEN
   BEGIN
     SELECT FIRST 1 d.cls FROM item_defs d WHERE d.kind = 'W' AND d.bit = :w INTO cls;
