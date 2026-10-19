@@ -343,6 +343,21 @@ export function boltImpact(b) {
   return [b.b[0] - (d[0] / len) * 16, b.b[1] - (d[1] / len) * 16, b.b[2] - (d[2] / len) * 16];
 }
 
+/** CG_LightningBolt for the player's own beam: it goes where the view looks this frame, not where it looked at
+ *  the tic (lerpAngles, the predicted view): from the muzzle, 14 units ahead of the eye, traced 768 units
+ *  through the world (CG_Trace). What the tic's shot hit short of that, a player, still stops it while the aim
+ *  stays on it (the browser traces the world only). `row` is the view row (PX, PY, VIEW_Z, YAW, PITCH). */
+export function followBolt(b, row, bsp) {
+  const ax = anglesAxis(row.PITCH, row.YAW, 0), f = [ax[0], ax[1], ax[2]];
+  const a = [row.PX + f[0] * 14, row.PY + f[1] * 14, row.VIEW_Z + f[2] * 14];
+  let len = LIGHTNING_RANGE * bsp.traceLine(a, [a[0] + f[0] * LIGHTNING_RANGE, a[1] + f[1] * LIGHTNING_RANGE, a[2] + f[2] * LIGHTNING_RANGE], 1);
+  const d = sub3(b.tb ?? b.b, b.ta ?? b.a), tl = Math.hypot(d[0], d[1], d[2]);
+  if (tl > 0 && tl < len - 1 && (d[0] * f[0] + d[1] * f[1] + d[2] * f[2]) / tl > 0.995) len = tl;
+  b.a = a;
+  b.b = [a[0] + f[0] * len, a[1] + f[1] * len, a[2] + f[2] * len];
+  return b;
+}
+
 /** RB_SurfaceLightningBolt: four ribbons 8 either side, the first facing the eye, each turned 45 degrees about
  *  the beam; lightningBolt's two stages (scrolling at 5 and 7.2, pulsing at 7.1 and 8.1 a second) */
 export function drawBolt(r, view, b, time) {
@@ -689,7 +704,7 @@ export class FrameState {
         case 6: this.explosions.push({ x, y, z, t0: time, frames: ['models/weaphits/plasmaboom'], size: 24, dur: 0.25, blend: 'add' }); mark('gfx/damage/plasma_mrk', 16, 'blend', [1, 1, 1], true); break;
         // a mark alone: the rail's (the energy mark in the rail's colour), a gib's blood (16 to 47 across)
         case 16: if (n >= 64 && n < 72) { mark('gfx/damage/plasma_mrk', 24, 'blend', colorFromString(n - 64), true); this.ringFlash([x, y, z], [x2, y2, z2], time); } else mark('gfx/damage/blood_stain', 16 + Math.random() * 32, 'blend', [1, 1, 1]); break;
-        case 12: this.beams.push({ kind: 'bolt', a: [x, y, z], b: [x2, y2, z2], t0: time, until: time + 0.07, owner: n }); break;
+        case 12: this.beams.push({ kind: 'bolt', a: [x, y, z], b: [x2, y2, z2], ta: [x, y, z], tb: [x2, y2, z2], t0: time, until: time + 0.07, owner: n }); break;
         case 13: renderer.spawnParticles('blood', x, y, z, 40, [0, 0, 1], 0xff1010c0); break;
         case 15: this.bubbleTrail([x, y, z], [x2, y2, z2], 32, time); break;
         case 17: this.ejectBrass(x, y, z, x2, n, time); break;
@@ -939,7 +954,10 @@ export function drawScene(renderer, hud, res, bsp, last, frame, opts = {}) {
     r.drawSprite(x.frames[k], [x.x, x.y, x.z], x.size * (0.6 + 0.6 * (time - x.t0) / x.dur), x.blend);
   }
   state.beams = state.beams.filter((b) => b.until > time && time >= b.t0 - 0.1);
-  for (const b of state.beams) (b.kind === 'rail' ? drawRail : drawBolt)(r, view, b, time);
+  for (const b of state.beams) {
+    if (b.kind === 'bolt' && b.owner === state.selfId && !last.DEAD && bsp?.traceLine) followBolt(b, last, bsp);
+    (b.kind === 'rail' ? drawRail : drawBolt)(r, view, b, time);
+  }
   // the rail's impact flashes: ringFlashModel in railExplosion's two blended stages
   const ring = res.byName.get('models/weaphits/ring02.md3');
   state.rings = state.rings.filter((g) => time < g.end && time >= g.t0 - 0.1);

@@ -247,6 +247,7 @@ async function startMap(name) {
   renderer.particles = [];
   renderer.meshCache?.clear();
   state.explosions = []; state.beams = [];
+  state.selfId = (await db.query('SELECT player_ent() pe FROM rdb$database')).rows[0].PE;   // whose lightning follows the view
   const g = (await db.query('SELECT sky, music FROM game')).rows[0];
   map.sky = g.SKY;
   renderer.setSky(g.SKY);

@@ -899,8 +899,12 @@ tic long) is `RB_SurfaceLightningBolt`: four ribbons 8 either side, the first fa
 45 degrees about the line, each in `lightningBolt`'s two stages (scrolling at 5 and 7.2, the second
 mirrored, pulsing at 7.1 and 8.1 a second). Where the beam stopped short of its 768 units (the trace's
 fraction under 1) `CG_LightningBolt` adds its impact flare, `lightningExplosionModel` (`crackle.md3`), 16
-units back along the beam, turned at random every frame and added (`boltImpact`). `drawRail`, `drawBolt`
-and `boltImpact` in `src/scene.js`.
+units back along the beam, turned at random every frame and added (`boltImpact`). The player's own beam
+goes where the view looks this frame, as `CG_LightningBolt` takes the predicted view's angles: from 14 units
+ahead of the eye, traced 768 units through the world's brushes and patches by `Bsp.traceLine` (`CM_BoxTrace`
+with no box, `SURFACE_CLIP_EPSILON` short), stopped short where the tic's shot hit a body while the aim stays
+within 6 degrees of it (`followBolt`; `state.selfId` is the player's entity). `drawRail`, `drawBolt`,
+`boltImpact` and `followBolt` in `src/scene.js`.
 
 *Shadows* are `CG_PlayerShadow`'s blobs (`cg_shadows 1`): for every player model in the frame and for
 the player itself, `floorUnderBox` finds the floor within 128 units as `CG_PlayerShadow`'s 30-unit box

@@ -6,14 +6,14 @@
 //   node scripts/view-test.mjs
 
 import fs from 'node:fs';
-import { FrameState, firstPersonView, zoomedFov, fovY, mapTorsoToWeaponFrame, viewTorsoFrame, underwaterFov, sceneLights, gunFlashOrigin, litByDlights, MAX_DLIGHTS, drawRail, drawBolt, findPortals, portalView, mirrorView, portalFade, cameraRoll, perpendicular, floorBelow, floorUnderBox, drawShadows, colorFromString, boltImpact, ringStages, RING_TIME } from '../src/scene.js';
+import { FrameState, firstPersonView, zoomedFov, fovY, mapTorsoToWeaponFrame, viewTorsoFrame, underwaterFov, sceneLights, gunFlashOrigin, litByDlights, MAX_DLIGHTS, drawRail, drawBolt, findPortals, portalView, mirrorView, portalFade, cameraRoll, perpendicular, floorBelow, floorUnderBox, drawShadows, colorFromString, boltImpact, ringStages, RING_TIME, followBolt } from '../src/scene.js';
 import { Renderer, tagTransform, autospriteQuads, fogST, fogFactor, md3Lod, entityFog, clipFace, polyFog, fogFade } from '../src/renderer.js';
 import { parseDeform, waveValue, deformVertex, envTexCoords, parseShaderScript, surfaceLook, shellMesh, eyeInModel, stageBrightness, stageTcMatrix, stageColor, stageAlpha, shaderStages, fogAdjust, blendFogAdjust, specularAlpha, SPECULAR_LIGHT } from '../src/shader.js';
 import { Md3, parseAnimationCfg, parseSkin } from '../src/md3.js';
 import { postgameMedals } from '../src/hud.js';
 import { parseWeights, preprocess, weightOf } from '../src/itemweights.js';
 import { Pk3 } from '../src/pk3.js';
-import { isFan, tessellate } from '../src/bsp.js';
+import { isFan, tessellate, Bsp } from '../src/bsp.js';
 
 let failed = 0;
 const assert = (c, m) => { if (!c) { console.error(`FAIL: ${m}`); failed++; } else console.log(`ok   ${m}`); };
@@ -638,6 +638,45 @@ if (fs.existsSync('public/pak/pak0.pk3')) {
   const anims = parseAnimationCfg(pak.text('models/players/sarge/animation.cfg'));
   assert(anims[9].first + anims[9].count === anims[10].first && anims[9].count + anims[10].count === 9, 'sarge\'s drop and raise are the nine frames in a row the mapping expects');
   // the levels of detail's surfaces lose their _1 and _2 (R_LoadMD3), so they find the skin's entries
+  // the point trace (CM_BoxTrace with no box) through q3dm1's brushes and facets: rays from every spawn point
+  // stop where the points sampled along them first turn solid, and go the whole way where none does
+  const bsp = new Bsp(pak.buffer('maps/q3dm1.bsp'), 'q3dm1');
+  let rays = 0, agree = 0;
+  for (const e of bsp.entities.filter((x) => x.classname === 'info_player_deathmatch')) {
+    const o = e.origin.split(' ').map(Number);
+    o[2] += 20;
+    for (let k = 0; k < 16; k++) {
+      const yaw = (k * 22.5 + 0.37) * Math.PI / 180, pitch = ((k % 5) - 2) * 15 * Math.PI / 180;   // (off the axes: no ray lies in a wall's plane)
+      const d = [Math.cos(pitch) * Math.cos(yaw), Math.cos(pitch) * Math.sin(yaw), -Math.sin(pitch)];
+      const end = [o[0] + d[0] * 2000, o[1] + d[1] * 2000, o[2] + d[2] * 2000];
+      const f = bsp.traceLine(o, end, 1);
+      let s = 2000;
+      for (let u = 0; u <= 2000; u += 0.5) if (bsp.pointContents(o[0] + d[0] * u, o[1] + d[1] * u, o[2] + d[2] * u) & 1) { s = u; break; }
+      rays++;
+      // (or it stopped against a corner it grazed: solid within a unit and a half of where it stopped)
+      const h = [o[0] + d[0] * f * 2000, o[1] + d[1] * f * 2000, o[2] + d[2] * f * 2000];
+      const near = f < 1 && f * 2000 < s && [[1.5, 0, 0], [-1.5, 0, 0], [0, 1.5, 0], [0, -1.5, 0], [0, 0, 1.5], [0, 0, -1.5]].some(([x, y, z]) => bsp.pointContents(h[0] + x, h[1] + y, h[2] + z) & 1);
+      if (Math.abs(f * 2000 - s) < 1.5 || near) agree++;
+    }
+  }
+  assert(rays >= 90 && agree === rays, `the point trace stops where the world turns solid (${agree} of ${rays} rays from q3dm1's spawns within a unit and a half, or against a corner it grazed)`);
+  // the player's lightning goes where the view looks this frame: from 14 units ahead of the eye, to the wall
+  // along the view, or to the body the tic's shot hit while the aim stays on it
+  {
+    const sp = bsp.entities.find((x) => x.classname === 'info_player_deathmatch');
+    const o = sp.origin.split(' ').map(Number);
+    const row = { PX: o[0], PY: o[1], VIEW_Z: o[2] + 26, YAW: 30, PITCH: 10 };
+    const f = [Math.cos(10 * Math.PI / 180) * Math.cos(30 * Math.PI / 180), Math.cos(10 * Math.PI / 180) * Math.sin(30 * Math.PI / 180), -Math.sin(10 * Math.PI / 180)];
+    const a = [row.PX + f[0] * 14, row.PY + f[1] * 14, row.VIEW_Z + f[2] * 14];
+    const wall = 768 * bsp.traceLine(a, a.map((v, i) => v + f[i] * 768), 1);
+    const turned = followBolt({ ta: [0, 0, 0], tb: [0, 50, 0] }, row, bsp);   // the tic's beam another way
+    const len = (b) => Math.hypot(b.b[0] - b.a[0], b.b[1] - b.a[1], b.b[2] - b.a[2]);
+    const on = followBolt({ ta: a, tb: a.map((v, i) => v + f[i] * 40) }, row, bsp);   // the tic's hit 40 ahead
+    assert(Math.hypot(turned.a[0] - a[0], turned.a[1] - a[1], turned.a[2] - a[2]) < 1e-6 && Math.abs(len(turned) - wall) < 1e-6
+      && ((turned.b[0] - turned.a[0]) * f[0] + (turned.b[1] - turned.a[1]) * f[1] + (turned.b[2] - turned.a[2]) * f[2]) / len(turned) > 0.9999
+      && (wall <= 41 || Math.abs(len(on) - 40) < 1e-6),
+      `the player's beam follows the view: from the muzzle along it to the wall (${wall.toFixed(0)}), or to what the tic's shot hit along it (${len(on).toFixed(0)})`);
+  }
   const legs2 = new Md3(pak.buffer('models/players/sarge/lower_2.md3'), 'lower_2');
   const skin = parseSkin(pak.text('models/players/sarge/lower_default.skin'));
   assert(legs2.surfaces.length && legs2.surfaces.every((s) => skin.has(s.name)), `sarge's farthest legs (${legs2.surfaces.map((s) => s.name).join()}) wear the default skin`);

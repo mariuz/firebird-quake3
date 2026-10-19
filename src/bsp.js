@@ -26,6 +26,13 @@ export const RENDER_LEVEL = 4;      // Bézier subdivisions per control patch wh
 export const COLLIDE_LEVEL = 2;     // ... and for the collision facets
 const LIGHTMAP_SIZE = 128;
 
+const TRACE_EPSILON = 0.125;   // SURFACE_CLIP_EPSILON
+const facetBoxPlane = (br, k) => {
+  const ax = k >> 1, hi = (k & 1) === 0, n = [0, 0, 0];
+  n[ax] = hi ? 1 : -1;
+  return { nx: n[0], ny: n[1], nz: n[2], dist: hi ? br.maxs[ax] : -br.mins[ax] };
+};
+
 export class Bsp {
   constructor(buffer, name = '') {
     this.name = name;
@@ -396,6 +403,7 @@ export class Bsp {
     for (let k = 0; k < lf.numLeafBrushes; k++) {
       const b = this.brushes[this.leafbrushes[lf.firstLeafBrush + k]];
       if (!b.contents || (c & b.contents) === b.contents) continue;
+      if (b.facet && (x < b.mins[0] || y < b.mins[1] || z < b.mins[2] || x > b.maxs[0] || y > b.maxs[1] || z > b.maxs[2])) continue;   // (a facet is closed by its box)
       let inside = b.numSides > 0;
       for (let s = 0; s < b.numSides && inside; s++) {
         const pl = this.planes[this.brushsides[b.firstSide + s].plane];
@@ -404,6 +412,63 @@ export class Bsp {
       if (inside) c |= b.contents;
     }
     return c;
+  }
+
+  /**
+   * A point traced from a to b through the world's brushes (and the patches' facets) whose contents are in the
+   * mask (CM_BoxTrace with no box: CM_TraceThroughTree, CM_ClipBoxToBrush, SURFACE_CLIP_EPSILON short of the hit).
+   * Returns the fraction of the way it got, 0 when it starts inside a brush it cannot leave.
+   */
+  traceLine(a, b, mask = 1) {
+    if (!this.traceSeen || this.traceSeen.length !== this.brushes.length) { this.traceSeen = new Int32Array(this.brushes.length); this.traceCount = 0; }
+    const t = { frac: 1, count: ++this.traceCount, a, b, mask };
+    this.traceNode(0, 0, 1, a, b, t);
+    return t.frac;
+  }
+
+  traceNode(num, f1, f2, p1, p2, t) {
+    if (t.frac <= f1) return;   // already stopped nearer
+    if (num < 0) { this.traceLeaf(this.leaves[-1 - num], t); return; }
+    const node = this.nodes[num], pl = this.planes[node.plane];
+    const d1 = p1[0] * pl.nx + p1[1] * pl.ny + p1[2] * pl.nz - pl.dist;
+    const d2 = p2[0] * pl.nx + p2[1] * pl.ny + p2[2] * pl.nz - pl.dist;
+    if (d1 >= 0 && d2 >= 0) { this.traceNode(node.children[0], f1, f2, p1, p2, t); return; }
+    if (d1 < 0 && d2 < 0) { this.traceNode(node.children[1], f1, f2, p1, p2, t); return; }
+    let side = 0, frac = 1, frac2 = 0;
+    if (d1 < d2) { const id = 1 / (d1 - d2); side = 1; frac2 = (d1 + TRACE_EPSILON) * id; frac = (d1 - TRACE_EPSILON) * id; }
+    else if (d1 > d2) { const id = 1 / (d1 - d2); frac2 = (d1 - TRACE_EPSILON) * id; frac = (d1 + TRACE_EPSILON) * id; }
+    frac = Math.min(1, Math.max(0, frac)); frac2 = Math.min(1, Math.max(0, frac2));
+    const at = (k) => [p1[0] + (p2[0] - p1[0]) * k, p1[1] + (p2[1] - p1[1]) * k, p1[2] + (p2[2] - p1[2]) * k];
+    this.traceNode(node.children[side], f1, f1 + (f2 - f1) * frac, p1, at(frac), t);
+    this.traceNode(node.children[side ^ 1], f1 + (f2 - f1) * frac2, f2, at(frac2), p2, t);
+  }
+
+  traceLeaf(lf, t) {
+    for (let k = 0; k < lf.numLeafBrushes; k++) {
+      const bi = this.leafbrushes[lf.firstLeafBrush + k];
+      if (this.traceSeen[bi] === t.count) continue;
+      this.traceSeen[bi] = t.count;
+      const br = this.brushes[bi];
+      if (!(br.contents & t.mask) || !br.numSides) continue;
+      let enter = -1, leave = 1, startOut = false, getOut = false, clear = false;
+      // (a patch's facet is a triangle with its edges' planes and no back: its box closes it, as the leaves it
+      // is listed in do for a point)
+      const n = br.numSides + (br.facet ? 6 : 0);
+      for (let s = 0; s < n; s++) {
+        const pl = s < br.numSides ? this.planes[this.brushsides[br.firstSide + s].plane] : facetBoxPlane(br, s - br.numSides);
+        const d1 = t.a[0] * pl.nx + t.a[1] * pl.ny + t.a[2] * pl.nz - pl.dist;
+        const d2 = t.b[0] * pl.nx + t.b[1] * pl.ny + t.b[2] * pl.nz - pl.dist;
+        if (d2 > 0) getOut = true;
+        if (d1 > 0) startOut = true;
+        if (d1 > 0 && (d2 >= TRACE_EPSILON || d2 >= d1)) { clear = true; break; }   // wholly in front of a side
+        if (d1 <= 0 && d2 <= 0) continue;
+        if (d1 > d2) enter = Math.max(enter, Math.max(0, (d1 - TRACE_EPSILON) / (d1 - d2)));
+        else leave = Math.min(leave, Math.min(1, (d1 + TRACE_EPSILON) / (d1 - d2)));
+      }
+      if (clear) continue;
+      if (!startOut) { if (!getOut) t.frac = 0; continue; }
+      if (enter < leave && enter > -1 && enter < t.frac) t.frac = Math.max(0, enter);
+    }
   }
 
   /** The light grid sample at a point: { ambient: [r,g,b], directed: [r,g,b], dir: [x,y,z] } (R_SetupEntityLightingGrid, nearest cell). */
