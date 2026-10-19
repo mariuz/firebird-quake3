@@ -189,6 +189,25 @@ const markBsp = {
   assert(st.brass.length === 30 && st.brass.every((b) => b.rest && b.p[2] >= 0 && b.p[2] < 4), `30 shells from 10 bullets and 10 shotgun blasts all lie on the floor (${st.brass.filter((b) => b.rest).length} at rest)`);
 }
 
+// the software painter's dynamic lights on a patch's or a mesh's triangle (ProjectDlightTexture lights every
+// surface): one pass over the triangle by its own vertices for a light within reach of its plane, none for one
+// out of reach, and the lightmap's coordinates the pass borrowed given back to the triangles sharing them
+{
+  const r = Object.create(Renderer.prototype), out = [];
+  r.view = { x: 0, y: 0, z: 0, fwd: [1, 0, 0], right: [0, 1, 0], up: [0, 0, 1] };
+  r.vv = new Float64Array(9 * 6);
+  [[100, 0, 0], [100, 10, 0], [100, 0, 10]].forEach(([f, rt, u], i) => { const o = (3 + i) * 9; r.vv[o] = f; r.vv[o + 1] = rt; r.vv[o + 2] = u; r.vv[o + 7] = 0.25 + i; r.vv[o + 8] = 0.5 + i; });
+  r.emitPoly = (a, b, c, m, behind, pass, fan) => out.push({ ids: [a, b, c], m, fan, mod: pass.dlight?.mod, u: r.vv[a * 9 + 7] });
+  r.dlights = [{ x: 90, y: 3, z: 3, radius: 100, color: [1, 1, 1] }];
+  r.dlightPoly([3, 4, 5], false, false);
+  const kept = [3, 4, 5].every((id, i) => r.vv[id * 9 + 7] === 0.25 + i && r.vv[id * 9 + 8] === 0.5 + i);
+  const one = out.splice(0);
+  r.dlights = [{ x: -100, y: 3, z: 3, radius: 100, color: [1, 1, 1] }];
+  r.dlightPoly([3, 4, 5], false, false);
+  assert(one.length === 1 && one[0].ids.join() === '3,4,5' && one[0].m === 3 && one[0].fan === false && one[0].mod === 1 && Math.abs(one[0].u) < 1 && kept && out.length === 0,
+    `a light 10 units off a triangle lights it once (${one.length}, at full strength ${one[0]?.mod}), one 200 off not (${out.length}); the lightmap's coordinates given back (${kept})`);
+}
+
 // the dynamic lights: a rocket's explosion at 300 for the first half of the explosion, fading to nothing by its
 // end; a rocket in flight at 200; the muzzle flash while firing; the nearest 8 when there are more
 {

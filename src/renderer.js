@@ -379,10 +379,20 @@ export class Renderer {
    * along the normal full up to half the radius, then down to nothing at the radius.
    */
   dlightFace(m, behind) {
+    const ids = [];
+    for (let k = 0; k < m; k++) ids.push(k);
+    this.dlightPoly(ids, behind, true);
+  }
+
+  /** The same for any polygon of this.vv's vertices `ids` (a patch's or a mesh's triangle: ProjectDlightTexture
+   *  lights every surface, each triangle here on its own plane); `fan` as emitPoly takes it */
+  dlightPoly(ids, behind, fan) {
     const vv = this.vv, view = this.view, F = view.fwd, Rt = view.right, U = view.up;
-    const P = [];
-    for (let k = 0; k < m; k++) {
-      const o = k * 9, f = vv[o], r = vv[o + 1], u = vv[o + 2];
+    const P = [], m = ids.length;
+    // (the light's coordinates go where the lightmap's are: kept for the triangles that share these vertices)
+    const saved = fan ? null : ids.map((id) => [vv[id * 9 + 7], vv[id * 9 + 8]]);
+    for (const id of ids) {
+      const o = id * 9, f = vv[o], r = vv[o + 1], u = vv[o + 2];
       P.push([view.x + f * F[0] + r * Rt[0] + u * U[0], view.y + f * F[1] + r * Rt[1] + u * U[1], view.z + f * F[2] + r * Rt[2] + u * U[2]]);
     }
     // the plane's normal (Newell)
@@ -412,13 +422,24 @@ export class Renderer {
       for (let i = 0; i < m; i++) {
         const dx = P[i][0] - l.x, dy = P[i][1] - l.y, dz = P[i][2] - l.z;
         const u = (dx * a1[0] + dy * a1[1] + dz * a1[2]) * k, v = (dx * a2[0] + dy * a2[1] + dz * a2[2]) * k;
-        vv[i * 9 + 7] = u; vv[i * 9 + 8] = v;
+        vv[ids[i] * 9 + 7] = u; vv[ids[i] * 9 + 8] = v;
         if (u < minU) minU = u; if (u > maxU) maxU = u; if (v < minV) minV = v; if (v > maxV) maxV = v;
       }
       const reach = 8 / LIGHTMAP_SIZE;
       if (minU > reach || maxU < -reach || minV > reach || maxV < -reach) continue;
-      this.emitPoly(0, 1, 2, m, behind, { dlight: { mod, color: l.color }, look: DLIGHT_LOOK }, true);
+      this.emitPoly(ids[0], ids[1], ids[2], m, behind, { dlight: { mod, color: l.color }, look: DLIGHT_LOOK }, fan);
     }
+    if (saved) ids.forEach((id, i) => { vv[id * 9 + 7] = saved[i][0]; vv[id * 9 + 8] = saved[i][1]; });
+  }
+
+  /** Whether a light reaches the box of a face's vertices (at its entity's origin) */
+  dlightsNear(verts, m, ox, oy, oz) {
+    let x0 = Infinity, y0 = Infinity, z0 = Infinity, x1 = -Infinity, y1 = -Infinity, z1 = -Infinity;
+    for (let k = 0; k < m; k++) {
+      const x = verts[k * 10] + ox, y = verts[k * 10 + 1] + oy, z = verts[k * 10 + 2] + oz;
+      if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; if (z < z0) z0 = z; if (z > z1) z1 = z;
+    }
+    return this.dlights.some((l) => l.x > x0 - l.radius && l.x < x1 + l.radius && l.y > y0 - l.radius && l.y < y1 + l.radius && l.z > z0 - l.radius && l.z < z1 + l.radius);
   }
 
   /** One light's pass over a polygon: the pixels this polygon left on top brightened by the dlight image. */
@@ -528,6 +549,8 @@ export class Renderer {
         if (this.dlights.length && look.blend === 'opaque' && !look.sky) this.dlightFace(m, behind);
       } else {
         const tris = f.tris;
+        // (the dynamic lights on a patch or a mesh: only when one reaches its box)
+        const lightTris = this.dlights.length && look.blend === 'opaque' && !look.sky && this.dlightsNear(verts, m, ox, oy, oz);
         // all vertices behind: nothing to draw
         let any = false;
         for (let k = 0; k < m && !any; k++) if (vv[k * 9] >= near) any = true;
@@ -536,6 +559,7 @@ export class Renderer {
           const a = tris[k], b = tris[k + 1], c = tris[k + 2];
           const bh = vv[a * 9] < near || vv[b * 9] < near || vv[c * 9] < near;
           this.emitPoly(a, b, c, 3, bh, info, false);
+          if (lightTris) this.dlightPoly([a, b, c], bh, false);
         }
       }
       if (info.fog >= 0 && this.fogs?.[info.fog] && look.blend === 'opaque' && !look.sky) this.fogFace(m, behind, info, this.fogs[info.fog]);

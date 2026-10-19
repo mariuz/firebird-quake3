@@ -986,7 +986,9 @@ to half the radius off the plane and down to nothing at the radius, and the surf
 and does not light black. The WebGL world shader does it per pixel for the opaque surfaces, with the
 normal from the derivatives of the world position; the software painter draws each lit planar face
 again after it (`dlightFace`), the light's in-plane offset in the lightmap coordinates' place so the
-span loop interpolates it with the perspective, and brightens the pixels the face left on top. Models,
+span loop interpolates it with the perspective, and brightens the pixels the face left on top; a patch or
+a mesh that a light's box reaches gets the same pass triangle by triangle, each on its own plane
+(`dlightPoly`, which gives the lightmap coordinates it borrowed back to the triangles sharing them). Models,
 brass and the view weapon get `R_SetupEntityLighting`'s share in `litByDlights`: 16 r² / d² of the
 light's colour more directed light, from the light's side.
 
