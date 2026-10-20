@@ -286,6 +286,24 @@ BEGIN
   RETURN CASE w WHEN 1 THEN 0.4e0 WHEN 2 THEN 0.1e0 WHEN 4 THEN 1 WHEN 8 THEN 0.8e0 WHEN 16 THEN 0.8e0 WHEN 32 THEN 0.05e0 WHEN 64 THEN 1.5e0 WHEN 128 THEN 0.1e0 WHEN 256 THEN 0.2e0 ELSE 0.5e0 END;
 END^
 
+-- PM_FootstepForSurface: what a step on the ground under the box sounds like: nothing on a nosteps surface
+-- (SURF_NOSTEPS), the metal clank on a metalsteps one (SURF_METALSTEPS), else a step; in water ankle-deep a splash
+CREATE OR ALTER FUNCTION footstep_sound (eid INTEGER) RETURNS VARCHAR(64)
+AS
+DECLARE x DOUBLE PRECISION; DECLARE y DOUBLE PRECISION; DECLARE z DOUBLE PRECISION; DECLARE wl SMALLINT;
+DECLARE mnx DOUBLE PRECISION; DECLARE mny DOUBLE PRECISION; DECLARE mnz DOUBLE PRECISION; DECLARE mxx DOUBLE PRECISION; DECLARE mxy DOUBLE PRECISION; DECLARE mxz DOUBLE PRECISION;
+DECLARE f DOUBLE PRECISION; DECLARE ex DOUBLE PRECISION; DECLARE ey DOUBLE PRECISION; DECLARE ez DOUBLE PRECISION;
+DECLARE nx DOUBLE PRECISION; DECLARE ny DOUBLE PRECISION; DECLARE nz DOUBLE PRECISION;
+DECLARE sf INTEGER; DECLARE ct INTEGER; DECLARE als SMALLINT; DECLARE sts SMALLINT; DECLARE hit INTEGER;
+BEGIN
+  SELECT e.x, e.y, e.z, e.minx, e.miny, e.minz, e.maxx, e.maxy, e.maxz, e.waterlevel FROM ents e WHERE e.id = :eid INTO x, y, z, mnx, mny, mnz, mxx, mxy, mxz, wl;
+  IF (wl > 0) THEN RETURN 'sound/player/footsteps/splash' || CAST(1 + FLOOR(RAND() * 4) AS INTEGER) || '.wav';
+  EXECUTE PROCEDURE trace_move(eid, mnx, mny, mnz, mxx, mxy, mxz, x, y, z, x, y, z - 2, 65537)
+    RETURNING_VALUES f, ex, ey, ez, nx, ny, nz, sf, ct, als, sts, hit;
+  IF (f < 1 AND BIN_AND(sf, 8192) <> 0) THEN RETURN NULL;
+  RETURN TRIM(IIF(f < 1 AND BIN_AND(sf, 4096) <> 0, 'sound/player/footsteps/clank', 'sound/player/footsteps/step')) || CAST(1 + FLOOR(RAND() * 4) AS INTEGER) || '.wav';
+END^
+
 -- PM_Weapon: switching, firing when the button is held, the weapon is ready and there is ammo
 CREATE OR ALTER PROCEDURE player_fire (btn SMALLINT)
 AS
@@ -571,7 +589,7 @@ DECLARE sf INTEGER; DECLARE ct INTEGER; DECLARE als SMALLINT; DECLARE sts SMALLI
 DECLARE tst SMALLINT; DECLARE tid INTEGER;
 DECLARE afin DOUBLE PRECISION; DECLARE hp INTEGER; DECLARE deadt DOUBLE PRECISION; DECLARE oldz DOUBLE PRECISION;
 DECLARE enviro DOUBLE PRECISION; DECLARE haste DOUBLE PRECISION; DECLARE regen DOUBLE PRECISION; DECLARE ndt DOUBLE PRECISION; DECLARE ddmg INTEGER; DECLARE mhp INTEGER;
-DECLARE grav DOUBLE PRECISION; DECLARE tt DOUBLE PRECISION; DECLARE legs INTEGER; DECLARE hdecay DOUBLE PRECISION; DECLARE rt DOUBLE PRECISION; DECLARE stept DOUBLE PRECISION;
+DECLARE grav DOUBLE PRECISION; DECLARE tt DOUBLE PRECISION; DECLARE legs INTEGER; DECLARE hdecay DOUBLE PRECISION; DECLARE rt DOUBLE PRECISION; DECLARE stept DOUBLE PRECISION; DECLARE stepsnd VARCHAR(64);
 DECLARE mover SMALLINT; DECLARE pm VARCHAR(16); DECLARE match_done SMALLINT; DECLARE ducked SMALLINT; DECLARE maxz DOUBLE PRECISION; DECLARE wend DOUBLE PRECISION;
 DECLARE spec SMALLINT; DECLARE sfire SMALLINT; DECLARE fid INTEGER;
 DECLARE kb DOUBLE PRECISION; DECLARE upk DOUBLE PRECISION; DECLARE yaw0 DOUBLE PRECISION; DECLARE yk DOUBLE PRECISION; DECLARE ds DOUBLE PRECISION;
@@ -897,7 +915,8 @@ BEGIN
   IF (onground = 1 AND ducked = 0 AND vlen(vx, vy, 0) > 100 AND stept < t) THEN
   BEGIN
     UPDATE player p SET p.step_time = :t + 0.3e0 WHERE p.id = 1;
-    EXECUTE PROCEDURE snd(pe, 2, IIF(wl > 0, 'sound/player/footsteps/splash' || CAST(1 + FLOOR(RAND() * 4) AS INTEGER) || '.wav', 'sound/player/footsteps/step' || CAST(1 + FLOOR(RAND() * 4) AS INTEGER) || '.wav'), 0.6e0, 1);
+    stepsnd = footstep_sound(pe);
+    IF (stepsnd IS NOT NULL) THEN EXECUTE PROCEDURE snd(pe, 2, stepsnd, 0.6e0, 1);
   END
 
   -- G_TouchTriggers: triggers, jump pads, teleporters and items

@@ -284,7 +284,7 @@ sound, the lead state. Each tic:
    standing box fits), `PM_WalkMove` / `PM_AirMove` / `PM_WaterMove` through `walk_move` and
    `fly_move` (a crouching walk at a quarter of the speed, `pm_duckScale`; −1 swims down), jumping and
    landing with their sounds, the legs animation (run, back, idle, crouch-walk `LEGS_WALKCR`,
-   crouch-idle `LEGS_IDLECR`, jump, land), footsteps on a distance clock but never while crouched, drowning, lava and slime damage, item and
+   crouch-idle `LEGS_IDLECR`, jump, land), footsteps on a distance clock but never while crouched (`footstep_sound`, `PM_FootstepForSurface`: the metal clank on a `metalsteps` floor, nothing on `nosteps`, a splash ankle-deep; the bots step the same way, `ents.step_time`), drowning, lava and slime damage, item and
    trigger touching through `touch_triggers`, weapon switching with Quake III's raise/drop timing
    (`weaponstate`, `pending_weapon`), firing through `player_fire`, the impulses (1–9 weapons, 12/14
    cycle, 13 holdable, 99 give all), powerup timers, health decay above the maximum;

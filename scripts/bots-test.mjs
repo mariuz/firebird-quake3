@@ -669,6 +669,9 @@ if (jumpers > 0 && total > 0) assert(hopped > 0, `the jumpers jumped in their fi
 const crouchers = (await q("SELECT COUNT(*) n FROM ents e JOIN bot_defs b ON b.name = e.bot JOIN bot_chatchar c ON c.bot = e.bot AND c.skill = b.skill AND c.ckey = 'croucher' WHERE e.classname = 'bot' AND c.val >= 0.3"))[0].N;
 if (crouchers > 0 && total > 0) assert(crouched > 0 && crouchAnim >= crouched * 0.8, `the crouchers crouched in their fights (${crouchers} crouching characters, crouched ${crouched} times, ${crouchAnim} with the crouched legs and eye)`);
 else console.log(`(crouching: ${crouchers} crouching characters, crouched ${crouched} times)`);
+// PM_Footsteps for the bots: their steps are heard as they run (sound events live 40 tics: the last ones)
+const botSteps = (await q("SELECT COUNT(*) n FROM sound_events s JOIN ents e ON e.id = s.ent_id WHERE e.classname = 'bot' AND s.snd STARTING WITH 'sound/player/footsteps/'"))[0].N;
+assert(botSteps > 0, `the bots' footsteps are heard (${botSteps} in the last two seconds)`);
 const lost = (await q("SELECT COUNT(*) n FROM ents WHERE classname = 'bot' AND health > 0 AND cluster IS NULL"))[0].N;
 assert(lost === 0, 'no living bot is outside the world');
 const msgs = (await q('SELECT msg FROM messages ORDER BY id'));

@@ -135,6 +135,25 @@ assert(fired > 0, 'firing queued the machinegun sound');
 const brass = (await db.query(`SELECT FIRST 1 f.x, f.y, f.z, f.x2, f.n, e.x ex, e.yaw FROM fx_events f, ents e, game g
   WHERE f.kind = 17 AND f.tic = g.tic AND e.id = (SELECT ent_id FROM player) ORDER BY (f.x - e.x) * (f.x - e.x) + (f.y - e.y) * (f.y - e.y)`)).rows[0];
 assert(brass && brass.N === 2 && Math.abs(brass.X2 - brass.YAW) < 1e-6, `a machinegun shot ejects brass, with the shooter's yaw (${brass ? brass.X2.toFixed(0) : 'none'})`);
+// PM_FootstepForSurface: a step on an ordinary floor, the clank on a metalsteps one, nothing on nosteps (the
+// floor's sides under us made metal, then silent, and put back)
+{
+  const pe = (await db.query('SELECT ent_id e FROM player')).rows[0].E;
+  const [me] = (await db.query(`SELECT z + minz fz FROM ents WHERE id = ${pe}`)).rows;
+  const ids = (await db.query(`SELECT id FROM brushsides WHERE nz > 0.99 AND ABS(dist / nz - ${me.FZ}) < 0.5 AND BIN_AND(flags, 4096 + 8192) = 0`)).rows.map((r) => r.ID);
+  const step = async () => (await db.query(`SELECT footstep_sound(${pe}) s FROM rdb$database`)).rows[0].S;
+  const plain = await step();
+  if (ids.length) {
+    await db.exec(`UPDATE brushsides SET flags = flags + 4096 WHERE id IN (${ids.join(',')})`);
+    const metal = await step();
+    await db.exec(`UPDATE brushsides SET flags = flags - 4096 + 8192 WHERE id IN (${ids.join(',')})`);
+    const none = await step();
+    await db.exec(`UPDATE brushsides SET flags = flags - 8192 WHERE id IN (${ids.join(',')})`);
+    assert(/footsteps\/step[1-4]\.wav$/.test(plain) && /footsteps\/clank[1-4]\.wav$/.test(metal) && none === null && /footsteps\/step/.test(await step()),
+      `footsteps by the floor: ${plain}, on metal ${metal}, on nosteps ${none}`);
+  } else console.log(`(no floor side found under the player: the footstep surfaces skipped; plain ${plain})`);
+}
+
 // EF_FIRING: set while the trigger is held with ammunition, for the gun's firing sound; not without ammunition
 {
   const held = s.WEAPON_SOUND;

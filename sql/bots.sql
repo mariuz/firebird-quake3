@@ -1211,7 +1211,7 @@ DECLARE jx DOUBLE PRECISION; DECLARE jy DOUBLE PRECISION; DECLARE jt DOUBLE PREC
 DECLARE wjump SMALLINT = 0; DECLARE crouch SMALLINT = 0; DECLARE ct_ DOUBLE PRECISION; DECLARE mz DOUBLE PRECISION;
 DECLARE tf DOUBLE PRECISION; DECLARE tx DOUBLE PRECISION; DECLARE ty DOUBLE PRECISION; DECLARE tz DOUBLE PRECISION;
 DECLARE tnx DOUBLE PRECISION; DECLARE tny DOUBLE PRECISION; DECLARE tnz DOUBLE PRECISION; DECLARE tsf INTEGER; DECLARE tct INTEGER;
-DECLARE tals SMALLINT; DECLARE tsts SMALLINT; DECLARE thit INTEGER;
+DECLARE tals SMALLINT; DECLARE tsts SMALLINT; DECLARE thit INTEGER; DECLARE stepsnd VARCHAR(64);
 BEGIN
   t = now_();
   nt = t + 0.1e0;
@@ -1463,6 +1463,13 @@ BEGIN
   END
   -- the legs follow the feet (crouched: LEGS_WALKCR, LEGS_IDLECR)
   moved = IIF(ABS(x - ox) + ABS(y - oy) > 1, 1, 0);
+  -- PM_Footsteps: running on the ground, a step every 0.3 s (half the run's bob cycle); none crouched
+  IF (BIN_AND(flags, 512) <> 0 AND mz <> 16 AND vlen(x - ox, y - oy, 0) > 10 AND COALESCE((SELECT e.step_time FROM ents e WHERE e.id = :eid), 0) < t) THEN
+  BEGIN
+    UPDATE ents e SET e.step_time = :t + 0.3e0 WHERE e.id = :eid;
+    stepsnd = footstep_sound(eid);
+    IF (stepsnd IS NOT NULL) THEN EXECUTE PROCEDURE snd(eid, 2, stepsnd, 1, 1);
+  END
   IF (BIN_AND(flags, 512) = 0) THEN BEGIN IF (legs NOT IN (18, 20)) THEN EXECUTE PROCEDURE set_anims(eid, 18, NULL); END
   ELSE IF (mz = 16) THEN EXECUTE PROCEDURE set_anims(eid, IIF(moved = 1, 13, 23), NULL);
   ELSE IF (moved = 1 AND legs <> 15) THEN EXECUTE PROCEDURE set_anims(eid, 15, NULL);
