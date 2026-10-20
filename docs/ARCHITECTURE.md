@@ -713,6 +713,7 @@ and the field of view instead of `viewcfg`'s (the zoom); the Node scripts leave 
 | 6 | the pose of a rotated brush model | id, pitch, yaw, roll |
 | 7 | (every 10th frame) the `target_speaker`s audible now, and the movers with a looping sound | `lst` = ids |
 | 11 | a mover's looping sound where its brush is now (every frame, in view or not) | `i1` ent, `d1..3` the brush's middle |
+| 12 | a missile's flight sound (every frame, in view or not): `rockfly.wav` for a rocket or a BFG ball, `lasfly.wav` for a plasma bolt | `i1` ent, `d1..3` where it is, `s` the sound |
 | 9 | a console line | id, time, text |
 | 10 | the eye the frame was culled for (always the first row) | x y z in `d1..d3` |
 
@@ -1029,7 +1030,9 @@ the listener (the player's eye and yaw), keeps loops (the lightning gun's hum, t
 and ambient `target_speaker`s (the frame's kind-7 row says which are audible now), the movers' looping sounds
 (a mover's `noise` key, InitMover's `s.loopSound`, `ents.loop_sound`, played from the middle of its brush as
 `CG_SetEntitySoundPosition` places a brush's sound, and moved there every frame by the kind-11 rows as
-`trap_S_UpdateEntityPosition` does: oa_shouse's bobbing fires), and plays music:
+`trap_S_UpdateEntityPosition` does: oa_shouse's bobbing fires), the missiles' flight sounds (`CG_Missile`'s
+`missileSound`, the kind-12 rows: a loop starts with the missile, goes with it and stops when it is gone,
+`setEntityLoops`), and plays music:
 the map's track from the pak when it has one, otherwise a synthesised drone, or nothing. The
 announcer ("fight!", "you have taken the lead", the frag limit) and the obituaries' sounds are plain
 events. Every event is checked against the pak in the smoke test so a mistyped name is caught in CI.

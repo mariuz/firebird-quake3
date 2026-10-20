@@ -498,6 +498,11 @@ if (pad) {
   await db.exec(`EXECUTE PROCEDURE link_ent(${rid})`); await db.exec(`EXECUTE PROCEDURE link_ent(${iid})`);
   const back = (await db.query(`SELECT * FROM frame_all(0, 2147483647, 2147483647, 0, ${e.EX}, ${e.EY}, ${e.EZ}, ${hy}, 0, 90)`, [], { rowMode: 'array' })).rows.filter((r) => r[0] === 2).map((r) => r[1]);
   assert(back.includes(rid) && !back.includes(iid), `a rocket 150 units behind the eye comes with the frame for its light, an item there does not (${back.includes(rid)}, ${back.includes(iid)})`);
+  // and it whooshes as it flies, from where it is (CG_Missile's missileSound), seen or not; the item makes no sound
+  const flyRows = (await db.query(`SELECT * FROM frame_all(0, 2147483647, 2147483647, 0, ${e.EX}, ${e.EY}, ${e.EZ}, ${hy + 180}, 0, 90)`, [], { rowMode: 'array' })).rows.filter((r) => r[0] === 12);
+  const fly = flyRows.find((r) => r[1] === rid);
+  assert(fly && fly[15] === 'sound/weapons/rocket/rockfly.wav' && Math.abs(fly[6] - bx) < 1e-6 && !flyRows.some((r) => r[1] === iid),
+    `the rocket is heard flying where it is (${fly ? fly[15] : 'no sound'}, ${fly ? fly[6].toFixed(1) : '-'} for ${bx.toFixed(1)}), the item is silent`);
   await db.exec(`DELETE FROM ents WHERE id IN (${rid}, ${iid})`);
 }
 

@@ -16,6 +16,7 @@ export class Q3Audio {
     this.musicVolume = 0.4;
     this.channels = new Map();   // `${ent}:${chan}` → source, to cut
     this.speakers = [];          // looped target_speakers: { id, name, x, y, z, vol, attn, on, src, gain, pan }
+    this.entLoops = new Map();   // the missiles' flight sounds by entity: { name, x, y, z, src, gain, pan }
     this.listener = { x: 0, y: 0, z: 0, yaw: 0 };
     this.musicMode = 'tracks';   // 'off' | 'tracks' | 'synth'
     this.music = null;
@@ -137,6 +138,29 @@ export class Q3Audio {
     for (const s of this.speakers) s.on = on.has(s.id);
   }
 
+  /** rows: [id, x, y, z, sound], every missile in flight this frame (trap_S_AddLoopingSound each frame: a loop
+   *  starts with its entity, goes where it goes and stops when it is gone) */
+  setEntityLoops(rows) {
+    if (!this.ctx) return;
+    const seen = new Set();
+    for (const [id, x, y, z, name] of rows) {
+      seen.add(id);
+      let s = this.entLoops.get(id);
+      if (!s) {
+        s = { name, x, y, z };
+        this.entLoops.set(id, s);
+        this.buffer(name).then((buf) => {
+          if (!buf || this.entLoops.get(id) !== s) return;
+          Object.assign(s, this.loop(buf, this.master));
+        });
+      }
+      s.x = x; s.y = y; s.z = z;
+    }
+    for (const [id, s] of this.entLoops) if (!seen.has(id)) { this.stopLoop(s); this.entLoops.delete(id); }
+  }
+
+  stopLoop(s) { if (s.src) { try { s.src.stop(); } catch { /* ended */ } } s.src = null; s.gain = null; }
+
   /** rows: [id, x, y, z], a looping mover's sound where its brush is now (trap_S_UpdateEntityPosition) */
   moveSpeakers(rows) {
     if (!this.speakerById || this.speakerById.size === 0) this.speakerById = new Map(this.speakers.map(s => [s.id, s]));
@@ -172,6 +196,8 @@ export class Q3Audio {
     for (const s of this.speakers) { if (s.src) { try { s.src.stop(); } catch { /* ended */ } } s.src = null; }
     this.speakers = [];
     this.speakerById = null;
+    for (const s of this.entLoops.values()) this.stopLoop(s);
+    this.entLoops.clear();
   }
 
   /** Called every frame with the listener: the looped speakers follow the player. */
@@ -181,6 +207,12 @@ export class Q3Audio {
       if (!s.gain) continue;
       const { gain, pan } = this.spatialize(s.x, s.y, s.z, s.attn);
       s.gain.gain.value = s.on ? gain * s.vol * 0.5 : 0;
+      if (s.pan) s.pan.pan.value = pan;
+    }
+    for (const s of this.entLoops.values()) {
+      if (!s.gain) continue;
+      const { gain, pan } = this.spatialize(s.x, s.y, s.z, 1);
+      s.gain.gain.value = gain * 0.5;
       if (s.pan) s.pan.pan.value = pan;
     }
   }

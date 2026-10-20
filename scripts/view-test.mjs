@@ -11,6 +11,7 @@ import { Renderer, tagTransform, autospriteQuads, fogST, fogFactor, md3Lod, enti
 import { parseDeform, waveValue, deformVertex, envTexCoords, parseShaderScript, surfaceLook, shellMesh, eyeInModel, stageBrightness, stageTcMatrix, stageColor, stageAlpha, shaderStages, fogAdjust, blendFogAdjust, specularAlpha, SPECULAR_LIGHT } from '../src/shader.js';
 import { Md3, parseAnimationCfg, parseSkin } from '../src/md3.js';
 import { postgameMedals } from '../src/hud.js';
+import { Q3Audio } from '../src/audio.js';
 import { parseWeights, preprocess, weightOf } from '../src/itemweights.js';
 import { Pk3 } from '../src/pk3.js';
 import { isFan, tessellate, Bsp } from '../src/bsp.js';
@@ -187,6 +188,26 @@ const markBsp = {
   for (let i = 0; i < 20; i++) st.ejectBrass(0, 0, 0, i * 18, i % 2 ? 2 : 4, 10);
   for (let i = 0; i < 120; i++) st.moveBrass(floor, 0.016);
   assert(st.brass.length === 30 && st.brass.every((b) => b.rest && b.p[2] >= 0 && b.p[2] < 4), `30 shells from 10 bullets and 10 shotgun blasts all lie on the floor (${st.brass.filter((b) => b.rest).length} at rest)`);
+}
+
+// the missiles' flight sounds (trap_S_AddLoopingSound every frame): a loop starts with the missile, goes where it
+// goes, and stops the frame it is gone; loud near the listener, quiet far off
+{
+  const a = Object.create(Q3Audio.prototype);
+  let started = 0, stopped = 0;
+  a.ctx = {}; a.entLoops = new Map(); a.speakers = []; a.listener = { x: 0, y: 0, z: 0, yaw: 0 };
+  a.buffer = async () => 'buf';
+  a.loop = () => { started++; return { src: { stop: () => { stopped++; } }, gain: { gain: { value: 0 } }, pan: null }; };
+  a.setEntityLoops([[7, 100, 0, 0, 'sound/weapons/rocket/rockfly.wav']]);
+  await new Promise((r) => setTimeout(r, 0));
+  a.update(a.listener);
+  const near = a.entLoops.get(7)?.gain.gain.value;
+  a.setEntityLoops([[7, 1500, 0, 0, 'sound/weapons/rocket/rockfly.wav']]);
+  a.update(a.listener);
+  const far = a.entLoops.get(7)?.gain.gain.value;
+  a.setEntityLoops([]);
+  assert(started === 1 && near > far && far >= 0 && stopped === 1 && a.entLoops.size === 0,
+    `a rocket's flight sound: started once (${started}), ${near?.toFixed(2)} near and ${far?.toFixed(2)} far off, stopped when it is gone (${stopped})`);
 }
 
 // the software painter's dynamic lights on a patch's or a mesh's triangle (ProjectDlightTexture lights every

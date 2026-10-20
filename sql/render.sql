@@ -263,6 +263,7 @@ END^
 --   7 the looped speakers that are on (lst their ids), when want_speakers = 1
 --   9 a console line (i1 id, d1 time, s text)
 --  11 a mover's looping sound where it is now (i1 ent, d1..3 the middle of its brush: CG_SetEntitySoundPosition)
+--  12 a missile's flight sound (i1 ent, d1..3 where it is, s the sound: CG_Missile's weapon missileSound)
 CREATE OR ALTER PROCEDURE frame_all (mode SMALLINT, last_sound INTEGER, last_fx INTEGER, want_speakers SMALLINT,
                                      vx DOUBLE PRECISION DEFAULT NULL, vy DOUBLE PRECISION DEFAULT NULL, vz DOUBLE PRECISION DEFAULT NULL,
                                      vyaw DOUBLE PRECISION DEFAULT NULL, vpitch DOUBLE PRECISION DEFAULT NULL, vfov DOUBLE PRECISION DEFAULT NULL)
@@ -394,7 +395,12 @@ BEGIN
   kind = 11; s = NULL;
   FOR SELECT e.id, e.x + (e.minx + e.maxx) / 2, e.y + (e.miny + e.maxy) / 2, e.z + (e.minz + e.maxz) / 2
         FROM ents e WHERE e.loop_sound IS NOT NULL INTO i1, d1, d2, d3 DO SUSPEND;
-  d1 = NULL; d2 = NULL; d3 = NULL;
+  -- CG_Missile: a rocket and a BFG ball loop rockfly.wav as they fly, a plasma bolt lasfly.wav (a grenade nothing),
+  -- wherever they are in the snapshot, in view or not
+  kind = 12;
+  FOR SELECT e.id, e.x, e.y, e.z, TRIM(IIF(e.classname = 'plasma', 'sound/weapons/plasma/lasfly.wav', 'sound/weapons/rocket/rockfly.wav'))
+        FROM ents e WHERE e.classname IN ('rocket', 'plasma', 'bfg') INTO i1, d1, d2, d3, s DO SUSPEND;
+  d1 = NULL; d2 = NULL; d3 = NULL; s = NULL;
   IF (want_speakers = 1) THEN
   BEGIN
     kind = 7; i1 = NULL; d1 = NULL; s = NULL;
