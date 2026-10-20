@@ -263,7 +263,8 @@ END^
 --   7 the looped speakers that are on (lst their ids), when want_speakers = 1
 --   9 a console line (i1 id, d1 time, s text)
 --  11 a mover's looping sound where it is now (i1 ent, d1..3 the middle of its brush: CG_SetEntitySoundPosition)
---  12 a missile's flight sound (i1 ent, d1..3 where it is, s the sound: CG_Missile's weapon missileSound)
+--  12 a missile's flight sound (i1 ent, d1..3 where it is, s the sound: CG_Missile's weapon missileSound), and a
+--     bot's gun's (CG_AddPlayerWeapon: its firingSound while it fires, else its readySound)
 CREATE OR ALTER PROCEDURE frame_all (mode SMALLINT, last_sound INTEGER, last_fx INTEGER, want_speakers SMALLINT,
                                      vx DOUBLE PRECISION DEFAULT NULL, vy DOUBLE PRECISION DEFAULT NULL, vz DOUBLE PRECISION DEFAULT NULL,
                                      vyaw DOUBLE PRECISION DEFAULT NULL, vpitch DOUBLE PRECISION DEFAULT NULL, vfov DOUBLE PRECISION DEFAULT NULL)
@@ -400,6 +401,17 @@ BEGIN
   kind = 12;
   FOR SELECT e.id, e.x, e.y, e.z, TRIM(IIF(e.classname = 'plasma', 'sound/weapons/plasma/lasfly.wav', 'sound/weapons/rocket/rockfly.wav'))
         FROM ents e WHERE e.classname IN ('rocket', 'plasma', 'bfg') INTO i1, d1, d2, d3, s DO SUSPEND;
+  -- CG_AddPlayerWeapon for the bots: the lightning gun hums fsthum.wav up and lg_hum.wav firing, the gauntlet
+  -- runs fstrun.wav firing, the railgun hums rg_hum.wav, the BFG bfg_hum.wav (firing: a shot within the last
+  -- quarter second, its torso's attack restarted)
+  FOR SELECT b.id, b.x, b.y, b.z, b.snd FROM (
+        SELECT e.id, e.x, e.y, e.z,
+               TRIM(CASE WHEN e.weapon = 32 AND e.torso_anim = 7 AND e.torso_time > :tn - 0.25e0 THEN 'sound/weapons/lightning/lg_hum.wav'
+                         WHEN e.weapon = 1 AND e.torso_anim = 8 AND e.torso_time > :tn - 0.25e0 THEN 'sound/weapons/melee/fstrun.wav'
+                         WHEN e.weapon = 32 THEN 'sound/weapons/melee/fsthum.wav' WHEN e.weapon = 64 THEN 'sound/weapons/railgun/rg_hum.wav'
+                         WHEN e.weapon = 256 THEN 'sound/weapons/bfg/bfg_hum.wav' END) snd
+          FROM ents e WHERE e.classname = 'bot' AND e.health > 0 AND e.deadflag = 0 AND e.weapon IN (1, 32, 64, 256) AND COALESCE(e.st, '') <> 'queue') b
+       WHERE b.snd IS NOT NULL INTO i1, d1, d2, d3, s DO SUSPEND;
   d1 = NULL; d2 = NULL; d3 = NULL; s = NULL;
   IF (want_speakers = 1) THEN
   BEGIN

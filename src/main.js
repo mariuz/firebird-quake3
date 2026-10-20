@@ -21,7 +21,7 @@ import { Renderer } from './renderer.js';
 import { GLRenderer } from './renderer-gl.js';
 import { Hud } from './hud.js';
 import { FrameState, drawScene, firstPersonView, zoomedFov, fovY, ZOOM_FOV, underwaterFov, findPortals, portalView, mirrorView, portalFade } from './scene.js';
-import { Q3Audio } from './audio.js';
+import { Q3Audio, weaponLoop } from './audio.js';
 
 const $ = (id) => document.getElementById(id);
 const canvas = $('screen');
@@ -415,7 +415,10 @@ async function frame() {
     audio.update(listener);
     // CG_Player's flight loop while the flight powerup runs (the bots never take it)
     audio.setLoop('flight', 'sound/items/flight.wav', !last.DEAD && last.FLIGHT > 0);
-    audio.setLoop('weapon', last.WEAPON === 32 ? 'sound/weapons/lightning/lg_hum.wav' : last.WEAPON === 64 ? 'sound/weapons/railgun/rg_hum.wav' : null, !last.DEAD && (last.WEAPON === 32 || last.WEAPON === 64));
+    // CG_AddPlayerWeapon: the gun's firing sound while the trigger is held with ammunition (EF_FIRING: the lightning
+    // gun's lg_hum, the gauntlet's fstrun), else its ready sound (the lightning gun's fsthum, the railgun's rg_hum,
+    // the BFG's bfg_hum)
+    audio.setLoop('weapon', weaponLoop(last.WEAPON, last.WEAPON_SOUND === 1), !last.DEAD && !last.MATCH_OVER && !!weaponLoop(last.WEAPON, last.WEAPON_SOUND === 1));
     if (fr.fx.length) { lastFxId = fr.fx[fr.fx.length - 1][0]; state.handleFx(renderer, fr.fx, view.TIME_, map.bsp); }
     if (ticked && (scoreboard || last.MATCH_OVER) && frameNo % 10 === 0) scores = (await db.query('SELECT * FROM scoreboard', [], arr)).rows;
     // the bots learn the arena while we play: a few grid columns, then a few nodes' edges, a tic (sql/waypoints.sql)

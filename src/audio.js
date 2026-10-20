@@ -7,6 +7,13 @@
 
 const SOUND_FULLVOLUME = 80;
 
+/** CG_RegisterWeapon's loops: a gun's firingSound while EF_FIRING, else its readySound (null: none) */
+export function weaponLoop(w, firing) {
+  if (firing && w === 32) return 'sound/weapons/lightning/lg_hum.wav';
+  if (firing && w === 1) return 'sound/weapons/melee/fstrun.wav';
+  return { 32: 'sound/weapons/melee/fsthum.wav', 64: 'sound/weapons/railgun/rg_hum.wav', 256: 'sound/weapons/bfg/bfg_hum.wav' }[w] ?? null;
+}
+
 export class Q3Audio {
   constructor() {
     this.ctx = null;
@@ -146,6 +153,7 @@ export class Q3Audio {
     for (const [id, x, y, z, name] of rows) {
       seen.add(id);
       let s = this.entLoops.get(id);
+      if (s && s.name !== name) { this.stopLoop(s); this.entLoops.delete(id); s = null; }   // (a gun from its ready sound to its firing one)
       if (!s) {
         s = { name, x, y, z };
         this.entLoops.set(id, s);

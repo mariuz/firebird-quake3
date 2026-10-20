@@ -298,6 +298,9 @@ BEGIN
   SELECT p.ent_id, p.weapon, p.attack_finished, p.quad_finished, p.haste_finished, p.pending_weapon, p.weapon_time, p.weaponstate
     FROM player p WHERE p.id = 1 INTO pe, w, af, quad, haste, pw, wt, ws;
   t = now_();
+  -- EF_FIRING (PmoveSingle): the trigger held with ammunition in the gun (the gauntlet needs none); the browser
+  -- plays the gun's firing sound for it (player.weapon_sound)
+  UPDATE player p SET p.weapon_sound = IIF(:btn <> 0 AND (:w = 1 OR ammo_count(weapon_ammo(:w)) > 0), 1, 0) WHERE p.id = 1;
   -- a switch in progress: drop the old weapon, raise the new
   IF (pw <> 0) THEN
   BEGIN
@@ -310,11 +313,7 @@ BEGIN
       UPDATE player p SET p.weaponstate = 0, p.pending_weapon = 0 WHERE p.id = 1;
     EXIT;
   END
-  IF (btn = 0) THEN
-  BEGIN
-    UPDATE player p SET p.weapon_sound = 0 WHERE p.id = 1 AND p.weapon_sound <> 0;
-    EXIT;
-  END
+  IF (btn = 0) THEN EXIT;
   IF (af > t OR w = 0) THEN EXIT;
 
   -- ammo
@@ -333,7 +332,7 @@ BEGIN
   EXECUTE PROCEDURE fire_weapon(pe, w, mx, my, mz, fx_, fy, fz, 1);
   ft = fire_time(w);
   IF (haste > t) THEN ft = ft / 1.3e0;
-  UPDATE player p SET p.attack_finished = :t + :ft, p.attack_start = :t, p.punchangle = -IIF(:w IN (16, 64, 4), 2, 0.5e0), p.weapon_sound = IIF(:w = 32, 1, 0),
+  UPDATE player p SET p.attack_finished = :t + :ft, p.attack_start = :t, p.punchangle = -IIF(:w IN (16, 64, 4), 2, 0.5e0),
          p.bullets = IIF(:ak = 2, p.bullets - 1, p.bullets), p.shells = IIF(:ak = 3, p.shells - 1, p.shells), p.grenades = IIF(:ak = 4, p.grenades - 1, p.grenades),
          p.rockets = IIF(:ak = 5, p.rockets - 1, p.rockets), p.lightning = IIF(:ak = 6, p.lightning - 1, p.lightning), p.slugs = IIF(:ak = 7, p.slugs - 1, p.slugs),
          p.cells = IIF(:ak = 8, p.cells - 1, p.cells), p.bfg = IIF(:ak = 9, p.bfg - 1, p.bfg) WHERE p.id = 1;

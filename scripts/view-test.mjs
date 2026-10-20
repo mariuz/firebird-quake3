@@ -11,7 +11,7 @@ import { Renderer, tagTransform, autospriteQuads, fogST, fogFactor, md3Lod, enti
 import { parseDeform, waveValue, deformVertex, envTexCoords, parseShaderScript, surfaceLook, shellMesh, eyeInModel, stageBrightness, stageTcMatrix, stageColor, stageAlpha, shaderStages, fogAdjust, blendFogAdjust, specularAlpha, SPECULAR_LIGHT } from '../src/shader.js';
 import { Md3, parseAnimationCfg, parseSkin } from '../src/md3.js';
 import { postgameMedals } from '../src/hud.js';
-import { Q3Audio } from '../src/audio.js';
+import { Q3Audio, weaponLoop } from '../src/audio.js';
 import { parseWeights, preprocess, weightOf } from '../src/itemweights.js';
 import { Pk3 } from '../src/pk3.js';
 import { isFan, tessellate, Bsp } from '../src/bsp.js';
@@ -209,6 +209,13 @@ const markBsp = {
   assert(started === 1 && near > far && far >= 0 && stopped === 1 && a.entLoops.size === 0,
     `a rocket's flight sound: started once (${started}), ${near?.toFixed(2)} near and ${far?.toFixed(2)} far off, stopped when it is gone (${stopped})`);
 }
+
+// the guns' loops (CG_RegisterWeapon): the lightning gun hums fsthum up and lg_hum firing, the gauntlet runs fstrun
+// firing only, the railgun and the BFG hum, the rest are silent
+assert(weaponLoop(32, false) === 'sound/weapons/melee/fsthum.wav' && weaponLoop(32, true) === 'sound/weapons/lightning/lg_hum.wav'
+  && weaponLoop(1, true) === 'sound/weapons/melee/fstrun.wav' && weaponLoop(1, false) === null && weaponLoop(64, true) === 'sound/weapons/railgun/rg_hum.wav'
+  && weaponLoop(256, false) === 'sound/weapons/bfg/bfg_hum.wav' && weaponLoop(2, true) === null && weaponLoop(16, false) === null,
+  'the guns\' loops: the lightning gun\'s hum and its firing, the gauntlet\'s run, the railgun\'s and the BFG\'s hum');
 
 // the software painter's dynamic lights on a patch's or a mesh's triangle (ProjectDlightTexture lights every
 // surface): one pass over the triangle by its own vertices for a light within reach of its plane, none for one

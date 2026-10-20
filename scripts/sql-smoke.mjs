@@ -135,6 +135,27 @@ assert(fired > 0, 'firing queued the machinegun sound');
 const brass = (await db.query(`SELECT FIRST 1 f.x, f.y, f.z, f.x2, f.n, e.x ex, e.yaw FROM fx_events f, ents e, game g
   WHERE f.kind = 17 AND f.tic = g.tic AND e.id = (SELECT ent_id FROM player) ORDER BY (f.x - e.x) * (f.x - e.x) + (f.y - e.y) * (f.y - e.y)`)).rows[0];
 assert(brass && brass.N === 2 && Math.abs(brass.X2 - brass.YAW) < 1e-6, `a machinegun shot ejects brass, with the shooter's yaw (${brass ? brass.X2.toFixed(0) : 'none'})`);
+// EF_FIRING: set while the trigger is held with ammunition, for the gun's firing sound; not without ammunition
+{
+  const held = s.WEAPON_SOUND;
+  const up = (await tic([1, 0, 0, 0, 0, 0, 0, 1, 0])).WEAPON_SOUND;
+  await db.exec('UPDATE player SET bullets = 0 WHERE id = 1');
+  const dry = (await tic([1, 0, 0, 0, 0, 1, 0, 1, 0])).WEAPON_SOUND;
+  s = await tic([1, 0, 0, 0, 0, 0, 0, 1, 0]);
+  await db.exec('UPDATE player SET bullets = 99 WHERE id = 1');
+  assert(held === 1 && up === 0 && dry === 0, `the firing flag: held ${held}, released ${up}, held with no ammunition ${dry}`);
+  // a bot's gun is heard from it: a railgun hums (CG_AddPlayerWeapon's readySound)
+  const [bot] = (await db.query("SELECT FIRST 1 id FROM ents WHERE classname = 'bot' AND health > 0 ORDER BY id")).rows;
+  if (bot) {
+    const w0 = (await db.query(`SELECT weapon w, weapons ws FROM ents WHERE id = ${bot.ID}`)).rows[0];
+    await db.exec(`UPDATE ents SET weapon = 64, weapons = BIN_OR(weapons, 64) WHERE id = ${bot.ID}`);
+    const hum = (await db.query('SELECT * FROM frame_all(0, 2147483647, 2147483647, 0)', [], { rowMode: 'array' })).rows.find((r) => r[0] === 12 && r[1] === bot.ID);
+    await db.exec(`UPDATE ents SET weapon = 2 WHERE id = ${bot.ID}`);
+    const mg = (await db.query('SELECT * FROM frame_all(0, 2147483647, 2147483647, 0)', [], { rowMode: 'array' })).rows.find((r) => r[0] === 12 && r[1] === bot.ID);
+    await db.exec(`UPDATE ents SET weapon = ${w0.W}, weapons = ${w0.WS} WHERE id = ${bot.ID}`);
+    assert(hum?.[15] === 'sound/weapons/railgun/rg_hum.wav' && !mg, `a bot's railgun hums from it (${hum?.[15] ?? 'silent'}), its machinegun is silent (${mg ? mg[15] : 'silent'})`);
+  }
+}
 
 // the frame
 for (let i = 0; i < 3; i++) {
@@ -260,9 +281,14 @@ if (pad) {
   const bots = (await db.query("SELECT id FROM ents WHERE classname = 'bot' ORDER BY id")).rows.map((r) => r.ID);
   // (a bot the earlier play killed stands up again for this)
   // (its old body let go, as a respawn does: a dead client is kept at its body)
+  // (on a spawn point of its own: one that fell into q3dm17's void would be killed there again by the next tic)
+  const spawns = (await db.query("SELECT x, y, z FROM ents WHERE classname = 'info_player_deathmatch' ORDER BY id")).rows;
   const revive = async (b) => {
     await db.exec(`EXECUTE PROCEDURE body_release(${b})`);
-    await db.exec(`UPDATE ents SET health = 125, deadflag = 0, st = 'stand', solid = 3, takedamage = 2, alpha = 0, flags = 32, viewheight = 26 WHERE id = ${b}`);
+    const sp = spawns[bots.indexOf(b) % spawns.length];
+    await db.exec(`UPDATE ents SET health = 125, deadflag = 0, st = 'stand', solid = 3, takedamage = 2, alpha = 0, flags = 32, viewheight = 26,
+                   x = ${sp.X}, y = ${sp.Y}, z = ${sp.Z + 9}, vx = 0, vy = 0, vz = 0 WHERE id = ${b}`);
+    await db.exec(`EXECUTE PROCEDURE link_ent(${b})`);
   };
   const before = (await db.query(`SELECT n_excellent, n_gauntlet, n_impressive FROM ents WHERE id = ${pe}`)).rows[0];
   // two frags within three seconds
@@ -320,8 +346,8 @@ if (pad) {
   await db.exec('UPDATE game SET warmup_end = time_ + 3.5, warmup_said = 4 WHERE id = 1');
   // (the bots hold still: once it is over, a rocket of theirs could knock us into q3dm17's void)
   await db.exec("UPDATE ents SET nextthink = 1e9 WHERE classname = 'bot'");
-  // (alive, with the railgun up: a rocket of the section before may have thrown us into the void)
-  if ((await db.query("SELECT deadflag d FROM ents WHERE id = (SELECT ent_id FROM player WHERE id = 1)")).rows[0].D) await db.exec('EXECUTE PROCEDURE player_respawn');
+  // (alive on a spawn point, with the railgun up: the play before may have left us dead or over q3dm17's void)
+  await db.exec('EXECUTE PROCEDURE player_respawn');
   await db.exec("DELETE FROM ents WHERE classname IN ('rocket', 'grenade', 'plasma', 'bfg')");
   await db.exec('UPDATE player SET weapons = 511, weapon = 64, pending_weapon = 0, weaponstate = 0, slugs = 50 WHERE id = 1');
   const ammo = (await db.query('SELECT slugs FROM player')).rows[0].SLUGS;
