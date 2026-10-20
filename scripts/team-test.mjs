@@ -192,7 +192,8 @@ const foe = blue[0], foe2 = blue[1];
   for (const r of await q('SELECT msg FROM messages')) heard.add(r.MSG);
   const d = (await q(`SELECT vlen(a.x - b.x, a.y - b.y, a.z - b.z) d FROM ents a, ents b WHERE a.id = ${b0.ID} AND b.id = ${me}`))[0].D;
   const told = [...heard].filter((m) => m.startsWith(`[${b0.BOT}]: `));
-  assert(arrived === 1 && d < 160 && told.length === 1, `${b0.BOT} comes to us (${d.toFixed(0)} away) and tells us: ${told.join(' / ')}`);
+  // (once, or again when the leader's next orders reset its arrival, as BotTeamOrders' do in Quake III)
+  assert(arrived === 1 && d < 160 && told.length >= 1 && told.length <= 3, `${b0.BOT} comes to us (${d.toFixed(0)} away) and tells us: ${told.join(' / ')}`);
   await db.exec(`EXECUTE PROCEDURE bot_say(${b1.ID}, 'iamteamleader', NULL, NULL, NULL, NULL, NULL, NULL, -1, 0)`);
   const t1 = (await q('SELECT FIRST 1 msg FROM messages ORDER BY id DESC'))[0].MSG;
   await db.exec(`EXECUTE PROCEDURE bot_say(${red[0].ID}, 'iamteamleader', NULL, NULL, NULL, NULL, NULL, NULL, -1, 0)`);
