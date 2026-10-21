@@ -897,8 +897,12 @@ it). Where the slug stops on a wall `CG_MissileHitWall` also adds `ringFlashMode
 its first axis the wall's normal, turned about it at random, in `railExplosion`'s two blended stages: `animmap 5`
 over `ring02_1` to `_4` and black, the first fading out on an inverse sawtooth as the second, a picture ahead,
 fades in (`ringFlash`, `ringStages`; the painters' `drawMd3` take the stage's alpha as `opts.alpha`, modulating
-the picture's), and plays `sfx_plasmaexp` there. The demo pak lacks `gfx/colors/black.tga`; the painters
-draw it black. A lightning beam (effect 12, a
+the picture's), and plays `sfx_plasmaexp` there. A bullet's or a pellet's hit on a wall (effects 1 and 11)
+is the same flash with `bulletFlashModel` (`bullet.md3`) in `bulletExplosion`'s two added stages over
+`bullet1` to `3` (`bulletStages`, the brightness as `opts.tint`), and a machinegun bullet's ricochets (`ric1`
+to `3`, from `fire_bullets`); the lightning's hit leaves its mark alone, and a jump pad puffs one smoke cloud
+of 32 at the jumper that does not grow (`EV_JUMP_PAD`, effect 14). The demo pak lacks `gfx/colors/black.tga`;
+the painters draw it black. A lightning beam (effect 12, a
 tic long) is `RB_SurfaceLightningBolt`: four ribbons 8 either side, the first facing the eye, each turned
 45 degrees about the line, each in `lightningBolt`'s two stages (scrolling at 5 and 7.2, the second
 mirrored, pulsing at 7.1 and 8.1 a second). Where the beam stopped short of its 768 units (the trace's

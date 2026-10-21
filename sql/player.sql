@@ -79,7 +79,11 @@ BEGIN
         EXECUTE PROCEDURE t_damage(hit, shooter, shooter, dmg, dmg, 0, mod_);
       END
       ELSE IF (BIN_AND(sf, 4) = 0 AND (cnt = 1 OR MOD(i, 3) = 0)) THEN
+      BEGIN
         EXECUTE PROCEDURE fx(IIF(cnt > 1, 11, 1), hx, hy, hz, nx, ny, nz, 0);
+        -- CG_MissileHitWall: a machinegun bullet ricochets (ric1, ric2, ric3 twice as often: rand() & 3); a pellet is silent
+        IF (cnt = 1) THEN EXECUTE PROCEDURE snd_at(hx, hy, hz, 'sound/weapons/machinegun/ric' || TRIM(CASE CAST(FLOOR(RAND() * 4) AS INTEGER) WHEN 0 THEN '1' WHEN 1 THEN '2' ELSE '3' END) || '.wav', 1, 1);
+      END
     END
     -- bubbles where the shot went through water: all the way, from the muzzle up to the surface, or from
     -- the surface down to where it hit (the surface a trace against water alone)

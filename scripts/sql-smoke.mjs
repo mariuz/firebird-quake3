@@ -135,6 +135,19 @@ assert(fired > 0, 'firing queued the machinegun sound');
 const brass = (await db.query(`SELECT FIRST 1 f.x, f.y, f.z, f.x2, f.n, e.x ex, e.yaw FROM fx_events f, ents e, game g
   WHERE f.kind = 17 AND f.tic = g.tic AND e.id = (SELECT ent_id FROM player) ORDER BY (f.x - e.x) * (f.x - e.x) + (f.y - e.y) * (f.y - e.y)`)).rows[0];
 assert(brass && brass.N === 2 && Math.abs(brass.X2 - brass.YAW) < 1e-6, `a machinegun shot ejects brass, with the shooter's yaw (${brass ? brass.X2.toFixed(0) : 'none'})`);
+// CG_MissileHitWall: a machinegun bullet into the floor ricochets (ric1-3), a shotgun blast does not
+{
+  const pe = (await db.query('SELECT ent_id e FROM player')).rows[0].E;
+  const [p] = (await db.query(`SELECT x, y, z FROM ents WHERE id = ${pe}`)).rows;
+  const ric = async () => (await db.query("SELECT COUNT(*) n FROM sound_events WHERE snd STARTING WITH 'sound/weapons/machinegun/ric'")).rows[0].N;
+  const r0 = await ric();
+  await db.exec(`EXECUTE PROCEDURE fire_bullets(${pe}, 11, ${p.X}, ${p.Y}, ${p.Z}, 0, 0, -1, 700, 10, 3)`);
+  const r1 = await ric();
+  await db.exec(`EXECUTE PROCEDURE fire_bullets(${pe}, 1, ${p.X}, ${p.Y}, ${p.Z}, 0, 0, -1, 0, 7, 2)`);
+  const r2 = await ric();
+  assert(r1 === r0 && r2 === r0 + 1, `a bullet into the floor ricochets (${r2 - r1}), the shotgun's pellets do not (${r1 - r0})`);
+}
+
 // PM_FootstepForSurface: a step on an ordinary floor, the clank on a metalsteps one, nothing on nosteps (the
 // floor's sides under us made metal, then silent, and put back)
 {
@@ -301,7 +314,9 @@ if (pad) {
   // (a bot the earlier play killed stands up again for this)
   // (its old body let go, as a respawn does: a dead client is kept at its body)
   // (on a spawn point of its own: one that fell into q3dm17's void would be killed there again by the next tic)
-  const spawns = (await db.query("SELECT x, y, z FROM ents WHERE classname = 'info_player_deathmatch' ORDER BY id")).rows;
+  // (the farthest from us: one under our feet would leave its body in ours for the railgun's shots)
+  const spawns = (await db.query(`SELECT s.x, s.y, s.z FROM ents s, ents p WHERE s.classname = 'info_player_deathmatch' AND p.id = ${pe}
+                                  ORDER BY (s.x - p.x) * (s.x - p.x) + (s.y - p.y) * (s.y - p.y) + (s.z - p.z) * (s.z - p.z) DESC`)).rows;
   const revive = async (b) => {
     await db.exec(`EXECUTE PROCEDURE body_release(${b})`);
     const sp = spawns[bots.indexOf(b) % spawns.length];

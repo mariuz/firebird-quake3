@@ -643,7 +643,8 @@ BEGIN
   UPDATE ents e SET e.vx = :vx, e.vy = :vy, e.vz = :vz, e.flags = BIN_AND(e.flags, BIN_NOT(512)), e.teleport_time = now_() + 0.2e0 WHERE e.id = :other;
   EXECUTE PROCEDURE set_anims(other, 20, NULL);   -- LEGS_JUMPB
   EXECUTE PROCEDURE snd(other, 0, 'sound/world/jumppad.wav', 1, 1);
-  EXECUTE PROCEDURE fx(14, (SELECT e.x FROM ents e WHERE e.id = :trig), (SELECT e.y FROM ents e WHERE e.id = :trig), (SELECT e.z FROM ents e WHERE e.id = :trig), 0, 0, 0, 0);
+  -- EV_JUMP_PAD: a puff of smoke where the jumper is
+  EXECUTE PROCEDURE fx(14, (SELECT e.x FROM ents e WHERE e.id = :other), (SELECT e.y FROM ents e WHERE e.id = :other), (SELECT e.z FROM ents e WHERE e.id = :other), 0, 0, 0, 0);
 END^
 
 -- Use_target_push: the activator (a living player or bot, not flying) is given the push's velocity (p1); the
