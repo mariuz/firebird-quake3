@@ -1156,7 +1156,7 @@ export class Renderer {
 
   // ── sprites, beams, particles ──────────────────────────────────────────
   /** A camera-facing square of `size` units with a picture, added or blended (by `alpha` on top of the picture's). */
-  drawSprite(img, origin, size, blend = 'add', light = 255, alpha = 1) {
+  drawSprite(img, origin, size, blend = 'add', light = 255, alpha = 1, rot = 0) {
     const view = this.view;
     const wx = origin[0] - view.x, wy = origin[1] - view.y, wz = origin[2] - view.z;
     const f = wx * view.fwd[0] + wy * view.fwd[1] + wz * view.fwd[2];
@@ -1165,12 +1165,16 @@ export class Renderer {
     const u = wx * view.up[0] + wy * view.up[1] + wz * view.up[2];
     const iz = 1 / f, k = view.scale * iz;
     const hs = size / 2;
-    const x0 = view.cx + (r - hs) * k, x1 = view.cx + (r + hs) * k, y0 = view.cy - (u + hs) * k, y1 = view.cy - (u - hs) * k;
+    // the corners (RB_SurfaceSprite), turned by the rotation in the view's plane
+    const rs = Math.sin((rot * Math.PI) / 180) * hs, rc = Math.cos((rot * Math.PI) / 180) * hs;
+    const cx = (a, b) => view.cx + (r + a * rc - b * rs) * k, cy = (a, b) => view.cy - (u + a * rs + b * rc) * k;
     // in a fog it fades by its blend at its middle (the WebGL painter fades it per pixel)
     const [fc, fa] = fogFade(entityFog(this.fogs, origin, hs), blendFogAdjust(blend), origin[0], origin[1], origin[2], view);
     const tex = this.texture(img), tint = alpha < 1 || fc < 1 || fa < 1 ? [fc, fc, fc, alpha * fa] : null;
-    this.triangle(x0, y0, iz, 0, 0, light, x1, y0, iz, tex.w, 0, light, x1, y1, iz, tex.w, tex.h, light, tex, blend, tint);
-    this.triangle(x0, y0, iz, 0, 0, light, x1, y1, iz, tex.w, tex.h, light, x0, y1, iz, 0, tex.h, light, tex, blend, tint);
+    // top left, top right, bottom right, bottom left
+    const ax = cx(-1, 1), ay = cy(-1, 1), bx = cx(1, 1), by = cy(1, 1), qx = cx(1, -1), qy = cy(1, -1), dx = cx(-1, -1), dy = cy(-1, -1);
+    this.triangle(ax, ay, iz, 0, 0, light, bx, by, iz, tex.w, 0, light, qx, qy, iz, tex.w, tex.h, light, tex, blend, tint);
+    this.triangle(ax, ay, iz, 0, 0, light, qx, qy, iz, tex.w, tex.h, light, dx, dy, iz, 0, tex.h, light, tex, blend, tint);
   }
 
   /** A mark on the world: a polygon of n points (xyz) with texture coordinates in 0..1, blended or

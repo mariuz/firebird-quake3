@@ -533,6 +533,29 @@ assert(colorFromString(4).join() === '1,0,0' && colorFromString('6').join() === 
     `explosions: a rocket's 16 out (${rk.x}) for 1 s, 30 to ${s1.radius.toFixed(1)} by half way, a grenade's glboom for 0.6 s, no particles (${parts.length}); blood 48 for 0.5 s; the teleport's model 24 under`);
 }
 
+// RB_SurfaceSprite's rotation: the sprite's corners turned about the view's axis (the software painter's corners
+// on screen); the puffs, explosions and blood get a random one each (CG_SmokePuff, CG_MakeExplosion, CG_Bleed)
+{
+  const r = Object.create(Renderer.prototype), tris = [];
+  r.view = { x: 0, y: 0, z: 0, fwd: [1, 0, 0], right: [0, -1, 0], up: [0, 0, 1], scale: 100, cx: 160, cy: 120 };
+  r.fogs = null;
+  r.texture = () => ({ w: 8, h: 8 });
+  r.triangle = (...a) => tris.push([a[0], a[1], a[6], a[7], a[12], a[13]]);
+  r.drawSprite('x', [100, 0, 0], 20);
+  const flat = tris.splice(0);
+  r.drawSprite('x', [100, 0, 0], 20, 'add', 255, 1, 90);
+  const turned = tris.splice(0);
+  const near = (a, b) => Math.abs(a - b) < 1e-9;
+  // unturned: the top left at (150, 110); a quarter turn moves it to where the bottom left was, (150, 130)
+  const st = new FrameState();
+  st.handleFx({}, [[0, 2, 0, 0, 0, 0, 0, 1, 0], [0, 3, 0, 0, 0, 0, 0, 0, 5], [0, 14, 0, 0, 0, 0, 0, 0, 0]], 1);
+  st.missileTrail(4, [0, 0, 0], 1); st.missileTrail(4, [50, 0, 0], 1.2, 1, 8);
+  const rots = [...st.explosions.map((x) => x.rot), ...st.puffs.map((p) => p.rot)];
+  assert(near(flat[0][0], 150) && near(flat[0][1], 110) && near(turned[0][0], 150) && near(turned[0][1], 130) && near(turned[0][2], 150) && near(turned[0][3], 110)
+    && rots.length >= 4 && rots.every((a) => a >= 0 && a < 360) && new Set(rots).size > 1,
+    `a sprite turned a quarter: its top left from (${flat[0][0]}, ${flat[0][1]}) to (${turned[0][0].toFixed(0)}, ${turned[0][1].toFixed(0)}); ${rots.length} puffs and explosions turned at random`);
+}
+
 // CG_BloodTrail: a gib in flight drops a blood puff every 150 ms along its way (blood_spurt, 20 growing to 36,
 // falling 40 as it fades over 2 s), none while it lies still
 {

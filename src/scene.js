@@ -640,7 +640,7 @@ export class FrameState {
     // whole steps by index, so rounding neither skips a boundary nor puts one in twice
     for (let i = Math.floor(last[3] / step + 1e-6) + 1, end = Math.floor(time / step + 1e-6); i <= end; i++) {
       const t = i * step, k = Math.max(0, Math.min(1, (t - last[3]) / (time - last[3])));
-      this.puffs.push({ p: [last[0] + (p[0] - last[0]) * k, last[1] + (p[1] - last[1]) * k, last[2] + (p[2] - last[2]) * k], t0: t, dur, radius, ...extra });
+      this.puffs.push({ p: [last[0] + (p[0] - last[0]) * k, last[1] + (p[1] - last[1]) * k, last[2] + (p[2] - last[2]) * k], t0: t, dur, radius, rot: Math.random() * 360, ...extra });
     }
     if (this.puffs.length > MAX_PUFFS) this.puffs.splice(0, this.puffs.length - MAX_PUFFS);
   }
@@ -662,7 +662,7 @@ export class FrameState {
     t += 0.1;
     if (t < time) t = time;
     this.hasteTime.set(id, t);
-    this.puffs.push({ p: [p[0], p[1], p[2] - 16], t0: time, dur: 0.5, radius: 8, alpha: 1 });
+    this.puffs.push({ p: [p[0], p[1], p[2] - 16], t0: time, dur: 0.5, radius: 8, alpha: 1, rot: Math.random() * 360 });
     if (this.puffs.length > MAX_PUFFS) this.puffs.splice(0, this.puffs.length - MAX_PUFFS);
   }
 
@@ -730,12 +730,12 @@ export class FrameState {
         // light, the burn mark
         case 2: case 9: case 8: {
           const sort = kind === 2 ? 'rocket' : kind === 9 ? 'grenade' : 'bfg', nl = Math.hypot(x2, y2, z2) || 1;
-          this.explosions.push({ x: x + (x2 / nl) * 16, y: y + (y2 / nl) * 16, z: z + (z2 / nl) * 16, t0: time, sprite: sort, dur: EXPLOSIONS[sort].dur, light: kind === 8 ? null : DL_BOOM });
+          this.explosions.push({ x: x + (x2 / nl) * 16, y: y + (y2 / nl) * 16, z: z + (z2 / nl) * 16, t0: time, sprite: sort, dur: EXPLOSIONS[sort].dur, light: kind === 8 ? null : DL_BOOM, rot: Math.floor(Math.random() * 360) });
           mark('gfx/damage/burn_med_mrk', kind === 8 ? 32 : 64);
           break;
         }
         // CG_Bleed: bloodExplosion, a sprite of radius 24 for 500 ms, five frames a second
-        case 3: this.explosions.push({ x, y, z, t0: time, frames: BLOOD, rate: 5, size: 48, dur: 0.5, blend: 'blend' }); break;
+        case 3: this.explosions.push({ x, y, z, t0: time, frames: BLOOD, rate: 5, size: 48, dur: 0.5, blend: 'blend', rot: Math.floor(Math.random() * 360) }); break;
         // CG_RailTrail (cg_oldRail 1): the core and the rings, nudged 8 down, fading for cg_railTrailTime
         case 4: this.beams.push({ kind: 'rail', a: [x, y, z - 8], b: [x2, y2, z2 - 8], t0: time, until: time + RAIL_TIME, color: colorFromString(n) }); break;
         // CG_SpawnEffect: the teleport's model (telep.md3, teleportEffect) 24 below, fading out in 500 ms
@@ -748,7 +748,7 @@ export class FrameState {
         case 15: this.bubbleTrail([x, y, z], [x2, y2, z2], 32, time); break;
         case 17: this.ejectBrass(x, y, z, x2, n, time); break;
         // EV_JUMP_PAD: CG_SmokePuff at the jumper, radius 32, white at a third, a second, not growing
-        case 14: this.puffs.push({ p: [x, y, z], t0: time, dur: 1, radius: 32, alpha: 0.33, fixed: true }); if (this.puffs.length > MAX_PUFFS) this.puffs.splice(0, this.puffs.length - MAX_PUFFS); break;
+        case 14: this.puffs.push({ p: [x, y, z], t0: time, dur: 1, radius: 32, alpha: 0.33, fixed: true, rot: Math.random() * 360 }); if (this.puffs.length > MAX_PUFFS) this.puffs.splice(0, this.puffs.length - MAX_PUFFS); break;
         default: break;
       }
     }
@@ -985,7 +985,7 @@ export function drawScene(renderer, hud, res, bsp, last, frame, opts = {}) {
       const at = p.fall ? [p.p[0], p.p[1], p.p[2] - (1 - c) * p.fall] : p.p;   // (LE_FALL_SCALE_FADE: the blood drops)
       const d = (at[0] - view.x) * r.view.fwd[0] + (at[1] - view.y) * r.view.fwd[1] + (at[2] - view.z) * r.view.fwd[2];
       if (d < radius) continue;
-      r.drawSprite(p.img ?? 'gfx/misc/smokepuff3', at, radius * 2, 'blend', 255, (p.alpha ?? 0.33) * c);   // the smokePuff shader, or bloodTrail
+      r.drawSprite(p.img ?? 'gfx/misc/smokepuff3', at, radius * 2, 'blend', 255, (p.alpha ?? 0.33) * c, p.rot ?? 0);   // the smokePuff shader, or bloodTrail
     }
   }
   // effects in flight
@@ -994,11 +994,11 @@ export function drawScene(renderer, hud, res, bsp, last, frame, opts = {}) {
     if (x.sprite) {
       // CG_AddSpriteExplosion: growing from 30 to 72, the shader's two stages added
       const { radius, stages } = spriteExplosion(x.sprite, time - x.t0);
-      for (const [img, b] of stages) if (b > 0.004) r.drawSprite(img, [x.x, x.y, x.z], radius * 2, 'add', Math.round(255 * b));
+      for (const [img, b] of stages) if (b > 0.004) r.drawSprite(img, [x.x, x.y, x.z], radius * 2, 'add', Math.round(255 * b), 1, x.rot ?? 0);
       continue;
     }
     const k = Math.min(x.frames.length - 1, Math.floor(Math.max(0, time - x.t0) * (x.rate ?? x.frames.length / x.dur)));
-    r.drawSprite(x.frames[k], [x.x, x.y, x.z], x.size, x.blend);
+    r.drawSprite(x.frames[k], [x.x, x.y, x.z], x.size, x.blend, 255, 1, x.rot ?? 0);
   }
   // the teleport's effect: telep.md3 under teleportEffect, added, its colour fading (LE_FADE_RGB)
   const telep = res.byName.get('models/misc/telep.md3');

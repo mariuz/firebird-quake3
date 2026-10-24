@@ -1027,10 +1027,15 @@ export class GLRenderer {
     return q;
   }
 
-  drawSprite(img, origin, size, blend = 'add', light = 255, alpha = 1) {
+  drawSprite(img, origin, size, blend = 'add', light = 255, alpha = 1, rot = 0) {
     const gl = this.gl, v = this.view;
     const hs = size / 2, r = v.right, up = v.up;
-    const p = (a, b) => [origin[0] + r[0] * a + up[0] * b, origin[1] + r[1] * a + up[1] * b, origin[2] + r[2] * a + up[2] * b];
+    // (RB_SurfaceSprite: the corners turned about the view's axis by the entity's rotation, in degrees)
+    const rs = Math.sin((rot * Math.PI) / 180), rc = Math.cos((rot * Math.PI) / 180);
+    const p = (a0, b0) => {
+      const a = a0 * rc - b0 * rs, b = a0 * rs + b0 * rc;
+      return [origin[0] + r[0] * a + up[0] * b, origin[1] + r[1] * a + up[1] * b, origin[2] + r[2] * a + up[2] * b];
+    };
     const tex = this.texture(img);
     this.bindSprite();
     gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, tex.tex);
