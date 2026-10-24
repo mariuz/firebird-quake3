@@ -533,6 +533,21 @@ assert(colorFromString(4).join() === '1,0,0' && colorFromString('6').join() === 
     `explosions: a rocket's 16 out (${rk.x}) for 1 s, 30 to ${s1.radius.toFixed(1)} by half way, a grenade's glboom for 0.6 s, no particles (${parts.length}); blood 48 for 0.5 s; the teleport's model 24 under`);
 }
 
+// CG_BloodTrail: a gib in flight drops a blood puff every 150 ms along its way (blood_spurt, 20 growing to 36,
+// falling 40 as it fades over 2 s), none while it lies still
+{
+  const st = new FrameState();
+  st.bloodTrail(9, [0, 0, 100], 10);
+  st.bloodTrail(9, [0, 0, 50], 10.5);
+  const flying = st.puffs.length;
+  st.bloodTrail(9, [0, 0, 50], 11);
+  st.bloodTrail(9, [0, 0, 50], 11.5);
+  const p = st.puffs[0];
+  assert(flying === 4 && st.puffs.length === 4 && p.img === 'gfx/damage/blood_spurt' && p.radius === 20 && p.grow === 16 && p.fall === 40 && p.dur === 2 && p.alpha === 1
+    && Math.abs(p.p[2] - 95) < 1e-6 && Math.abs(p.t0 - 10.05) < 1e-6,
+    `a gib's blood trail: ${flying} puffs in half a second of flight, the first at ${p.p[2].toFixed(0)} (blood_spurt, 20 + 16, falling 40, 2 s), none lying still (${st.puffs.length - flying})`);
+}
+
 // the rail's impact flash (railExplosion): ring02_1..4 at five a second, each fading into the next
 {
   const [a, b] = ringStages(0), [c, d] = ringStages(0.3), [e, f] = ringStages(RING_TIME - 0.01);

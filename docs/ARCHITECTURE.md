@@ -907,7 +907,9 @@ from 30 to 72 (`CG_AddSpriteExplosion`) in their shader's two added stages (`roc
 at eight a second for a second, `grenadeExplosion` over `glboom` at five for 0.6 s; `spriteExplosion`,
 `EXPLOSIONS`), a bleeding hit (effect 3) `CG_Bleed`'s blood sprite of 24 for half a second, a teleport (effect 5)
 `CG_SpawnEffect`'s `telep.md3` 24 under the spot, added and fading in half a second; nothing throws
-particles (Quake III's effects are sprites and models). The demo pak lacks `gfx/colors/black.tga`;
+particles (Quake III's effects are sprites and models). A gib in flight trails blood (`CG_BloodTrail`,
+`bloodTrail`): a `blood_spurt` puff every 150 ms along its way, 20 growing to 36 and falling 40 units as
+it fades over two seconds, none once it lies still. The demo pak lacks `gfx/colors/black.tga`;
 the painters draw it black. A lightning beam (effect 12, a
 tic long) is `RB_SurfaceLightningBolt`: four ribbons 8 either side, the first facing the eye, each turned
 45 degrees about the line, each in `lightningBolt`'s two stages (scrolling at 5 and 7.2, the second

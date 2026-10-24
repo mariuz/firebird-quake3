@@ -31,7 +31,7 @@ has no ladders.
 | **Grappling hook** | not in Quake III's arenas; nothing to do |
 | **Holdables** | medkit and the personal teleporter are picked up and used; the teleporter's destination is a random spawn, as in the game |
 | **Powerups** | quad, haste, invisibility, regeneration, battle suit, flight are here, for the bots too but flight (they would float off); the powerups' sounds are the regeneration's pulse, the flight's loop, the quad's fire, the battle suit's hit and the last five seconds' ticks; the battle suit's hum is not played. The dead drop the gun in hand and their powerups (`toss_client_items`) |
-| **Corpses** | the body is a separate entity from the moment of death (Quake III keeps the dead player itself until the respawn copies it into the queue); the dead player's eye follows it every tic, so the two differ only within a tic. Gibs leave blood on the walls; a bleeding player does not (`CG_Bleed` leaves no mark either); the gibs leave no trail of blood puffs in the air (`CG_BloodTrail`) |
+| **Corpses** | the body is a separate entity from the moment of death (Quake III keeps the dead player itself until the respawn copies it into the queue); the dead player's eye follows it every tic, so the two differ only within a tic. Gibs leave blood on the walls; a bleeding player does not (`CG_Bleed` leaves no mark either); the gibs trail blood puffs in the air (`CG_BloodTrail`) |
 | **Persistent stats** | the match's stats are kept and shown at the intermission (see §8); across matches nothing is kept (Quake III's single player logs its awards to the config, `UI_LogAwardData`, and the frags medal is for each hundred frags of a career); kills per weapon are a later games' screen, not Quake III's |
 
 ## 4. The renderer

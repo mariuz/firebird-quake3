@@ -633,16 +633,25 @@ export class FrameState {
 
   /** CG_RocketTrail (the grenade's too): a puff of smoke every 50 ms of the missile's flight, at where it
    *  was then, from where the last frame left it to where it is now */
-  missileTrail(id, p, time, dur, radius) {
+  missileTrail(id, p, time, dur, radius, step = TRAIL_STEP, extra = null) {
     const last = this.lastPos.get(id);
     this.lastPos.set(id, [p[0], p[1], p[2], time]);
     if (!last || !(time > last[3])) return;
     // whole steps by index, so rounding neither skips a boundary nor puts one in twice
-    for (let i = Math.floor(last[3] / TRAIL_STEP + 1e-6) + 1, end = Math.floor(time / TRAIL_STEP + 1e-6); i <= end; i++) {
-      const t = i * TRAIL_STEP, k = Math.max(0, Math.min(1, (t - last[3]) / (time - last[3])));
-      this.puffs.push({ p: [last[0] + (p[0] - last[0]) * k, last[1] + (p[1] - last[1]) * k, last[2] + (p[2] - last[2]) * k], t0: t, dur, radius });
+    for (let i = Math.floor(last[3] / step + 1e-6) + 1, end = Math.floor(time / step + 1e-6); i <= end; i++) {
+      const t = i * step, k = Math.max(0, Math.min(1, (t - last[3]) / (time - last[3])));
+      this.puffs.push({ p: [last[0] + (p[0] - last[0]) * k, last[1] + (p[1] - last[1]) * k, last[2] + (p[2] - last[2]) * k], t0: t, dur, radius, ...extra });
     }
     if (this.puffs.length > MAX_PUFFS) this.puffs.splice(0, this.puffs.length - MAX_PUFFS);
+  }
+
+  /** CG_BloodTrail: a gib in flight drops a puff every 150 ms where it was then, bloodTrail (blood_spurt, blended),
+   *  radius 20 growing to 36 and falling 40 units as it fades out over two seconds (LE_FALL_SCALE_FADE); none
+   *  once it lies still (TR_STATIONARY) */
+  bloodTrail(id, p, time) {
+    const last = this.lastPos.get(id);
+    if (last && Math.hypot(p[0] - last[0], p[1] - last[1], p[2] - last[2]) < 0.5) { this.lastPos.set(id, [p[0], p[1], p[2], time]); return; }
+    this.missileTrail(id, p, time, 2, 20, 0.15, { img: 'gfx/damage/blood_spurt', alpha: 1, fall: 40, grow: 16 });
   }
 
   /** CG_HasteTrail: a runner with the haste drops a puff under its feet every 100 ms (16 below the origin,
@@ -940,7 +949,7 @@ export function drawScene(renderer, hud, res, bsp, last, frame, opts = {}) {
     } else if (e.effects & (16 | 32)) {
       const trail = e.effects & 16 ? ROCKET_TRAIL : GRENADE_TRAIL;
       state.missileTrail(e.id, [e.x, e.y, e.z], time, trail.dur, trail.radius);
-    }
+    } else if (e.effects & 2) state.bloodTrail(e.id, [e.x, e.y, e.z], time);   // a gib (EF_GIB)
   }
 
   // our own haste's smoke, running on the ground
@@ -972,10 +981,11 @@ export function drawScene(renderer, hud, res, bsp, last, frame, opts = {}) {
     state.puffs = state.puffs.filter((p) => time - p.t0 < p.dur && time >= p.t0 - 0.1);
     for (const p of state.puffs) {
       const c = 1 - Math.max(0, time - p.t0) / p.dur;
-      const radius = p.fixed ? p.radius : p.radius * (1 - c) + 8;   // (LEF_PUFF_DONT_SCALE: the jump pad's keeps its size)
-      const d = (p.p[0] - view.x) * r.view.fwd[0] + (p.p[1] - view.y) * r.view.fwd[1] + (p.p[2] - view.z) * r.view.fwd[2];
+      const radius = p.fixed ? p.radius : p.radius * (1 - c) + (p.grow ?? 8);   // (LEF_PUFF_DONT_SCALE: the jump pad's keeps its size)
+      const at = p.fall ? [p.p[0], p.p[1], p.p[2] - (1 - c) * p.fall] : p.p;   // (LE_FALL_SCALE_FADE: the blood drops)
+      const d = (at[0] - view.x) * r.view.fwd[0] + (at[1] - view.y) * r.view.fwd[1] + (at[2] - view.z) * r.view.fwd[2];
       if (d < radius) continue;
-      r.drawSprite('gfx/misc/smokepuff3', p.p, radius * 2, 'blend', 255, (p.alpha ?? 0.33) * c);   // the smokePuff shader
+      r.drawSprite(p.img ?? 'gfx/misc/smokepuff3', at, radius * 2, 'blend', 255, (p.alpha ?? 0.33) * c);   // the smokePuff shader, or bloodTrail
     }
   }
   // effects in flight
