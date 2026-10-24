@@ -529,6 +529,12 @@ the eye at 12, a quarter of the speed, the crouched legs, no jump; up again wher
 `JUMPER` the chance a think (rolled before the crouch) that it jumps in a fight
 (`BotAttackMove`'s `MOVE_JUMP`: with the enemy in sight, an attack skill of 0.2 or more, not within a second
 of the last, `ents.attack_jump`; it flies on the way it stepped); `FIRETHROTTLE` a pause of its length one shot in (1 − it);
+`CAMPER` whether it camps (`BotWantsToCamp`, `bot_wants_to_camp`, every half second it seeks a goal: a camper
+of 0.1 or more, with a chance of it, an aggression of 50 or more and the rocket launcher, railgun or BFG with ten
+shots goes to the nearest `info_camp` within 1.5 s, `ents.camp_id`, for 120 + 180 × camper + up to 15 s, for ever
+over 0.99, `camp_until`; at the spot, `bot_camp`, it stays within 60 units looking about at `BotRoamGoal`'s points,
+`bot_roam_yaw`, crouching 5 + 15 × croucher s now and then, and fights whatever comes; the camp outlives a death,
+as the game's `ltgtype` does; of the demo's arenas only q3dm7 has camp spots);
 `AIM_ACCURACY` (or `AIM_ACCURACY_RAILGUN` … for the gun in hand) the scatter, `BotAimAtEnemy`'s
 0.3 × (1 − accuracy) on each part of the aim's direction under 0.8 and none above, a hitscan gun's
 accuracy × 0.6 at the muzzle rising to × 1 at 150 units; and an `AIM_SKILL` over 0.5 leads

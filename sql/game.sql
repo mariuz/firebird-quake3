@@ -1827,7 +1827,7 @@ BEGIN
       ELSE IF (cls = 'trigger_hurt') THEN
         UPDATE ents e SET e.dmg = IIF(COALESCE(:dmg, 0) = 0, 5, :dmg), e.solid = IIF(BIN_AND(:sf, 1) <> 0, 0, e.solid) WHERE e.id = :eid;   -- START_OFF
     END
-    ELSE IF (cls IN ('trigger_relay', 'trigger_always', 'target_relay', 'target_delay', 'target_kill', 'target_print', 'target_teleporter', 'target_give', 'target_remove_powerups', 'target_position', 'info_notnull', 'misc_teleporter_dest', 'target_score')) THEN
+    ELSE IF (cls IN ('trigger_relay', 'trigger_always', 'target_relay', 'target_delay', 'target_kill', 'target_print', 'target_teleporter', 'target_give', 'target_remove_powerups', 'target_position', 'info_notnull', 'misc_teleporter_dest', 'target_score', 'info_camp')) THEN
     BEGIN
       UPDATE ents e SET e.solid = 0, e.model_id = NULL WHERE e.id = :eid;
       IF (cls = 'trigger_always') THEN UPDATE ents e SET e.think = 'always_fire', e.nextthink = 0.2e0 + MAXVALUE(e.delay, 0), e.delay = 0 WHERE e.id = :eid;

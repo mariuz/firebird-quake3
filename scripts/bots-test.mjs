@@ -637,6 +637,72 @@ if (item) {
   await db.exec("UPDATE ents SET nextthink = (SELECT time_ FROM game) WHERE classname = 'bot'");
 }
 
+// BotWantsToCamp, BotGoCamp: a camper with a rocket launcher goes to an info_camp within 1.5 s of it and stays
+// there, looking about (BotRoamGoal) and crouching now and then; none without the gun, none for a spot too far
+{
+  const [me] = await q(`SELECT e.bot, b.skill FROM ents e JOIN bot_defs b ON b.name = e.bot WHERE e.id = ${b}`);
+  const setChar = async (k, v) => {
+    await db.exec(`DELETE FROM bot_chatchar WHERE bot = '${me.BOT.trim()}' AND skill = ${me.SKILL} AND ckey = '${k}'`);
+    if (v !== null) await db.exec(`INSERT INTO bot_chatchar (bot, skill, ckey, val) VALUES ('${me.BOT.trim()}', ${me.SKILL}, '${k}', ${v})`);
+  };
+  const saved = Object.fromEntries((await q(`SELECT ckey, val FROM bot_chatchar WHERE bot = '${me.BOT.trim()}' AND skill = ${me.SKILL} AND ckey IN ('camper', 'croucher')`)).map((r) => [r.CKEY.trim(), r.VAL]));
+  // a node 250 to 400 units from another, a walk of a few nodes away
+  const pair = (await q(`SELECT FIRST 1 a.id a, a.x ax, a.y ay, a.z az, c.id c, c.x cx, c.y cy, c.z cz FROM waypoints a JOIN waypoints c ON c.id <> a.id
+                          WHERE ABS(c.z - a.z) < 8 AND (c.x - a.x) * (c.x - a.x) + (c.y - a.y) * (c.y - a.y) BETWEEN 62500 AND 160000
+                            AND wp_route(a.id, c.id, 0) IS NOT NULL ORDER BY a.id`))[0];
+  if (!pair) console.log('(no pair of nodes for the camp test)');
+  else {
+    await db.exec(`UPDATE ents SET st = 'dead', deadflag = 1, health = 0, solid = 0, respawn_time = 1e9, enemy_id = NULL WHERE classname = 'bot' AND id <> ${b}`);
+    await db.exec(`UPDATE ents SET flags = BIN_OR(flags, 64) WHERE id = ${pe}`);   // notarget: nothing to fight
+    const spotId = (await q(`SELECT id FROM spawn_ent('info_camp', ${pair.CX}, ${pair.CY}, ${pair.CZ})`))[0].ID;
+    await db.exec(`UPDATE ents SET solid = 0, model_id = NULL WHERE id = ${spotId}`);
+    const place = async (weapons) => {
+      if ((await q(`SELECT deadflag FROM ents WHERE id = ${b}`))[0].DEADFLAG) await db.exec(`EXECUTE PROCEDURE bot_respawn(${b})`);
+      await db.exec(`UPDATE ents SET x = ${pair.AX}, y = ${pair.AY}, z = ${pair.AZ}, vx = 0, vy = 0, vz = 0, health = 100, armor = 0, weapons = ${weapons}, weapon = 2, ammo2 = 100, ammo5 = 50,
+                     quad_finished = 0, nextthink = 0, flags = BIN_OR(flags, 512), enemy_id = NULL, st = 'run', goal_id = NULL, nbg_id = NULL, nbg_check = NULL,
+                     camp_id = NULL, camp_time = -1e6, attack_crouch = NULL WHERE id = ${b}`);
+      await db.exec(`EXECUTE PROCEDURE link_ent(${b})`);
+      await db.exec(`DELETE FROM bot_routes WHERE ent_id = ${b}`);
+    };
+    await setChar('camper', 1); await setChar('croucher', 1);
+    // without a good gun: no camping
+    await place(3);
+    for (let i = 0; i < 20; i++) await tic();
+    const noGun = (await q(`SELECT camp_id FROM ents WHERE id = ${b}`))[0].CAMP_ID;
+    // with the rocket launcher: there, and it stays
+    await place(19);
+    let chose = null, there = null, stayed = 0, crouchedThere = 0, away = 0;
+    const yaws = new Set();
+    for (let i = 0; i < 240; i++) {
+      await tic();
+      const r = (await q(`SELECT e.x, e.y, e.z, e.yaw, e.maxz, e.camp_id, e.camp_until - ${'now_()'} lft FROM ents e WHERE e.id = ${b}`))[0];
+      chose ??= r.CAMP_ID === spotId ? i : null;
+      const d = Math.hypot(r.X - pair.CX, r.Y - pair.CY, r.Z - pair.CZ);
+      if (there === null && d < 60) there = i;
+      else if (there !== null) {
+        if (d < 60) { stayed++; yaws.add(Math.round(r.YAW)); if (r.MAXZ === 16) crouchedThere++; } else away++;
+      }
+    }
+    const left = (await q(`SELECT camp_until - now_() l FROM ents WHERE id = ${b}`))[0].L;
+    assert(noGun === null && chose !== null && chose < 20 && there !== null && stayed > 60 && away === 0 && left > 9e4,
+      `a camper with the rocket launcher camps at an info_camp ${Math.hypot(pair.CX - pair.AX, pair.CY - pair.AY).toFixed(0)} away (not with the machinegun: ${noGun}; chose it at tic ${chose}, there at ${there}, stayed ${stayed} tics, left ${away}; for ever at camper 1)`);
+    assert(yaws.size >= 3 && crouchedThere > 0, `camping, it looks about and crouches (${yaws.size} headings, crouched ${crouchedThere} tics)`);
+    // a spot too far (over 1.5 s): not taken
+    await db.exec(`UPDATE ents SET x = ${pair.AX + (pair.AX - pair.CX) * 3}, y = ${pair.AY + (pair.AY - pair.CY) * 3} WHERE id = ${spotId}`);
+    await db.exec(`UPDATE ents SET camp_id = NULL, camp_time = -1e6 WHERE id = ${b}`);
+    const far = (await q(`SELECT bot_wants_to_camp(${b}) c FROM rdb$database`))[0].C;
+    await setChar('camper', 0.05);
+    await db.exec(`UPDATE ents SET x = ${pair.CX}, y = ${pair.CY} WHERE id = ${spotId}`);
+    const shy = (await q(`SELECT bot_wants_to_camp(${b}) c FROM rdb$database`))[0].C;
+    assert(far === null && shy === null, `no camping for a spot over 1.5 s away (${far}) nor with a camper under 0.1 (${shy})`);
+    await setChar('camper', saved.camper ?? null); await setChar('croucher', saved.croucher ?? null);
+    await db.exec(`UPDATE ents SET camp_id = NULL, attack_crouch = NULL WHERE id = ${b}`);
+    await db.exec(`DELETE FROM ents WHERE id = ${spotId}`);
+    await db.exec(`UPDATE ents SET flags = BIN_AND(flags, BIN_NOT(64)) WHERE id = ${pe}`);
+    await db.exec(`UPDATE ents SET respawn_time = 0, health = 1 WHERE classname = 'bot' AND id <> ${b}`);
+  }
+}
+
 let chats = 0;
 const talkers = new RegExp(`^(${bots.map((b) => b.BOT.trim()).join('|')}): `);
 let lastMsg = 0;

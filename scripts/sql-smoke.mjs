@@ -361,7 +361,8 @@ if (pad) {
   for (let i = 0; i < 12; i++) s = await tic([1, 0, 0, 0, 0, 0, 0, 1, 0]);
   const imp0 = s.N_IMPRESSIVE;
   const shots = [];
-  for (let shot = 0; shot < 2; shot++) {
+  // (up to four shots: a missile left from the play before can knock us off between two; a miss starts the count again)
+  for (let shot = 0; shot < 4 && s.N_IMPRESSIVE === imp0; shot++) {
     await aim();
     s = await tic([1, 0, 0, 0, 0, 1, 0, 1, 0]);
     shots.push((await db.query(`SELECT p.rail_hits r, b.health h FROM ents p, ents b WHERE p.id = ${pe} AND b.id = ${bots[1]}`)).rows[0]);

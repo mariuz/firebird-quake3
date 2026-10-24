@@ -273,6 +273,9 @@ CREATE TABLE ents (
   attack_jump DOUBLE PRECISION,              -- a bot's attackjump_time: no jump in a fight before it
   attack_crouch DOUBLE PRECISION,            -- a bot's attackcrouch_time: crouched in a fight until it
   step_time DOUBLE PRECISION,                -- a bot's next footstep (the player's is player.step_time)
+  camp_id    INTEGER,                       -- a bot camping (LTG_CAMP): the info_camp spot, until when (teamgoal_time), and
+  camp_until DOUBLE PRECISION,              -- when it last started or chose not to (camp_time)
+  camp_time  DOUBLE PRECISION,
   hold_item SMALLINT DEFAULT 0 NOT NULL,     -- a bot's holdable: 1 the personal teleporter, 2 the medkit (the player's is player.holdable)
   -- a bot's ammunition (ps.ammo[]: bullets, shells, grenades, rockets, lightning, slugs, cells, BFG; the player's is in player)
   ammo2 SMALLINT DEFAULT 0 NOT NULL, ammo3 SMALLINT DEFAULT 0 NOT NULL, ammo4 SMALLINT DEFAULT 0 NOT NULL, ammo5 SMALLINT DEFAULT 0 NOT NULL,

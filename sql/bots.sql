@@ -1197,6 +1197,113 @@ BEGIN
   go = mate;
 END^
 
+-- BotRoamGoal: where a camping bot looks, a point 100 to 900 units off on x, y or both (and up to 96 up or down),
+-- short of the wall the line meets, over a floor that is not lava or slime; ten tries, else the last. Its yaw
+CREATE OR ALTER FUNCTION bot_roam_yaw (eid INTEGER) RETURNS DOUBLE PRECISION
+AS
+DECLARE x DOUBLE PRECISION; DECLARE y DOUBLE PRECISION; DECLARE z DOUBLE PRECISION; DECLARE i INTEGER = 0; DECLARE rnd DOUBLE PRECISION;
+DECLARE bx DOUBLE PRECISION; DECLARE by_ DOUBLE PRECISION; DECLARE bz DOUBLE PRECISION; DECLARE len DOUBLE PRECISION; DECLARE k DOUBLE PRECISION;
+DECLARE tf DOUBLE PRECISION; DECLARE tx DOUBLE PRECISION; DECLARE ty DOUBLE PRECISION; DECLARE tz DOUBLE PRECISION;
+DECLARE tnx DOUBLE PRECISION; DECLARE tny DOUBLE PRECISION; DECLARE tnz DOUBLE PRECISION; DECLARE tsf INTEGER; DECLARE tct INTEGER;
+DECLARE tals SMALLINT; DECLARE tsts SMALLINT; DECLARE thit INTEGER;
+BEGIN
+  SELECT e.x, e.y, e.z FROM ents e WHERE e.id = :eid INTO x, y, z;
+  WHILE (i < 10) DO
+  BEGIN
+    i = i + 1;
+    bx = x; by_ = y; bz = z;
+    rnd = RAND();
+    IF (rnd > 0.25e0) THEN bx = bx + IIF(RAND() < 0.5e0, -1, 1) * (800 * RAND() + 100);
+    IF (rnd < 0.75e0) THEN by_ = by_ + IIF(RAND() < 0.5e0, -1, 1) * (800 * RAND() + 100);
+    bz = bz + 2 * 48 * crand();
+    EXECUTE PROCEDURE trace_move(eid, 0, 0, 0, 0, 0, 0, x, y, z, bx, by_, bz, 1)
+      RETURNING_VALUES tf, tx, ty, tz, tnx, tny, tnz, tsf, tct, tals, tsts, thit;
+    len = vlen(tx - x, ty - y, tz - z);
+    IF (len > 200) THEN
+    BEGIN
+      -- (the direction scaled by len × fraction − 40, as the game has it)
+      k = (len * tf - 40) / len;
+      bx = x + (tx - x) * k; by_ = y + (ty - y) * k; bz = z + (tz - z) * k;
+      EXECUTE PROCEDURE trace_move(eid, 0, 0, 0, 0, 0, 0, bx, by_, bz, bx, by_, bz - 800, 1)
+        RETURNING_VALUES tf, tx, ty, tz, tnx, tny, tnz, tsf, tct, tals, tsts, thit;
+      IF (tsts = 0 AND BIN_AND(point_contents(tx, ty, tz + 1), 8 + 16) = 0) THEN LEAVE;
+    END
+  END
+  RETURN vectoyaw(bx - x, by_ - y);
+END^
+
+-- BotWantsToCamp, every half second while seeking a long-term goal: a bot with a camper characteristic of 0.1
+-- or more, not camping or on a team goal, not camped too recently (within 60 − 300 × (1 − camper) s), with a
+-- chance of its camper, an aggression of 50 or more and the rocket launcher, the railgun or the BFG with ten
+-- shots, goes to the nearest info_camp within 1.5 s (BotGoCamp) to stay 120 + 180 × camper + up to 15 s, for
+-- ever over 0.99. The spot, or NULL
+CREATE OR ALTER FUNCTION bot_wants_to_camp (eid INTEGER) RETURNS INTEGER
+AS
+DECLARE camper DOUBLE PRECISION; DECLARE t DOUBLE PRECISION; DECLARE ct DOUBLE PRECISION; DECLARE w INTEGER;
+DECLARE x DOUBLE PRECISION; DECLARE y DOUBLE PRECISION; DECLARE z DOUBLE PRECISION;
+DECLARE best INTEGER; DECLARE bt DOUBLE PRECISION = 99999; DECLARE cid INTEGER; DECLARE tt DOUBLE PRECISION;
+BEGIN
+  camper = bot_cv(eid, 'camper', 0);
+  IF (camper < 0.1e0) THEN RETURN NULL;
+  t = now_();
+  SELECT e.camp_time, e.weapons, e.x, e.y, e.z FROM ents e WHERE e.id = :eid AND e.camp_id IS NULL AND e.acc_id IS NULL INTO ct, w, x, y, z;
+  IF (w IS NULL) THEN RETURN NULL;
+  IF (COALESCE(ct, 0) > t - 60 + 300 * (1 - camper)) THEN RETURN NULL;
+  IF (RAND() > camper) THEN
+  BEGIN
+    UPDATE ents e SET e.camp_time = :t WHERE e.id = :eid;
+    RETURN NULL;
+  END
+  IF (bot_aggression(eid, NULL) < 50) THEN RETURN NULL;
+  IF ((BIN_AND(w, 16) = 0 OR ent_ammo(eid, 5) < 10) AND (BIN_AND(w, 64) = 0 OR ent_ammo(eid, 7) < 10)
+      AND (BIN_AND(w, 256) = 0 OR ent_ammo(eid, 9) < 10)) THEN RETURN NULL;
+  -- the nearest spot (travel times as bot_choose_ltg's)
+  FOR SELECT c.id, vlen(c.x - :x, c.y - :y, (c.z - :z) * 2) / 320 + 0.1e0 FROM ents c WHERE c.classname = 'info_camp' INTO cid, tt
+  DO IF (tt < bt) THEN BEGIN bt = tt; best = cid; END
+  IF (bt > 1.5e0) THEN RETURN NULL;
+  UPDATE ents e SET e.camp_id = :best, e.camp_time = :t,
+         e.camp_until = :t + IIF(:camper > 0.99e0, 99999, 120 + 180 * :camper + RAND() * 15) WHERE e.id = :eid;
+  RETURN best;
+END^
+
+-- BotGetLongTermGoal for LTG_CAMP: the spot is the goal until the time is up; within 60 units of it the bot
+-- stays, now and then looking somewhere else (BotRoamGoal, a chance of 0.8 × the think's 0.1 s), crouching for
+-- 5 + 15 × croucher s with a chance of croucher × 0.1 when it has not crouched for 5 s, and gives up with its
+-- head in a liquid. `go` the spot to go to, NULL there; `camping` 0 when not camping
+CREATE OR ALTER PROCEDURE bot_camp (eid INTEGER)
+RETURNS (camping SMALLINT, go INTEGER, crouch SMALLINT)
+AS
+DECLARE t DOUBLE PRECISION; DECLARE until_ DOUBLE PRECISION; DECLARE d DOUBLE PRECISION; DECLARE ct_ DOUBLE PRECISION; DECLARE cr DOUBLE PRECISION;
+DECLARE x DOUBLE PRECISION; DECLARE y DOUBLE PRECISION; DECLARE z DOUBLE PRECISION; DECLARE vh DOUBLE PRECISION;
+BEGIN
+  camping = 0; go = NULL; crouch = 0;
+  SELECT e.camp_id, e.camp_until, e.attack_crouch, e.x, e.y, e.z, e.viewheight FROM ents e WHERE e.id = :eid INTO go, until_, ct_, x, y, z, vh;
+  IF (go IS NULL) THEN EXIT;
+  t = now_();
+  SELECT vlen(c.x - :x, c.y - :y, c.z - :z) FROM ents c WHERE c.id = :go INTO d;
+  IF (d IS NULL) THEN BEGIN UPDATE ents e SET e.camp_id = NULL WHERE e.id = :eid; go = NULL; EXIT; END
+  camping = 1;
+  -- (the time up: no longer camping, though it stays this think)
+  IF (until_ < t) THEN UPDATE ents e SET e.camp_id = NULL WHERE e.id = :eid;
+  IF (d >= 60) THEN EXIT;
+  go = NULL;
+  IF (RAND() < 0.08e0) THEN UPDATE ents e SET e.ideal_yaw = bot_roam_yaw(:eid) WHERE e.id = :eid;
+  EXECUTE PROCEDURE change_yaw(eid);
+  IF (COALESCE(ct_, 0) < t - 5) THEN
+  BEGIN
+    cr = bot_cv(eid, 'croucher', 0);
+    IF (RAND() < 0.1e0 * cr) THEN
+    BEGIN
+      ct_ = t + 5 + cr * 15;
+      UPDATE ents e SET e.attack_crouch = :ct_ WHERE e.id = :eid;
+    END
+  END
+  IF (COALESCE(ct_, 0) > t) THEN crouch = 1;
+  -- (no camping under water, slime or lava)
+  IF (BIN_AND(point_contents(x, y, z + vh), 8 + 16 + 32) <> 0) THEN
+    UPDATE ents e SET e.camp_id = NULL, e.attack_crouch = NULL WHERE e.id = :eid;
+END^
+
 CREATE OR ALTER PROCEDURE bot_think (eid INTEGER)
 AS
 DECLARE t DOUBLE PRECISION; DECLARE nt DOUBLE PRECISION; DECLARE st VARCHAR(12); DECLARE enemy INTEGER; DECLARE flags INTEGER; DECLARE goal INTEGER;
@@ -1205,7 +1312,7 @@ DECLARE x DOUBLE PRECISION; DECLARE y DOUBLE PRECISION; DECLARE z DOUBLE PRECISI
 DECLARE d DOUBLE PRECISION; DECLARE vis SMALLINT; DECLARE yaw DOUBLE PRECISION; DECLARE moved SMALLINT = 0; DECLARE w INTEGER; DECLARE diff DOUBLE PRECISION; DECLARE spd DOUBLE PRECISION;
 DECLARE ox DOUBLE PRECISION; DECLARE oy DOUBLE PRECISION; DECLARE match_done SMALLINT; DECLARE waiting SMALLINT; DECLARE hp INTEGER; DECLARE hesitate SMALLINT = 0; DECLARE fresh SMALLINT = 0;
 DECLARE aggr INTEGER; DECLARE ft DOUBLE PRECISION; DECLARE htick DOUBLE PRECISION; DECLARE haste DOUBLE PRECISION; DECLARE regen DOUBLE PRECISION;
-DECLARE gt SMALLINT; DECLARE busy SMALLINT = 0; DECLARE mate INTEGER;
+DECLARE gt SMALLINT; DECLARE busy SMALLINT = 0; DECLARE mate INTEGER; DECLARE camping SMALLINT = 0; DECLARE ccr SMALLINT = 0;
 DECLARE nbg INTEGER; DECLARE nbg_u DOUBLE PRECISION; DECLARE nbg_c DOUBLE PRECISION; DECLARE ltg INTEGER;
 DECLARE jx DOUBLE PRECISION; DECLARE jy DOUBLE PRECISION; DECLARE jt DOUBLE PRECISION; DECLARE jf DOUBLE PRECISION;
 DECLARE wjump SMALLINT = 0; DECLARE crouch SMALLINT = 0; DECLARE ct_ DOUBLE PRECISION; DECLARE mz DOUBLE PRECISION;
@@ -1391,6 +1498,17 @@ BEGIN
     UPDATE ents e SET e.enemy_id = NULL, e.st = 'stand' WHERE e.id = :eid AND e.enemy_id IS NOT NULL;
     -- a teammate to accompany comes before the items (BotGetLongTermGoal)
     EXECUTE PROCEDURE bot_accompany(eid) RETURNING_VALUES busy, mate;
+    -- then a camp spot (LTG_CAMP): gone to, or stayed at (no nearby goals then: BotLongTermGoal returns false)
+    IF (busy = 0) THEN
+    BEGIN
+      EXECUTE PROCEDURE bot_camp(eid) RETURNING_VALUES camping, mate, ccr;
+      IF (camping = 1) THEN busy = 2;
+      IF (ccr = 1) THEN
+      BEGIN
+        crouch = 1;
+        UPDATE ents e SET e.maxz = 16, e.viewheight = 12 WHERE e.id = :eid AND e.maxz <> 16;
+      END
+    END
     -- (a timed item not back yet stays the goal while it is on the way and back within 3 s)
     IF (busy = 0 AND goal IS NOT NULL AND NOT EXISTS (SELECT 1 FROM ents g WHERE g.id = :goal AND vlen(g.x - :x, g.y - :y, 0) > 40
                                           AND (g.solid = 1 OR (g.think = 'item_respawn' AND g.nextthink - :t < 3)))) THEN
@@ -1406,14 +1524,20 @@ BEGIN
     END
     -- BotNearbyGoal (AINode_Seek_LTG): every half second an item within 1.5 s on the way to the long-term goal
     -- (the item sought, or the teammate accompanied), gone for until it is taken or for 4 + 1.5 s (nbg_time)
-    SELECT e.nbg_id, e.nbg_until, e.nbg_check, IIF(:busy = 1, e.acc_id, :goal) FROM ents e WHERE e.id = :eid INTO nbg, nbg_u, nbg_c, ltg;
+    SELECT e.nbg_id, e.nbg_until, e.nbg_check, IIF(:busy = 1, e.acc_id, IIF(:busy = 2, e.camp_id, :goal)) FROM ents e WHERE e.id = :eid INTO nbg, nbg_u, nbg_c, ltg;
     IF (nbg IS NOT NULL AND (nbg_u < t OR NOT EXISTS (SELECT 1 FROM ents g WHERE g.id = :nbg AND g.solid = 1))) THEN
     BEGIN
       nbg = NULL;
       UPDATE ents e SET e.nbg_id = NULL WHERE e.id = :eid;
     END
-    IF (nbg IS NULL AND COALESCE(nbg_c, 0) < t) THEN
+    IF (nbg IS NULL AND COALESCE(nbg_c, 0) < t AND NOT (busy = 2 AND mate IS NULL)) THEN
     BEGIN
+      -- (BotWantsToCamp first, in the same check)
+      IF (busy = 0) THEN
+      BEGIN
+        mate = bot_wants_to_camp(eid);
+        IF (mate IS NOT NULL) THEN BEGIN busy = 2; ltg = mate; END
+      END
       nbg = bot_choose_nbg(eid, ltg, 1.5e0);
       UPDATE ents e SET e.nbg_check = :t + 0.5e0, e.nbg_id = :nbg, e.nbg_until = IIF(:nbg IS NULL, NULL, :t + 5.5e0) WHERE e.id = :eid;
     END
@@ -1428,8 +1552,9 @@ BEGIN
         ELSE IF (moved = 0) THEN EXECUTE PROCEDURE move_to_goal(eid, nbg, spd * 0.9e0);
       END
     END
-    ELSE IF (busy = 1) THEN
+    ELSE IF (busy >= 1) THEN
     BEGIN
+      -- (the companion, or the camp spot)
       IF (mate IS NOT NULL AND BIN_AND(flags, 512) <> 0 AND tt < t AND hesitate = 0 AND bot_avoid_grenade(eid, spd) = 0) THEN
       BEGIN
         EXECUTE PROCEDURE bot_follow_route(eid, mate, spd * 0.9e0) RETURNING_VALUES moved;
