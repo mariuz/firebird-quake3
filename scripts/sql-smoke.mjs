@@ -554,7 +554,7 @@ if (pad) {
   const rid = (await db.query(`EXECUTE BLOCK RETURNS (id INTEGER) AS BEGIN EXECUTE PROCEDURE spawn_ent('rocket', ${bx}, ${by}, ${bz}) RETURNING_VALUES :id; SUSPEND; END`)).rows[0]?.ID;
   const iid = (await db.query(`EXECUTE BLOCK RETURNS (id INTEGER) AS BEGIN EXECUTE PROCEDURE spawn_ent('item', ${bx}, ${by}, ${bz}) RETURNING_VALUES :id; SUSPEND; END`)).rows[0]?.ID;
   const md3 = (await db.query("SELECT FIRST 1 id FROM models WHERE kind = 'M'")).rows[0].ID;
-  await db.exec(`UPDATE ents SET model_id = ${md3}, movetype = 9, effects = 16, solid = 2 WHERE id = ${rid}`);
+  await db.exec(`UPDATE ents SET model_id = ${md3}, movetype = 9, effects = 16, solid = 2, vx = 900, vy = -12, vz = 3 WHERE id = ${rid}`);
   await db.exec(`UPDATE ents SET model_id = ${md3}, movetype = 0, effects = 0, solid = 1 WHERE id = ${iid}`);
   await db.exec(`EXECUTE PROCEDURE link_ent(${rid})`); await db.exec(`EXECUTE PROCEDURE link_ent(${iid})`);
   const back = (await db.query(`SELECT * FROM frame_all(0, 2147483647, 2147483647, 0, ${e.EX}, ${e.EY}, ${e.EZ}, ${hy}, 0, 90)`, [], { rowMode: 'array' })).rows.filter((r) => r[0] === 2).map((r) => r[1]);
@@ -562,8 +562,9 @@ if (pad) {
   // and it whooshes as it flies, from where it is (CG_Missile's missileSound), seen or not; the item makes no sound
   const flyRows = (await db.query(`SELECT * FROM frame_all(0, 2147483647, 2147483647, 0, ${e.EX}, ${e.EY}, ${e.EZ}, ${hy + 180}, 0, 90)`, [], { rowMode: 'array' })).rows.filter((r) => r[0] === 12);
   const fly = flyRows.find((r) => r[1] === rid);
-  assert(fly && fly[15] === 'sound/weapons/rocket/rockfly.wav' && Math.abs(fly[6] - bx) < 1e-6 && !flyRows.some((r) => r[1] === iid),
-    `the rocket is heard flying where it is (${fly ? fly[15] : 'no sound'}, ${fly ? fly[6].toFixed(1) : '-'} for ${bx.toFixed(1)}), the item is silent`);
+  assert(fly && fly[15] === 'sound/weapons/rocket/rockfly.wav' && Math.abs(fly[6] - bx) < 1e-6 && !flyRows.some((r) => r[1] === iid)
+    && fly[9] === 900 && fly[10] === -12 && fly[11] === 3,
+    `the rocket is heard flying where it is (${fly ? fly[15] : 'no sound'}, ${fly ? fly[6].toFixed(1) : '-'} for ${bx.toFixed(1)}), with its velocity for the doppler (${fly ? fly.slice(9, 12).join(', ') : '-'}), the item is silent`);
   await db.exec(`DELETE FROM ents WHERE id IN (${rid}, ${iid})`);
 }
 

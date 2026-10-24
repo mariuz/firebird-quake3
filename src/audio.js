@@ -14,6 +14,17 @@ export function weaponLoop(w, firing) {
   return { 32: 'sound/weapons/melee/fsthum.wav', 64: 'sound/weapons/railgun/rg_hum.wav', 256: 'sound/weapons/bfg/bfg_hum.wav' }[w] ?? null;
 }
 
+/** OpenAL's doppler (ioquake3's s_doppler 1 with s_alDopplerFactor 1, s_alDopplerSpeed 9000, the listener at
+ *  rest): the pitch of a source at p moving at v heard from l, SS / (SS − DF × vss) with vss the source's speed
+ *  toward the listener, held under SS / DF */
+export const DOPPLER_SPEED = 9000;
+export function dopplerRate(p, v, l) {
+  const sx = l[0] - p[0], sy = l[1] - p[1], sz = l[2] - p[2], d = Math.hypot(sx, sy, sz);
+  if (d < 1e-6) return 1;
+  const vss = Math.min((sx * v[0] + sy * v[1] + sz * v[2]) / d, DOPPLER_SPEED * 0.99);
+  return DOPPLER_SPEED / (DOPPLER_SPEED - vss);
+}
+
 export class Q3Audio {
   constructor() {
     this.ctx = null;
@@ -145,12 +156,13 @@ export class Q3Audio {
     for (const s of this.speakers) s.on = on.has(s.id);
   }
 
-  /** rows: [id, x, y, z, sound], every missile in flight this frame (trap_S_AddLoopingSound each frame: a loop
-   *  starts with its entity, goes where it goes and stops when it is gone) */
+  /** rows: [id, x, y, z, sound, vx, vy, vz], every missile in flight this frame (trap_S_AddLoopingSound each frame:
+   *  a loop starts with its entity, goes where it goes and stops when it is gone; its velocity for the doppler, none
+   *  for a gun's hum) */
   setEntityLoops(rows) {
     if (!this.ctx) return;
     const seen = new Set();
-    for (const [id, x, y, z, name] of rows) {
+    for (const [id, x, y, z, name, vx = 0, vy = 0, vz = 0] of rows) {
       seen.add(id);
       let s = this.entLoops.get(id);
       if (s && s.name !== name) { this.stopLoop(s); this.entLoops.delete(id); s = null; }   // (a gun from its ready sound to its firing one)
@@ -162,7 +174,7 @@ export class Q3Audio {
           Object.assign(s, this.loop(buf, this.master));
         });
       }
-      s.x = x; s.y = y; s.z = z;
+      s.x = x; s.y = y; s.z = z; s.v = [vx, vy, vz];
     }
     for (const [id, s] of this.entLoops) if (!seen.has(id)) { this.stopLoop(s); this.entLoops.delete(id); }
   }
@@ -222,6 +234,8 @@ export class Q3Audio {
       const { gain, pan } = this.spatialize(s.x, s.y, s.z, 1);
       s.gain.gain.value = gain * 0.5;
       if (s.pan) s.pan.pan.value = pan;
+      // (higher coming, lower going: a rocket by ×1.11 and ×0.91, a plasma bolt by ×1.29 and ×0.82)
+      if (s.src?.playbackRate) s.src.playbackRate.value = s.v ? dopplerRate([s.x, s.y, s.z], s.v, [listener.x, listener.y, listener.z]) : 1;
     }
   }
 

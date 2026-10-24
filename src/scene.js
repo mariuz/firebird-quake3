@@ -524,7 +524,7 @@ export class FrameState {
         case 9: messages.push({ id: r[1], time: r[6], text: r[15] }); break;
         case 10: eye = [r[6], r[7], r[8]]; break;
         case 11: loopsAt.push([r[1], r[6], r[7], r[8]]); break;
-        case 12: flying.push([r[1], r[6], r[7], r[8], r[15]]); break;
+        case 12: flying.push([r[1], r[6], r[7], r[8], r[15], r[9] ?? 0, r[10] ?? 0, r[11] ?? 0]); break;
         default: break;
       }
     }

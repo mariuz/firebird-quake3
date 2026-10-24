@@ -719,7 +719,7 @@ and the field of view instead of `viewcfg`'s (the zoom); the Node scripts leave 
 | 6 | the pose of a rotated brush model | id, pitch, yaw, roll |
 | 7 | (every 10th frame) the `target_speaker`s audible now, and the movers with a looping sound | `lst` = ids |
 | 11 | a mover's looping sound where its brush is now (every frame, in view or not) | `i1` ent, `d1..3` the brush's middle |
-| 12 | a missile's flight sound (every frame, in view or not): `rockfly.wav` for a rocket or a BFG ball, `lasfly.wav` for a plasma bolt; and a bot's gun's loop (`CG_AddPlayerWeapon`) | `i1` ent, `d1..3` where it is, `s` the sound |
+| 12 | a missile's flight sound (every frame, in view or not): `rockfly.wav` for a rocket or a BFG ball, `lasfly.wav` for a plasma bolt; and a bot's gun's loop (`CG_AddPlayerWeapon`) | `i1` ent, `d1..3` where it is, `d4..6` a missile's velocity (none for a gun), `s` the sound |
 | 9 | a console line | id, time, text |
 | 10 | the eye the frame was culled for (always the first row) | x y z in `d1..d3` |
 
@@ -1052,7 +1052,9 @@ and ambient `target_speaker`s (the frame's kind-7 row says which are audible now
 `CG_SetEntitySoundPosition` places a brush's sound, and moved there every frame by the kind-11 rows as
 `trap_S_UpdateEntityPosition` does: oa_shouse's bobbing fires), the missiles' flight sounds (`CG_Missile`'s
 `missileSound`, the kind-12 rows: a loop starts with the missile, goes with it and stops when it is gone,
-`setEntityLoops`), the guns' loops (`CG_AddPlayerWeapon`, `weaponLoop`: the gun's firing sound while the
+`setEntityLoops`; its pitch is OpenAL's doppler, `dopplerRate`, as ioquake3 sets it up: `s_doppler 1`, a doppler
+factor of 1, a speed of sound of 9000 and the listener at rest, so a rocket coming at us plays × 1.11 and going
+× 0.91, a plasma bolt × 1.29 and × 0.82; only the missiles pass a velocity), the guns' loops (`CG_AddPlayerWeapon`, `weaponLoop`: the gun's firing sound while the
 trigger is held with ammunition, `EF_FIRING` in `player.weapon_sound`, else its ready sound; the lightning
 gun's `fsthum` and `lg_hum`, the gauntlet's `fstrun`, the railgun's and the BFG's hums; the player's in the
 ear, a bot's from it in the kind-12 rows, firing within a quarter second of its last shot), and plays music:

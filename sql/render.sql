@@ -397,10 +397,12 @@ BEGIN
   FOR SELECT e.id, e.x + (e.minx + e.maxx) / 2, e.y + (e.miny + e.maxy) / 2, e.z + (e.minz + e.maxz) / 2
         FROM ents e WHERE e.loop_sound IS NOT NULL INTO i1, d1, d2, d3 DO SUSPEND;
   -- CG_Missile: a rocket and a BFG ball loop rockfly.wav as they fly, a plasma bolt lasfly.wav (a grenade nothing),
-  -- wherever they are in the snapshot, in view or not
+  -- wherever they are in the snapshot, in view or not; with their velocity (BG_EvaluateTrajectoryDelta), for the
+  -- doppler
   kind = 12;
-  FOR SELECT e.id, e.x, e.y, e.z, TRIM(IIF(e.classname = 'plasma', 'sound/weapons/plasma/lasfly.wav', 'sound/weapons/rocket/rockfly.wav'))
-        FROM ents e WHERE e.classname IN ('rocket', 'plasma', 'bfg') INTO i1, d1, d2, d3, s DO SUSPEND;
+  FOR SELECT e.id, e.x, e.y, e.z, e.vx, e.vy, e.vz, TRIM(IIF(e.classname = 'plasma', 'sound/weapons/plasma/lasfly.wav', 'sound/weapons/rocket/rockfly.wav'))
+        FROM ents e WHERE e.classname IN ('rocket', 'plasma', 'bfg') INTO i1, d1, d2, d3, d4, d5, d6, s DO SUSPEND;
+  d4 = NULL; d5 = NULL; d6 = NULL;
   -- CG_AddPlayerWeapon for the bots: the lightning gun hums fsthum.wav up and lg_hum.wav firing, the gauntlet
   -- runs fstrun.wav firing, the railgun hums rg_hum.wav, the BFG bfg_hum.wav (firing: a shot within the last
   -- quarter second, its torso's attack restarted)

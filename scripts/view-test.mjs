@@ -11,7 +11,7 @@ import { Renderer, tagTransform, autospriteQuads, fogST, fogFactor, md3Lod, enti
 import { parseDeform, waveValue, deformVertex, envTexCoords, parseShaderScript, surfaceLook, shellMesh, eyeInModel, stageBrightness, stageTcMatrix, stageColor, stageAlpha, shaderStages, fogAdjust, blendFogAdjust, specularAlpha, SPECULAR_LIGHT } from '../src/shader.js';
 import { Md3, parseAnimationCfg, parseSkin } from '../src/md3.js';
 import { postgameMedals } from '../src/hud.js';
-import { Q3Audio, weaponLoop } from '../src/audio.js';
+import { Q3Audio, weaponLoop, dopplerRate } from '../src/audio.js';
 import { parseWeights, preprocess, weightOf } from '../src/itemweights.js';
 import { Pk3 } from '../src/pk3.js';
 import { isFan, tessellate, Bsp } from '../src/bsp.js';
@@ -197,7 +197,7 @@ const markBsp = {
   let started = 0, stopped = 0;
   a.ctx = {}; a.entLoops = new Map(); a.speakers = []; a.listener = { x: 0, y: 0, z: 0, yaw: 0 };
   a.buffer = async () => 'buf';
-  a.loop = () => { started++; return { src: { stop: () => { stopped++; } }, gain: { gain: { value: 0 } }, pan: null }; };
+  a.loop = () => { started++; return { src: { stop: () => { stopped++; }, playbackRate: { value: 1 } }, gain: { gain: { value: 0 } }, pan: null }; };
   a.setEntityLoops([[7, 100, 0, 0, 'sound/weapons/rocket/rockfly.wav']]);
   await new Promise((r) => setTimeout(r, 0));
   a.update(a.listener);
@@ -205,9 +205,16 @@ const markBsp = {
   a.setEntityLoops([[7, 1500, 0, 0, 'sound/weapons/rocket/rockfly.wav']]);
   a.update(a.listener);
   const far = a.entLoops.get(7)?.gain.gain.value;
+  // the doppler: coming at us at 900, then going away, then across
+  const rate = (vx, vy) => { a.setEntityLoops([[7, 400, 0, 0, 'sound/weapons/rocket/rockfly.wav', vx, vy, 0]]); a.update(a.listener); return a.entLoops.get(7).src.playbackRate.value; };
+  const coming = rate(-900, 0), going = rate(900, 0), across = rate(0, 900);
   a.setEntityLoops([]);
   assert(started === 1 && near > far && far >= 0 && stopped === 1 && a.entLoops.size === 0,
     `a rocket's flight sound: started once (${started}), ${near?.toFixed(2)} near and ${far?.toFixed(2)} far off, stopped when it is gone (${stopped})`);
+  assert(Math.abs(coming - 9000 / 8100) < 1e-9 && Math.abs(going - 9000 / 9900) < 1e-9 && Math.abs(across - 1) < 1e-9,
+    `its doppler (OpenAL's, speed of sound 9000): ×${coming.toFixed(3)} coming at 900, ×${going.toFixed(3)} going, ×${across.toFixed(3)} across`);
+  const plasma = dopplerRate([100, 0, 0], [-2000, 0, 0], [0, 0, 0]), still = dopplerRate([100, 0, 0], [0, 0, 0], [0, 0, 0]);
+  assert(Math.abs(plasma - 9000 / 7000) < 1e-9 && still === 1, `a plasma bolt coming at 2000: ×${plasma.toFixed(3)}; a still source ×${still}`);
 }
 
 // the guns' loops (CG_RegisterWeapon): the lightning gun hums fsthum up and lg_hum firing, the gauntlet runs fstrun
