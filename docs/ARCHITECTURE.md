@@ -901,7 +901,13 @@ the picture's), and plays `sfx_plasmaexp` there. A bullet's or a pellet's hit on
 is the same flash with `bulletFlashModel` (`bullet.md3`) in `bulletExplosion`'s two added stages over
 `bullet1` to `3` (`bulletStages`, the brightness as `opts.tint`), and a machinegun bullet's ricochets (`ric1`
 to `3`, from `fire_bullets`); the lightning's hit leaves its mark alone, and a jump pad puffs one smoke cloud
-of 32 at the jumper that does not grow (`EV_JUMP_PAD`, effect 14). The demo pak lacks `gfx/colors/black.tga`;
+of 32 at the jumper that does not grow (`EV_JUMP_PAD`, effect 14). The rockets', grenades' and BFG's
+explosions (effects 2, 9, 8) are `CG_MakeExplosion`'s sprites 16 units out along the wall's normal, growing
+from 30 to 72 (`CG_AddSpriteExplosion`) in their shader's two added stages (`rocketExplosion` over `rlboom`
+at eight a second for a second, `grenadeExplosion` over `glboom` at five for 0.6 s; `spriteExplosion`,
+`EXPLOSIONS`), a bleeding hit (effect 3) `CG_Bleed`'s blood sprite of 24 for half a second, a teleport (effect 5)
+`CG_SpawnEffect`'s `telep.md3` 24 under the spot, added and fading in half a second; nothing throws
+particles (Quake III's effects are sprites and models). The demo pak lacks `gfx/colors/black.tga`;
 the painters draw it black. A lightning beam (effect 12, a
 tic long) is `RB_SurfaceLightningBolt`: four ribbons 8 either side, the first facing the eye, each turned
 45 degrees about the line, each in `lightningBolt`'s two stages (scrolling at 5 and 7.2, the second

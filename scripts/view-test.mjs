@@ -6,7 +6,7 @@
 //   node scripts/view-test.mjs
 
 import fs from 'node:fs';
-import { FrameState, firstPersonView, zoomedFov, fovY, mapTorsoToWeaponFrame, viewTorsoFrame, underwaterFov, sceneLights, gunFlashOrigin, litByDlights, MAX_DLIGHTS, drawRail, drawBolt, findPortals, portalView, mirrorView, portalFade, cameraRoll, perpendicular, floorBelow, floorUnderBox, drawShadows, colorFromString, boltImpact, ringStages, bulletStages, RING_TIME, followBolt } from '../src/scene.js';
+import { FrameState, firstPersonView, zoomedFov, fovY, mapTorsoToWeaponFrame, viewTorsoFrame, underwaterFov, sceneLights, gunFlashOrigin, litByDlights, MAX_DLIGHTS, drawRail, drawBolt, findPortals, portalView, mirrorView, portalFade, cameraRoll, perpendicular, floorBelow, floorUnderBox, drawShadows, colorFromString, boltImpact, ringStages, bulletStages, RING_TIME, followBolt, spriteExplosion, EXPLOSIONS } from '../src/scene.js';
 import { Renderer, tagTransform, autospriteQuads, fogST, fogFactor, md3Lod, entityFog, clipFace, polyFog, fogFade } from '../src/renderer.js';
 import { parseDeform, waveValue, deformVertex, envTexCoords, parseShaderScript, surfaceLook, shellMesh, eyeInModel, stageBrightness, stageTcMatrix, stageColor, stageAlpha, shaderStages, fogAdjust, blendFogAdjust, specularAlpha, SPECULAR_LIGHT } from '../src/shader.js';
 import { Md3, parseAnimationCfg, parseSkin } from '../src/md3.js';
@@ -245,7 +245,8 @@ assert(weaponLoop(32, false) === 'sound/weapons/melee/fsthum.wav' && weaponLoop(
   const view = { x: 0, y: 0, z: 26, yaw: 0, pitch: 0 };
   const at = (t, ents = []) => sceneLights(st, { ents }, quiet, view, t);
   assert(at(10.1).length === 1 && at(10.1)[0].radius === 300 && at(10.1)[0].color.join() === '1,0.75,0', 'an explosion lights at 300, orange');
-  assert(Math.abs(at(10.45)[0].radius - 150) < 1e-6 && at(10.59)[0].radius < 12, `it fades in the second half (${at(10.45)[0].radius.toFixed(0)} at three quarters)`);
+  // (a rocket's explosion lasts its 1000 ms: CG_MissileHitWall's duration for WP_ROCKET_LAUNCHER)
+  assert(Math.abs(at(10.75)[0].radius - 150) < 1e-6 && at(10.99)[0].radius < 12, `it fades in the second half (${at(10.75)[0].radius.toFixed(0)} at three quarters)`);
   const rockets = Array.from({ length: 40 }, (_, i) => ({ x: 2000 - i * 50, y: 0, z: 0, effects: 16 }));
   const many = at(20, rockets);
   assert(MAX_DLIGHTS === 32 && many.length === MAX_DLIGHTS && many[0].x === 50 && many.every((l) => l.radius === 200), `forty rockets: the ${MAX_DLIGHTS} nearest (MAX_DLIGHTS), at 200`);
@@ -515,6 +516,21 @@ assert(colorFromString(4).join() === '1,0,0' && colorFromString('6').join() === 
     && p0[0].endsWith('bullet1.tga') && p0[1] === 1 && p1[0].endsWith('bullet2.tga') && q0[0].endsWith('bullet3.tga') && Math.abs(q0[1] - 0.5) < 1e-9 && q1[0].endsWith('black.tga')
     && puff?.radius === 32 && puff.fixed && puff.dur === 1 && Math.abs(puff.alpha - 0.33) < 1e-9,
     `a bullet's and a pellet's hits flash (${fsx.rings.length}, ${p0[0].split('/').pop()} then ${q0[0].split('/').pop()}), no sparks (${parts.length}); the jump pad's puff: ${puff?.radius}, fixed`);
+}
+
+// CG_MissileHitWall's sprite explosions: a rocket's 16 units out from the wall, growing from 30 to 72 over its
+// second, rlboom_1..8 at eight a second each fading into the next; a grenade's glboom in 0.6 s; no particles;
+// blood (CG_Bleed) a sprite of 24 for half a second; a teleport the telep.md3 model 24 under the spot
+{
+  const st = new FrameState(), parts = [];
+  st.handleFx({ spawnParticles: (k) => parts.push(k) }, [[0, 2, 100, 0, 0, -1, 0, 0, 0], [0, 9, 0, 50, 0, 0, 0, 1, 0], [0, 3, 0, 0, 0, 0, 0, 0, 10], [0, 5, 0, 0, 100, 0, 0, 0, 1]], 10);
+  const [rk, gr, bl] = st.explosions;
+  const s0 = spriteExplosion('rocket', 0), s1 = spriteExplosion('rocket', 0.5625), g1 = spriteExplosion('grenade', 0.3);
+  assert(parts.length === 0 && rk.x === 84 && rk.sprite === 'rocket' && rk.dur === 1 && gr.z === 16 && gr.sprite === 'grenade' && gr.dur === 0.6
+    && s0.radius === 30 && s0.stages[0][0].endsWith('rlboom_1.jpg') && s0.stages[0][1] === 1 && Math.abs(s1.radius - (42 * 0.5625 + 30)) < 1e-9
+    && s1.stages[0][0].endsWith('rlboom_5.jpg') && Math.abs(s1.stages[1][1] - 0.5) < 1e-9 && g1.stages[0][0].endsWith('glboom_2.jpg') && EXPLOSIONS.grenade.rate === 5
+    && bl.size === 48 && bl.dur === 0.5 && bl.rate === 5 && st.teleports.length === 1 && st.teleports[0].at[2] === 76 && st.teleports[0].end === 10.5,
+    `explosions: a rocket's 16 out (${rk.x}) for 1 s, 30 to ${s1.radius.toFixed(1)} by half way, a grenade's glboom for 0.6 s, no particles (${parts.length}); blood 48 for 0.5 s; the teleport's model 24 under`);
 }
 
 // the rail's impact flash (railExplosion): ring02_1..4 at five a second, each fading into the next

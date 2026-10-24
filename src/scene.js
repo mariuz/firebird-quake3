@@ -9,6 +9,20 @@ import { ITEMS, WEAPONS, PLAYER_MODEL } from './gamedata.js';
 
 const WEAPON_DIR = { 1: 'gauntlet', 2: 'machinegun', 4: 'shotgun', 8: 'grenadel', 16: 'rocketl', 32: 'lightning', 64: 'railgun', 128: 'plasma', 256: 'bfg' };
 const RLBOOM = [1, 2, 3, 4, 5, 6, 7, 8].map((i) => `models/weaphits/rlboom/rlboom_${i}.jpg`);
+// the explosions' shaders (gfx.shader): animmap's frames and rate; a stage fades into the next on its rgbGen waves
+const GLBOOM = [1, 2, 3].map((i) => `models/weaphits/glboom/glboom_${i}.jpg`);
+export const EXPLOSIONS = {
+  rocket: { frames: [...RLBOOM, 'gfx/colors/black.tga'], rate: 8, dur: 1 },     // rocketExplosion, 1000 ms
+  grenade: { frames: [...GLBOOM, 'gfx/colors/black.tga'], rate: 5, dur: 0.6 },  // grenadeExplosion
+  bfg: { frames: [...RLBOOM, 'gfx/colors/black.tga'], rate: 8, dur: 0.6 },      // (bfgExplosion's bfgboom is not in the demo pak)
+};
+/** CG_AddSpriteExplosion at dt into it: the sprite's radius, 30 growing to 72 (42 × (1 − c) + 30), and its two
+ *  added stages [[image, brightness], …] */
+export function spriteExplosion(kind, dt) {
+  const e = EXPLOSIONS[kind], c = Math.max(0, 1 - dt / e.dur);
+  const x = Math.max(0, dt) * e.rate, k = Math.floor(x), f = x - k, n = e.frames.length - 1;
+  return { radius: 42 * (1 - c) + 30, stages: [[e.frames[Math.min(k, n)], 1 - f], [e.frames[Math.min(k + 1, n)], f]] };
+}
 const BLOOD = [201, 202, 203, 204, 205].map((i) => `models/weaphits/blood${i}.tga`);
 
 // CG_RocketTrail's step, cg_brassTime, the trajectory's gravity, the shells' bounce (LEBS_BRASS)
@@ -474,6 +488,7 @@ export class FrameState {
     this.explosions = [];     // { x, y, z, t0, frames, size, dur, blend }
     this.beams = [];          // { kind: 'rail' | 'bolt', a, b, t0, until, owner }
     this.rings = [];          // the rail's impact flashes: { at, axis, t0, end }
+    this.teleports = [];      // CG_SpawnEffect: { at, t0, end }
     this.messages = [];       // [{ id, time, text }]
     this.kick = { dmgSeen: null, at: -1e9, pitch: 0, roll: 0, bob: 0 };   // the first-person view's state
     this.bubbles = [];        // { p: [x, y, z], v: [vx, vy, vz], t0, dur } (CG_BubbleTrail's local entities)
@@ -702,17 +717,25 @@ export class FrameState {
         case 1: this.ringFlash([x, y, z], [x2, y2, z2], time, 'bullet'); mark('gfx/damage/bullet_mrk', 8); break;
         case 11: this.ringFlash([x, y, z], [x2, y2, z2], time, 'bullet'); mark('gfx/damage/bullet_mrk', 4); break;
         case 7: mark('gfx/damage/hole_lg_mrk', 12); break;   // (CG_MissileHitWall: no explosion at the lightning's hit, its flare comes with the beam)
-        case 2: case 9: renderer.spawnParticles('explosion', x, y, z, 0); this.explosions.push({ x, y, z, t0: time, frames: RLBOOM, size: kind === 2 ? 72 : 56, dur: 0.6, blend: 'add', light: DL_BOOM }); mark('gfx/damage/burn_med_mrk', 64); break;
-        case 8: renderer.spawnParticles('explosion', x, y, z, 0); this.explosions.push({ x, y, z, t0: time, frames: RLBOOM, size: 120, dur: 0.8, blend: 'add' }); mark('gfx/damage/burn_med_mrk', 32); break;
-        case 3: renderer.spawnParticles('blood', x, y, z, Math.min(n, 30), [0, 0, 0], 0xff1010c0); this.explosions.push({ x, y, z, t0: time, frames: BLOOD, size: 24, dur: 0.4, blend: 'blend' }); break;
+        // CG_MissileHitWall's sprite explosions (CG_MakeExplosion: 16 units out along the wall's normal) with their
+        // light, the burn mark
+        case 2: case 9: case 8: {
+          const sort = kind === 2 ? 'rocket' : kind === 9 ? 'grenade' : 'bfg', nl = Math.hypot(x2, y2, z2) || 1;
+          this.explosions.push({ x: x + (x2 / nl) * 16, y: y + (y2 / nl) * 16, z: z + (z2 / nl) * 16, t0: time, sprite: sort, dur: EXPLOSIONS[sort].dur, light: kind === 8 ? null : DL_BOOM });
+          mark('gfx/damage/burn_med_mrk', kind === 8 ? 32 : 64);
+          break;
+        }
+        // CG_Bleed: bloodExplosion, a sprite of radius 24 for 500 ms, five frames a second
+        case 3: this.explosions.push({ x, y, z, t0: time, frames: BLOOD, rate: 5, size: 48, dur: 0.5, blend: 'blend' }); break;
         // CG_RailTrail (cg_oldRail 1): the core and the rings, nudged 8 down, fading for cg_railTrailTime
         case 4: this.beams.push({ kind: 'rail', a: [x, y, z - 8], b: [x2, y2, z2 - 8], t0: time, until: time + RAIL_TIME, color: colorFromString(n) }); break;
-        case 5: renderer.spawnParticles('teleport', x, y, z, 0); this.explosions.push({ x, y, z, t0: time, frames: ['gfx/misc/teleportEffect2'], size: 48, dur: 0.5, blend: 'add' }); break;
+        // CG_SpawnEffect: the teleport's model (telep.md3, teleportEffect) 24 below, fading out in 500 ms
+        case 5: this.teleports.push({ at: [x, y, z - 24], t0: time, end: time + 0.5 }); break;
         case 6: this.explosions.push({ x, y, z, t0: time, frames: ['models/weaphits/plasmaboom'], size: 24, dur: 0.25, blend: 'add' }); mark('gfx/damage/plasma_mrk', 16, 'blend', [1, 1, 1], true); break;
         // a mark alone: the rail's (the energy mark in the rail's colour), a gib's blood (16 to 47 across)
         case 16: if (n >= 64 && n < 72) { mark('gfx/damage/plasma_mrk', 24, 'blend', colorFromString(n - 64), true); this.ringFlash([x, y, z], [x2, y2, z2], time); } else mark('gfx/damage/blood_stain', 16 + Math.random() * 32, 'blend', [1, 1, 1]); break;
         case 12: this.beams.push({ kind: 'bolt', a: [x, y, z], b: [x2, y2, z2], ta: [x, y, z], tb: [x2, y2, z2], t0: time, until: time + 0.07, owner: n }); break;
-        case 13: renderer.spawnParticles('blood', x, y, z, 40, [0, 0, 1], 0xff1010c0); break;
+        case 13: break;   // (a body gibbed: the gibs are entities of their own, thrown by throw_gib)
         case 15: this.bubbleTrail([x, y, z], [x2, y2, z2], 32, time); break;
         case 17: this.ejectBrass(x, y, z, x2, n, time); break;
         // EV_JUMP_PAD: CG_SmokePuff at the jumper, radius 32, white at a third, a second, not growing
@@ -958,8 +981,23 @@ export function drawScene(renderer, hud, res, bsp, last, frame, opts = {}) {
   // effects in flight
   state.explosions = state.explosions.filter((x) => time - x.t0 < x.dur);
   for (const x of state.explosions) {
-    const k = Math.min(x.frames.length - 1, Math.floor(((time - x.t0) / x.dur) * x.frames.length));
-    r.drawSprite(x.frames[k], [x.x, x.y, x.z], x.size * (0.6 + 0.6 * (time - x.t0) / x.dur), x.blend);
+    if (x.sprite) {
+      // CG_AddSpriteExplosion: growing from 30 to 72, the shader's two stages added
+      const { radius, stages } = spriteExplosion(x.sprite, time - x.t0);
+      for (const [img, b] of stages) if (b > 0.004) r.drawSprite(img, [x.x, x.y, x.z], radius * 2, 'add', Math.round(255 * b));
+      continue;
+    }
+    const k = Math.min(x.frames.length - 1, Math.floor(Math.max(0, time - x.t0) * (x.rate ?? x.frames.length / x.dur)));
+    r.drawSprite(x.frames[k], [x.x, x.y, x.z], x.size, x.blend);
+  }
+  // the teleport's effect: telep.md3 under teleportEffect, added, its colour fading (LE_FADE_RGB)
+  const telep = res.byName.get('models/misc/telep.md3');
+  state.teleports = state.teleports.filter((g) => time < g.end && time >= g.t0 - 0.1);
+  if (telep) {
+    for (const g of state.teleports) {
+      const c = Math.max(0, (g.end - time) / (g.end - g.t0));
+      r.drawMd3(res.models.get(telep).mdl, 0, g.at, [1, 0, 0, 0, 1, 0, 0, 0, 1], () => 'gfx/misc/teleportEffect2', null, { blend: 'add', twoSided: true, tint: [c, c, c] });
+    }
   }
   state.beams = state.beams.filter((b) => b.until > time && time >= b.t0 - 0.1);
   for (const b of state.beams) {
