@@ -321,7 +321,7 @@ if (pad) {
     await db.exec(`EXECUTE PROCEDURE body_release(${b})`);
     const sp = spawns[bots.indexOf(b) % spawns.length];
     await db.exec(`UPDATE ents SET health = 125, deadflag = 0, st = 'stand', solid = 3, takedamage = 2, alpha = 0, flags = 32, viewheight = 26,
-                   x = ${sp.X}, y = ${sp.Y}, z = ${sp.Z + 9}, vx = 0, vy = 0, vz = 0 WHERE id = ${b}`);
+                   x = ${sp.X}, y = ${sp.Y}, z = ${sp.Z + 9}, vx = 0, vy = 0, vz = 0, minz = -24, maxz = 32, attack_crouch = NULL WHERE id = ${b}`);
     await db.exec(`EXECUTE PROCEDURE link_ent(${b})`);
   };
   const before = (await db.query(`SELECT n_excellent, n_gauntlet, n_impressive FROM ents WHERE id = ${pe}`)).rows[0];
@@ -340,36 +340,50 @@ if (pad) {
   await db.exec(`EXECUTE PROCEDURE give_award(${bots[0]}, 2)`);
   const fx = (await db.query(`SELECT e.effects + IIF(e.award > 0 AND e.award_time > (SELECT time_ FROM game) - 2, 32768, 0) f FROM ents e WHERE e.id = ${bots[0]}`)).rows[0].F;
   assert((fx & 32768) !== 0, 'a bot\'s fresh medal is an effect bit for the painter');
-  // two railgun hits in a row: impressive. Facing a heading with 200 units of room, a bot 150 units ahead
-  {
-    const p = (await db.query(`SELECT x, y, z FROM ents WHERE id = ${pe}`)).rows[0];
+  // two railgun hits in a row: impressive. Standing still on a spawn point facing a heading with 200 units of
+  // room, a bot 150 units ahead (the player put back there before each shot: on q3dm17 the jump pad's flight
+  // before can still be carrying us off, over the void)
+  let p0 = null;
+  // (none with a body or a bot on it: the frags before left corpses on the spawn points)
+  for (const sp of (await db.query(`SELECT s.x, s.y, s.z FROM ents s WHERE s.classname = 'info_player_deathmatch'
+                                     AND NOT EXISTS (SELECT 1 FROM ents o WHERE o.id NOT IN (${pe}, ${bots[1]}) AND o.solid IN (2, 3, 4)
+                                                     AND ABS(o.x - s.x) < 256 AND ABS(o.y - s.y) < 256 AND ABS(o.z - s.z) < 96) ORDER BY s.id`)).rows) {
     for (const yaw of [0, 45, 90, 135, 180, 225, 270, 315]) {
       const a = (yaw * Math.PI) / 180;
-      const t = (await db.query(`SELECT fraction f FROM trace_move(${pe}, -15, -15, -24, 15, 15, 32, ${p.X}, ${p.Y}, ${p.Z}, ${p.X + Math.cos(a) * 200}, ${p.Y + Math.sin(a) * 200}, ${p.Z}, 1)`)).rows[0];
-      if (t.F === 1) { await db.exec(`UPDATE ents SET yaw = ${yaw} WHERE id = ${pe}`); break; }
+      const t = (await db.query(`SELECT fraction f FROM trace_move(${pe}, -15, -15, -24, 15, 15, 32, ${sp.X}, ${sp.Y}, ${sp.Z + 9}, ${sp.X + Math.cos(a) * 200}, ${sp.Y + Math.sin(a) * 200}, ${sp.Z + 9}, 1)`)).rows[0];
+      if (t.F === 1) { p0 = { X: sp.X, Y: sp.Y, Z: sp.Z + 9, YAW: yaw }; break; }
     }
+    if (p0) break;
   }
+  const stand = async () => {
+    await db.exec(`UPDATE ents SET x = ${p0.X}, y = ${p0.Y}, z = ${p0.Z}, yaw = ${p0.YAW}, vx = 0, vy = 0, vz = 0 WHERE id = ${pe}`);
+    await db.exec(`EXECUTE PROCEDURE link_ent(${pe})`);
+  };
   const aim = async () => {
-    const p = (await db.query(`SELECT x, y, z, yaw FROM ents WHERE id = ${pe}`)).rows[0];
+    await stand();
+    const p = p0;
     const a = (p.YAW * Math.PI) / 180;
     await db.exec(`EXECUTE PROCEDURE body_release(${bots[1]})`);
-    await db.exec(`UPDATE ents SET x = ${p.X + Math.cos(a) * 150}, y = ${p.Y + Math.sin(a) * 150}, z = ${p.Z}, vx = 0, vy = 0, vz = 0, health = 125, deadflag = 0, st = 'stand', solid = 3, takedamage = 2, alpha = 0, viewheight = 26 WHERE id = ${bots[1]}`);
+    await db.exec(`UPDATE ents SET x = ${p.X + Math.cos(a) * 150}, y = ${p.Y + Math.sin(a) * 150}, z = ${p.Z}, vx = 0, vy = 0, vz = 0, health = 125, deadflag = 0, st = 'stand', solid = 3, takedamage = 2, alpha = 0, viewheight = 26,
+                   minx = -15, miny = -15, minz = -24, maxx = 15, maxy = 15, maxz = 32, attack_crouch = NULL WHERE id = ${bots[1]}`);
     await db.exec(`EXECUTE PROCEDURE link_ent(${bots[1]})`);
   };
   await db.exec(`UPDATE player SET pitch = 0, weapons = 511, slugs = 50 WHERE id = 1`);
+  await stand();
   s = await tic([1, 0, 0, 0, 0, 0, 0, 1, 7]);
   for (let i = 0; i < 12; i++) s = await tic([1, 0, 0, 0, 0, 0, 0, 1, 0]);
   const imp0 = s.N_IMPRESSIVE;
   const shots = [];
-  // (up to four shots: a missile left from the play before can knock us off between two; a miss starts the count again)
+  // (up to four shots: a missile left from the play before can still knock us off; a miss starts the count again)
   for (let shot = 0; shot < 4 && s.N_IMPRESSIVE === imp0; shot++) {
     await aim();
     s = await tic([1, 0, 0, 0, 0, 1, 0, 1, 0]);
-    shots.push((await db.query(`SELECT p.rail_hits r, b.health h FROM ents p, ents b WHERE p.id = ${pe} AND b.id = ${bots[1]}`)).rows[0]);
+    shots.push({ ...(await db.query(`SELECT p.rail_hits r, b.health h, p.x px, p.y py, p.z pz, b.x bx, b.y by_, b.z bz, b.maxz bmz FROM ents p, ents b WHERE p.id = ${pe} AND b.id = ${bots[1]}`)).rows[0], W: s.WEAPON });
     for (let i = 0; i < 32; i++) s = await tic([1, 0, 0, 0, 0, 0, 0, 1, 0]);
   }
   assert(s.WEAPON === 64 && s.N_IMPRESSIVE === imp0 + 1 && await said('sound/feedback/impressive.wav') > 0,
     `two railgun hits in a row: impressive (${s.N_IMPRESSIVE}; after each shot the hits in a row and the bot's health: ${shots.map((x) => `${x.R}/${x.H}`).join(', ')})`);
+  if (s.N_IMPRESSIVE !== imp0 + 1) console.log('the shots:', JSON.stringify(shots));
   await db.exec("UPDATE ents SET nextthink = 0 WHERE classname = 'bot'");
 }
 
