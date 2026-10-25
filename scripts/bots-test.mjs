@@ -45,6 +45,8 @@ spot ??= [p.X + Math.cos((p.YAW * Math.PI) / 180) * 200, p.Y + Math.sin((p.YAW *
 const faceUs = (Math.atan2(p.Y - spot[1], p.X - spot[0]) * 180) / Math.PI;
 await db.exec(`UPDATE ents SET x = ${spot[0]}, y = ${spot[1]}, z = ${p.Z}, vx = 0, vy = 0, vz = 0, enemy_id = NULL, yaw = ${faceUs}, ideal_yaw = ${faceUs} WHERE id = ${b}`);
 await db.exec(`EXECUTE PROCEDURE link_ent(${b})`);
+// (we have just spawned, and the bots let one just arrived be for 3 s: BotFindEnemy's lastteleport_time)
+await db.exec('UPDATE game SET tele_time = NULL WHERE id = 1');
 // (noticed at any tic: the fight that follows may kill it before the 70 are up)
 let found = null;
 for (let i = 0; i < 70; i++) {
@@ -241,7 +243,7 @@ if (item) {
     const a = (spot.YAW * Math.PI) / 180;
     await bset(b2, `x = ${spot.X + Math.cos(a) * 140}, y = ${spot.Y + Math.sin(a) * 140}, yaw = ${spot.YAW}, attack_finished = 0`);
     await db.exec(`EXECUTE PROCEDURE link_ent(${b2})`);
-    await bset(b, `yaw = ${spot.YAW}, enemy_id = NULL, weapons = 3, weapon = 2, health = 100, armor = 0, quad_finished = 0`);
+    await bset(b, `yaw = ${spot.YAW}, enemy_id = NULL, weapons = 3, weapon = 2, health = 100, last_health = 100, armor = 0, quad_finished = 0`);
     const find = async () => (await q(`SELECT bot_find_target(${b}) t FROM rdb$database`))[0].T;
     if ((await q(`SELECT visible(${b}, ${b2}) v FROM rdb$database`))[0].V === 1) {
       const weak = await find();
@@ -258,6 +260,25 @@ if (item) {
       assert(weak !== b2 && armed === b2 && seen === b2 && behind !== b2 && shot === b2,
         `a bot that would retreat lets a turned back be (${weak}), armed it goes for it (${armed}), and when it is seen (${seen}); behind unnoticed (${behind}) until it shoots (${shot})`);
       await bset(b2, 'attack_finished = 0');
+      // BotFindEnemy's healthdecrease: hurt since it last looked, it looks all round and lets nobody be; once
+      // (the health remembered)
+      await bset(b, 'health = 80');
+      const hurtBehind = await find();
+      const again = await find();
+      await bset(b, `yaw = ${spot.YAW}`);
+      await bset(b, 'health = 60');
+      const hurtWeak = await find();
+      assert(hurtBehind === b2 && again !== b2 && hurtWeak === b2,
+        `hurt, it turns on one behind it (${hurtBehind}; not again unhurt: ${again}) and on a turned back it would let be (${hurtWeak})`);
+      // the last teleport arrival (EV_PLAYER_TELEPORT_IN): whoever is within 70 units of it is let be for 3 s
+      await bset(b2, `yaw = ${spot.YAW + 180}`);
+      const [o] = await q(`SELECT x, y, z FROM ents WHERE id = ${b2}`);
+      await db.exec(`UPDATE game SET tele_time = time_ - 1, tele_x = ${o.X + 30}, tele_y = ${o.Y}, tele_z = ${o.Z} WHERE id = 1`);
+      const fresh = await find();
+      await db.exec('UPDATE game SET tele_time = time_ - 3.5 WHERE id = 1');
+      const later = await find();
+      assert(fresh !== b2 && later === b2, `one just arrived by teleport is let be (${fresh}), 3 s on it is not (${later})`);
+      await bset(b, 'health = 100, last_health = 100');
       await bset(b, `yaw = ${spot.YAW}`);
     } else console.log('(no sight 140 units ahead of the spawn: the avoidance check skipped)');
     await bset(b2, `x = ${spot.X + Math.cos(a) * 100}, y = ${spot.Y + Math.sin(a) * 100}`);

@@ -75,6 +75,8 @@ DECLARE tic INTEGER;
 BEGIN
   SELECT g.tic FROM game g WHERE g.id = 1 INTO tic;
   INSERT INTO fx_events (id, tic, kind, x, y, z, x2, y2, z2, n) VALUES (NEXT VALUE FOR fx_seq, :tic, :kind, :x, :y, :z, :x2, :y2, :z2, :n);
+  -- a teleport's arrival or a spawn (EV_PLAYER_TELEPORT_IN): the bots remember the last (BotCheckEvents)
+  IF (kind = 5 AND n = 1) THEN UPDATE game g SET g.tele_time = g.time_, g.tele_x = :x, g.tele_y = :y, g.tele_z = :z WHERE g.id = 1;
 END^
 
 CREATE OR ALTER PROCEDURE cprint (msg VARCHAR(400))

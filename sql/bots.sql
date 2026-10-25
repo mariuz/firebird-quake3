@@ -563,9 +563,15 @@ CREATE OR ALTER FUNCTION bot_find_target (eid INTEGER) RETURNS INTEGER
 AS
 DECLARE c INTEGER; DECLARE d DOUBLE PRECISION; DECLARE best INTEGER; DECLARE bestd DOUBLE PRECISION = 1e9; DECLARE inv DOUBLE PRECISION; DECLARE paf DOUBLE PRECISION;
 DECLARE skill SMALLINT; DECLARE alert DOUBLE PRECISION; DECLARE fov DOUBLE PRECISION; DECLARE cosang DOUBLE PRECISION; DECLARE al DOUBLE PRECISION;
-DECLARE shooting SMALLINT; DECLARE facing DOUBLE PRECISION; DECLARE cur SMALLINT;
+DECLARE shooting SMALLINT; DECLARE facing DOUBLE PRECISION; DECLARE cur SMALLINT; DECLARE hd SMALLINT;
+DECLARE tt DOUBLE PRECISION; DECLARE tx DOUBLE PRECISION; DECLARE ty DOUBLE PRECISION; DECLARE tz DOUBLE PRECISION;
 BEGIN
   SELECT p.invis_finished, p.attack_finished FROM player p WHERE p.id = 1 INTO inv, paf;
+  -- "check if the health decreased" since it last looked, and remember it (bs->lasthealth)
+  SELECT IIF(COALESCE(e.last_health, e.health) > e.health, 1, 0) FROM ents e WHERE e.id = :eid INTO hd;
+  UPDATE ents e SET e.last_health = e.health WHERE e.id = :eid;
+  -- the last arrival by teleport or spawn: anyone within 70 units of it is let be for 3 s
+  SELECT COALESCE(g.tele_time, -1e9), g.tele_x, g.tele_y, g.tele_z FROM game g WHERE g.id = 1 INTO tt, tx, ty, tz;
   -- an enemy now (curenemy >= 0): one alive, not lost
   cur = IIF(EXISTS (SELECT 1 FROM ents e JOIN ents o ON o.id = e.enemy_id WHERE e.id = :eid AND o.health > 0 AND o.deadflag = 0 AND e.search_time >= now_()), 1, 0);
   SELECT COALESCE(b.skill, 2) FROM ents e LEFT JOIN bot_defs b ON b.name = e.bot WHERE e.id = :eid INTO skill;
@@ -584,13 +590,15 @@ BEGIN
          -- (BotFindEnemy: "if the enemy is invisible and not shooting")
          AND NOT (IIF(o.classname = 'player', :inv, o.invis_finished) > now_() AND IIF(o.classname = 'player', :paf, o.attack_finished) <= now_())
          AND ABS(o.x - e.x) < :alert AND ABS(o.y - e.y) < :alert AND ABS(o.z - e.z) < :alert
+         AND NOT (:tt > now_() - 3 AND vlen(o.x - :tx, o.y - :ty, o.z - :tz) < 70)
        ORDER BY 2 INTO c, d, cosang, shooting, facing
   DO
   BEGIN
     IF (d >= bestd OR d > alert) THEN LEAVE;
     -- behind it: BotFindEnemy's field of view, 90 degrees close, widening to 180 at 810 and past (with the
-    -- character files; without them the skill's); all round for one shooting while the bot has no enemy
-    IF (NOT (cur = 0 AND shooting = 1)) THEN
+    -- character files; without them the skill's); all round, while the bot has no enemy, for one shooting or
+    -- when its health went down
+    IF (NOT (cur = 0 AND (shooting = 1 OR hd = 1))) THEN
     BEGIN
       IF (al IS NOT NULL AND cosang < COS((90 + MINVALUE(d * d, 656100) / 7290) * 0.00872664626e0)) THEN CONTINUE;
       IF (al IS NULL AND d > 250 AND cosang < fov) THEN CONTINUE;
@@ -599,7 +607,8 @@ BEGIN
     BEGIN
       -- "check if we can avoid this enemy": with no enemy yet, one past 100 units, not shooting, that has not
       -- the bot in its 90 degrees, is let be by a bot that would rather retreat from it (BotWantsToRetreat)
-      IF (cur = 0 AND d > 100 AND shooting = 0 AND facing < 0.70710678e0 AND bot_aggression(eid, c) < 50) THEN CONTINUE;
+      -- (not when it was hurt)
+      IF (cur = 0 AND d > 100 AND shooting = 0 AND hd = 0 AND facing < 0.70710678e0 AND bot_aggression(eid, c) < 50) THEN CONTINUE;
       best = c; bestd = d;
     END
   END

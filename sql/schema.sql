@@ -22,6 +22,10 @@ CREATE TABLE game (
   id             SMALLINT NOT NULL PRIMARY KEY,
   tic            INTEGER DEFAULT 0 NOT NULL,
   time_          DOUBLE PRECISION DEFAULT 0 NOT NULL,   -- seconds, tic / 20
+  tele_time      DOUBLE PRECISION,                      -- the last EV_PLAYER_TELEPORT_IN (a teleport's arrival, a
+  tele_x         DOUBLE PRECISION,                      -- spawn) and where: the bots let anyone there be for 3 s
+  tele_y         DOUBLE PRECISION,                      -- (lastteleport_time, lastteleport_origin)
+  tele_z         DOUBLE PRECISION,
   map_name       VARCHAR(32),
   next_map       VARCHAR(64),
   exit_kind      SMALLINT DEFAULT 0 NOT NULL,           -- 0 playing, 1 on to next_map, 3 restart this one
@@ -276,6 +280,7 @@ CREATE TABLE ents (
   camp_id    INTEGER,                       -- a bot camping (LTG_CAMP): the info_camp spot, until when (teamgoal_time), and
   camp_until DOUBLE PRECISION,              -- when it last started or chose not to (camp_time)
   camp_time  DOUBLE PRECISION,
+  last_health INTEGER,                      -- a bot's health when it last looked for an enemy (lasthealth)
   hold_item SMALLINT DEFAULT 0 NOT NULL,     -- a bot's holdable: 1 the personal teleporter, 2 the medkit (the player's is player.holdable)
   -- a bot's ammunition (ps.ammo[]: bullets, shells, grenades, rockets, lightning, slugs, cells, BFG; the player's is in player)
   ammo2 SMALLINT DEFAULT 0 NOT NULL, ammo3 SMALLINT DEFAULT 0 NOT NULL, ammo4 SMALLINT DEFAULT 0 NOT NULL, ammo5 SMALLINT DEFAULT 0 NOT NULL,

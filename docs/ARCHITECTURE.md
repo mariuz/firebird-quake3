@@ -519,10 +519,12 @@ bot's skill, the skill's block or the two around it interpolated as botlib does,
 `src/botchat.js` into `bot_chatchar`, and bounded as `Characteristic_BFloat` bounds it: 0 to 1, the
 turning 1 to 360). `CHARACTERISTIC_REACTIONTIME` is the wait before the first shot; `ALERTNESS` the
 notice range, 900 + 4000 × it, and with the files the field of view is `BotFindEnemy`'s, 90 degrees up
-close widening to 180 at 810 units, all round for one shooting while the bot has no enemy; and with no
-enemy yet, one past 100 units that is not shooting and has not the bot in its 90 degrees is let be by a
-bot that would rather retreat from it (`BotFindEnemy`'s "check if we can avoid this enemy", `bot_aggression`
-under 50); `VIEW_MAXCHANGE` the turning (a tenth of it a think);
+close widening to 180 at 810 units, all round while the bot has no enemy for one shooting or when its health
+went down since it last looked (`healthdecrease`, `ents.last_health`); and with no enemy yet and unhurt, one
+past 100 units that is not shooting and has not the bot in its 90 degrees is let be by a bot that would rather
+retreat from it (`BotFindEnemy`'s "check if we can avoid this enemy", `bot_aggression` under 50); anyone
+within 70 units of the last arrival by teleport or spawn (`EV_PLAYER_TELEPORT_IN`, `game.tele_time`, set by
+`fx` kind 5) is let be for 3 s; `VIEW_MAXCHANGE` the turning (a tenth of it a think);
 `ATTACK_SKILL` how often it circle-strafes; `CROUCHER` the chance a think, a second after its last crouch,
 that it crouches in a fight for croucher × 5 s (`ents.attack_crouch`, `attackcrouch_time`: the box's top at 16,
 the eye at 12, a quarter of the speed, the crouched legs, no jump; up again where the standing box fits);
