@@ -496,10 +496,15 @@ A think:
    shot using one, an empty gun not firing and weighing nothing, `Pickup_Ammo` and `Pickup_Weapon`'s rules
    in `bot_item_touch`: a gun of the map's gives what is short of its quantity, or one shot). Sarge with no armour weighs the red armour 180 and 40 at 150, a rocket launcher 120 and 1
    once held. The weight over the travel time (a straight line at run speed, height twice) picks the
-   goal. An item the bot took is in `bot_avoid` for its respawn time (`BotSetAvoidGoalTime`): it is a
-   goal again only when the trip takes longer than the wait (the avoid time less 0.9 of the travel
-   time), so the bot times the quad and the armour it took; one another took is not known to come back.
-   The goal is kept while the bot is on the way and the item is there or back within 3 s. Every half
+   goal. An item the bot chose or took is in `bot_avoid` for botlib's respawn time
+   (`BotChooseLTGItem`'s `BotAddToAvoidGoals`, `BotSetAvoidGoalTime`, `bot_avoid_item`: the respawntime of
+   the pak's `botfiles/items.c`, `item_defs.bot_respawn`, 20 s for armour, 30 for health, guns and ammunition,
+   60 for the powerups; 30 without one, 10 at least, 10 for a dropped item): it is a goal again only when the
+   trip takes longer than the wait (the avoid time less 0.9 of the travel time), so the bot times the quad
+   and the armour it took. The bot does not know what the others took: every item that has been in the arena
+   (`ents.item_seen`; a powerup not yet come is no goal) is thought there, and the goal ends as
+   `BotReachedGoal` ends it (`bot_goal_reached`): touched (then avoided, a dropped one not), gone from the
+   arena, or its place in sight from the eye with the item not there (`BotItemGoalInVisButNotVisible`). Every half
    second it also looks for a nearby goal (`BotNearbyGoal`, `bot_choose_nbg`, botlib's
    `BotChooseNBGItem`): the item worth the most for its travel time among those under 1.5 s away
    whose trip on to the long-term goal (the item sought, or the teammate it accompanies) takes no

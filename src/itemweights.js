@@ -200,6 +200,15 @@ export function loadItemWeights(pak, bots) {
   return out;
 }
 
+/** botlib's item respawn times (botfiles/items.c: iteminfo "item_…" { … respawntime N }), [[cls, seconds]] */
+export function loadItemRespawns(pak) {
+  let text;
+  try { text = pak.text('botfiles/items.c'); } catch { return []; }
+  return [...text.matchAll(/iteminfo\s+"([^"]+)"\s*\{([^}]*)\}/g)]
+    .map(([, cls, body]) => [cls, Number(body.match(/respawntime\s+([\d.]+)/)?.[1])])
+    .filter(([, t]) => Number.isFinite(t));
+}
+
 /** A node's weight for an inventory (botlib's FuzzyWeight_r), for the tests. */
 export function weightOf(node, inv) {
   if (typeof node === 'number') return node;

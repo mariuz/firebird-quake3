@@ -107,7 +107,8 @@ CREATE TABLE item_defs (
   name     VARCHAR(40) NOT NULL,
   qty      INTEGER NOT NULL,
   respawn  DOUBLE PRECISION NOT NULL,
-  bit      INTEGER DEFAULT 0 NOT NULL    -- weapons: the WP bit; ammo: the weapon index; powerups: the PW bit
+  bit      INTEGER DEFAULT 0 NOT NULL,   -- weapons: the WP bit; ammo: the weapon index; powerups: the PW bit
+  bot_respawn DOUBLE PRECISION          -- botlib's respawntime (botfiles/items.c): how long a bot avoids it
 );
 
 -- ── map geometry ─────────────────────────────────────────────────────────
@@ -281,6 +282,7 @@ CREATE TABLE ents (
   camp_until DOUBLE PRECISION,              -- when it last started or chose not to (camp_time)
   camp_time  DOUBLE PRECISION,
   last_health INTEGER,                      -- a bot's health when it last looked for an enemy (lasthealth)
+  item_seen  SMALLINT DEFAULT 0 NOT NULL,   -- an item that has been in the arena (botlib's level item linked to it): a powerup not yet come is no goal
   hold_item SMALLINT DEFAULT 0 NOT NULL,     -- a bot's holdable: 1 the personal teleporter, 2 the medkit (the player's is player.holdable)
   -- a bot's ammunition (ps.ammo[]: bullets, shells, grenades, rockets, lightning, slugs, cells, BFG; the player's is in player)
   ammo2 SMALLINT DEFAULT 0 NOT NULL, ammo3 SMALLINT DEFAULT 0 NOT NULL, ammo4 SMALLINT DEFAULT 0 NOT NULL, ammo5 SMALLINT DEFAULT 0 NOT NULL,

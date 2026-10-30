@@ -669,10 +669,45 @@ END^
 
 -- BotChooseLTGItem (be_ai_goal.c): the item worth the most for its travel time, the weight over the seconds it
 -- takes to get there (a straight line at run speed, height counted twice, for the AAS's travel time). One it
--- took itself and that is still to come back is a goal when the trip takes longer than the wait (avoid time
--- minus 0.9 of the travel time, as botlib has it): the bot times it. One gone that another took is not known
--- to come back. The flight is left out (they have no use for it); ammunition is weighed by how much of it
--- the bot has (fw_items.c's INVENTORY_ROCKETS …), a holdable by whether it carries one
+-- went for or took itself and that is still to come back is a goal when the trip takes longer than the wait
+-- (avoid time minus 0.9 of the travel time, as botlib has it): the bot times it. One another took is not known
+-- to be gone: the bot learns it on seeing its place empty (bot_goal_reached). A powerup not yet in the arena
+-- is no goal (botlib's level item has no entity yet). The flight is left out (they have no use for it);
+-- ammunition is weighed by how much of it the bot has (fw_items.c's INVENTORY_ROCKETS …), a holdable by whether
+-- it carries one
+-- botlib's avoid goal for an item (BotChooseLTGItem, BotChooseNBGItem, BotSetAvoidGoalTime): avoided for its
+-- respawntime of botfiles/items.c, 30 s without one, 10 at least; a dropped one 10
+CREATE OR ALTER PROCEDURE bot_avoid_item (eid INTEGER, item INTEGER)
+AS
+DECLARE r DOUBLE PRECISION; DECLARE th VARCHAR(24); DECLARE found SMALLINT = 0;
+BEGIN
+  SELECT COALESCE(d.bot_respawn, 0), g.think, 1 FROM ents g JOIN item_defs d ON d.cls = g.item WHERE g.id = :item INTO r, th, found;
+  IF (found = 0) THEN EXIT;
+  r = IIF(th = 'remove', 10, MAXVALUE(10, IIF(r = 0, 30, r)));
+  UPDATE OR INSERT INTO bot_avoid (ent_id, item_id, avoid_until) VALUES (:eid, :item, now_() + :r) MATCHING (ent_id, item_id);
+END^
+
+-- BotReachedGoal for an item: 0 not yet; 1 gone from the arena (a dropped one removed); 2 touched; 3 its place
+-- in sight from the eye and the item not there (BotItemGoalInVisButNotVisible: how a bot learns an item it went
+-- for was taken; it does not know otherwise)
+CREATE OR ALTER FUNCTION bot_goal_reached (eid INTEGER, gid INTEGER) RETURNS SMALLINT
+AS
+DECLARE x DOUBLE PRECISION; DECLARE y DOUBLE PRECISION; DECLARE z DOUBLE PRECISION; DECLARE vh DOUBLE PRECISION;
+DECLARE gx DOUBLE PRECISION; DECLARE gy DOUBLE PRECISION; DECLARE gz DOUBLE PRECISION; DECLARE sol SMALLINT;
+DECLARE tf DOUBLE PRECISION; DECLARE tx DOUBLE PRECISION; DECLARE ty DOUBLE PRECISION; DECLARE tz DOUBLE PRECISION;
+DECLARE tnx DOUBLE PRECISION; DECLARE tny DOUBLE PRECISION; DECLARE tnz DOUBLE PRECISION; DECLARE tsf INTEGER; DECLARE tct INTEGER;
+DECLARE tals SMALLINT; DECLARE tsts SMALLINT; DECLARE thit INTEGER;
+BEGIN
+  SELECT g.x, g.y, g.z, g.solid FROM ents g WHERE g.id = :gid INTO gx, gy, gz, sol;
+  IF (gx IS NULL) THEN RETURN 1;
+  SELECT e.x, e.y, e.z, e.viewheight FROM ents e WHERE e.id = :eid INTO x, y, z, vh;
+  IF (vlen(gx - x, gy - y, 0) <= 40 AND ABS(gz - z) < 64) THEN RETURN 2;
+  IF (sol = 1) THEN RETURN 0;
+  EXECUTE PROCEDURE trace_move(eid, 0, 0, 0, 0, 0, 0, x, y, z + vh, gx, gy, gz, 1)
+    RETURNING_VALUES tf, tx, ty, tz, tnx, tny, tnz, tsf, tct, tals, tsts, thit;
+  RETURN IIF(tf >= 1, 3, 0);
+END^
+
 CREATE OR ALTER FUNCTION bot_choose_ltg (eid INTEGER) RETURNS INTEGER
 AS
 DECLARE x DOUBLE PRECISION; DECLARE y DOUBLE PRECISION; DECLARE z DOUBLE PRECISION; DECLARE t DOUBLE PRECISION;
@@ -682,13 +717,13 @@ DECLARE best INTEGER; DECLARE bestw DOUBLE PRECISION = 0;
 BEGIN
   t = now_();
   SELECT e.x, e.y, e.z FROM ents e WHERE e.id = :eid INTO x, y, z;
-  FOR SELECT g.id, g.item, g.x, g.y, g.z, g.solid, (SELECT a.avoid_until FROM bot_avoid a WHERE a.ent_id = :eid AND a.item_id = g.id)
+  FOR SELECT g.id, g.item, g.x, g.y, g.z, g.item_seen, (SELECT a.avoid_until FROM bot_avoid a WHERE a.ent_id = :eid AND a.item_id = g.id)
         FROM ents g JOIN item_defs i ON i.cls = g.item
        WHERE g.classname = 'item' AND i.kind IN ('H', 'A', 'W', 'P', 'M', 'O') AND NOT (i.kind = 'P' AND i.bit = 32)
         INTO gid, cls, gx, gy, gz, sol, av
   DO
   BEGIN
-    IF (sol <> 1 AND (av IS NULL OR av <= t)) THEN CONTINUE;
+    IF (sol = 0) THEN CONTINUE;
     tt = vlen(gx - x, gy - y, (gz - z) * 2) / 320 + 0.1e0;
     IF (av IS NOT NULL AND av - t - tt * 0.9e0 > 0) THEN CONTINUE;
     w = bot_item_weight(eid, cls);
@@ -716,14 +751,14 @@ BEGIN
     SELECT g.x, g.y, g.z FROM ents g WHERE g.id = :ltg INTO lx, ly, lz;
     IF (lx IS NOT NULL) THEN ltg_t = vlen(lx - x, ly - y, (lz - z) * 2) / 320 + 0.1e0;
   END
-  FOR SELECT g.id, g.item, g.x, g.y, g.z, g.solid, (SELECT a.avoid_until FROM bot_avoid a WHERE a.ent_id = :eid AND a.item_id = g.id)
+  FOR SELECT g.id, g.item, g.x, g.y, g.z, g.item_seen, (SELECT a.avoid_until FROM bot_avoid a WHERE a.ent_id = :eid AND a.item_id = g.id)
         FROM ents g JOIN item_defs i ON i.cls = g.item
        WHERE g.classname = 'item' AND i.kind IN ('H', 'A', 'W', 'P', 'M', 'O') AND NOT (i.kind = 'P' AND i.bit = 32)
          AND ABS(g.x - :x) < :range_ * 320 AND ABS(g.y - :y) < :range_ * 320
         INTO gid, cls, gx, gy, gz, sol, av
   DO
   BEGIN
-    IF (sol <> 1 AND (av IS NULL OR av <= t)) THEN CONTINUE;
+    IF (sol = 0) THEN CONTINUE;
     tt = vlen(gx - x, gy - y, (gz - z) * 2) / 320 + 0.1e0;
     IF (tt >= range_) THEN CONTINUE;
     IF (av IS NOT NULL AND av - t - tt * 0.9e0 > 0) THEN CONTINUE;
@@ -956,8 +991,8 @@ BEGIN
   ELSE EXIT;
   EXECUTE PROCEDURE snd(other, 3, snd_, 1, 1);
   EXECUTE PROCEDURE item_taken(item, IIF(kind = 'W', 5, resp));
-  -- botlib's avoid goal: this one comes back in its respawn time
-  UPDATE OR INSERT INTO bot_avoid (ent_id, item_id, avoid_until) VALUES (:other, :item, now_() + IIF(:kind = 'W', 5, :resp)) MATCHING (ent_id, item_id);
+  -- botlib's avoid goal (BotReachedGoal touching it: BotSetAvoidGoalTime by its items.c respawntime)
+  EXECUTE PROCEDURE bot_avoid_item(other, item);
 END^
 
 -- BotBattleUseItems (ai_dmq3.c): in a fight, under 40 health a bot with the personal teleporter uses it (to a
@@ -1321,7 +1356,7 @@ DECLARE x DOUBLE PRECISION; DECLARE y DOUBLE PRECISION; DECLARE z DOUBLE PRECISI
 DECLARE d DOUBLE PRECISION; DECLARE vis SMALLINT; DECLARE yaw DOUBLE PRECISION; DECLARE moved SMALLINT = 0; DECLARE w INTEGER; DECLARE diff DOUBLE PRECISION; DECLARE spd DOUBLE PRECISION;
 DECLARE ox DOUBLE PRECISION; DECLARE oy DOUBLE PRECISION; DECLARE match_done SMALLINT; DECLARE waiting SMALLINT; DECLARE hp INTEGER; DECLARE hesitate SMALLINT = 0; DECLARE fresh SMALLINT = 0;
 DECLARE aggr INTEGER; DECLARE ft DOUBLE PRECISION; DECLARE htick DOUBLE PRECISION; DECLARE haste DOUBLE PRECISION; DECLARE regen DOUBLE PRECISION;
-DECLARE gt SMALLINT; DECLARE busy SMALLINT = 0; DECLARE mate INTEGER; DECLARE camping SMALLINT = 0; DECLARE ccr SMALLINT = 0;
+DECLARE gt SMALLINT; DECLARE busy SMALLINT = 0; DECLARE mate INTEGER; DECLARE camping SMALLINT = 0; DECLARE ccr SMALLINT = 0; DECLARE reached SMALLINT;
 DECLARE nbg INTEGER; DECLARE nbg_u DOUBLE PRECISION; DECLARE nbg_c DOUBLE PRECISION; DECLARE ltg INTEGER;
 DECLARE jx DOUBLE PRECISION; DECLARE jy DOUBLE PRECISION; DECLARE jt DOUBLE PRECISION; DECLARE jf DOUBLE PRECISION;
 DECLARE wjump SMALLINT = 0; DECLARE crouch SMALLINT = 0; DECLARE ct_ DOUBLE PRECISION; DECLARE mz DOUBLE PRECISION;
@@ -1518,26 +1553,38 @@ BEGIN
         UPDATE ents e SET e.maxz = 16, e.viewheight = 12 WHERE e.id = :eid AND e.maxz <> 16;
       END
     END
-    -- (a timed item not back yet stays the goal while it is on the way and back within 3 s)
-    IF (busy = 0 AND goal IS NOT NULL AND NOT EXISTS (SELECT 1 FROM ents g WHERE g.id = :goal AND vlen(g.x - :x, g.y - :y, 0) > 40
-                                          AND (g.solid = 1 OR (g.think = 'item_respawn' AND g.nextthink - :t < 3)))) THEN
+    -- BotReachedGoal: the goal is done when touched (avoided then for its respawn time, a dropped one not), or
+    -- when its place is in sight and it is not there
+    IF (busy = 0 AND goal IS NOT NULL) THEN
     BEGIN
-      goal = NULL;
-      UPDATE ents e SET e.goal_id = NULL WHERE e.id = :eid;
+      reached = bot_goal_reached(eid, goal);
+      IF (reached > 0) THEN
+      BEGIN
+        IF (reached = 2 AND NOT EXISTS (SELECT 1 FROM ents g WHERE g.id = :goal AND g.think = 'remove')) THEN EXECUTE PROCEDURE bot_avoid_item(eid, goal);
+        goal = NULL;
+        UPDATE ents e SET e.goal_id = NULL WHERE e.id = :eid;
+      END
     END
     IF (busy = 0 AND goal IS NULL AND RAND() < 0.3e0) THEN
     BEGIN
       -- the long-term goal (BotChooseLTGItem): the item worth the most for the trip, by the bot's item weights
       goal = bot_choose_ltg(eid);
       UPDATE ents e SET e.goal_id = :goal WHERE e.id = :eid;
+      -- (and avoided for its respawn time: not chosen again straight away)
+      IF (goal IS NOT NULL) THEN EXECUTE PROCEDURE bot_avoid_item(eid, goal);
     END
     -- BotNearbyGoal (AINode_Seek_LTG): every half second an item within 1.5 s on the way to the long-term goal
     -- (the item sought, or the teammate accompanied), gone for until it is taken or for 4 + 1.5 s (nbg_time)
     SELECT e.nbg_id, e.nbg_until, e.nbg_check, IIF(:busy = 1, e.acc_id, IIF(:busy = 2, e.camp_id, :goal)) FROM ents e WHERE e.id = :eid INTO nbg, nbg_u, nbg_c, ltg;
-    IF (nbg IS NOT NULL AND (nbg_u < t OR NOT EXISTS (SELECT 1 FROM ents g WHERE g.id = :nbg AND g.solid = 1))) THEN
+    IF (nbg IS NOT NULL) THEN
     BEGIN
-      nbg = NULL;
-      UPDATE ents e SET e.nbg_id = NULL WHERE e.id = :eid;
+      reached = IIF(nbg_u < t, 1, bot_goal_reached(eid, nbg));
+      IF (reached > 0) THEN
+      BEGIN
+        IF (reached = 2 AND NOT EXISTS (SELECT 1 FROM ents g WHERE g.id = :nbg AND g.think = 'remove')) THEN EXECUTE PROCEDURE bot_avoid_item(eid, nbg);
+        nbg = NULL;
+        UPDATE ents e SET e.nbg_id = NULL WHERE e.id = :eid;
+      END
     END
     IF (nbg IS NULL AND COALESCE(nbg_c, 0) < t AND NOT (busy = 2 AND mate IS NULL)) THEN
     BEGIN
@@ -1549,6 +1596,7 @@ BEGIN
       END
       nbg = bot_choose_nbg(eid, ltg, 1.5e0);
       UPDATE ents e SET e.nbg_check = :t + 0.5e0, e.nbg_id = :nbg, e.nbg_until = IIF(:nbg IS NULL, NULL, :t + 5.5e0) WHERE e.id = :eid;
+      IF (nbg IS NOT NULL) THEN EXECUTE PROCEDURE bot_avoid_item(eid, nbg);
     END
     -- nothing to do but roam: now and then a word (BotChat_Random, a chance in a hundred a think, then the character's)
     IF (RAND() < 0.005e0) THEN EXECUTE PROCEDURE bot_chat_event(eid, 'random', NULL, 0);

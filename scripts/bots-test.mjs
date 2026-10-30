@@ -55,7 +55,10 @@ for (let i = 0; i < 70; i++) {
 }
 let s = (await q(`SELECT enemy_id, st, attack_finished, weapon FROM ents WHERE id = ${b}`))[0];
 assert(found !== null, `the bot found an enemy (${found}; now ${s.ST.trim()})`);
-const shots = (await q("SELECT COUNT(*) n FROM sound_events WHERE snd LIKE 'sound/weapons/%' AND ent_id <> " + pe))[0].N;
+const fired = async () => (await q("SELECT COUNT(*) n FROM sound_events WHERE snd LIKE 'sound/weapons/%' AND ent_id <> " + pe))[0].N;
+// (the fight may take a while to start: the reaction time, a turn, a run for an item first)
+let shots = await fired();
+for (let i = 0; i < 70 && shots === 0; i++) { await tic(); shots = await fired(); }
 assert(shots > 0, `the bots fired (${shots} shots)`);
 
 // a bot dies and respawns (alive for it: the fight above may have killed it already)
@@ -352,26 +355,44 @@ if (item) {
   const rows = (await q(`SELECT COUNT(*) n FROM bot_iw WHERE bot = (SELECT bot FROM ents WHERE id = ${b})`))[0].N;
   assert(rows > 100 && hurt > fine && bare > clad && noRl > rl && rl <= 1,
     `item weights from the botfiles (${rows} rows): health hurt ${hurt} / fine ${fine}, red armour bare ${bare} / at 150 ${clad}, rocket launcher ${noRl} / held ${rl}`);
-  // the timing, on a quad 48 units off, every other item gone for the while (and not known to come back)
+  // the timing, on a quad 48 units off, every other item never seen (botlib's level items with no entity)
   const me = (await q(`SELECT x, y, z FROM ents WHERE id = ${b}`))[0];
-  const gone = (await q("SELECT id FROM ents WHERE classname = 'item' AND solid = 1")).map((r) => r.ID);
-  if (gone.length) await db.exec(`UPDATE ents SET solid = 0 WHERE id IN (${gone.join(',')})`);
+  const seen = (await q("SELECT id FROM ents WHERE classname = 'item' AND item_seen = 1")).map((r) => r.ID);
+  if (seen.length) await db.exec(`UPDATE ents SET item_seen = 0 WHERE id IN (${seen.join(',')})`);
   await db.exec(`DELETE FROM bot_avoid WHERE ent_id = ${b}`);
   const quad = (await q(`SELECT id FROM spawn_ent('item', ${me.X + 48}, ${me.Y}, ${me.Z})`))[0].ID;
   await db.exec(`UPDATE ents SET item = 'item_quad', solid = 1 WHERE id = ${quad}`);
   const ltg = async () => (await q(`SELECT bot_choose_ltg(${b}) g FROM rdb$database`))[0].G;
-  const present = await ltg();
+  const reached = async () => (await q(`SELECT bot_goal_reached(${b}, ${quad}) r FROM rdb$database`))[0].R;
+  const notYet = await ltg();
+  await db.exec(`UPDATE ents SET item_seen = 1 WHERE id = ${quad}`);
+  const present = await ltg(), there = await reached();
   await db.exec(`EXECUTE PROCEDURE bot_item_touch(${quad}, ${b})`);
   const avoid = (await q(`SELECT avoid_until - (SELECT now_() FROM rdb$database) a FROM bot_avoid WHERE ent_id = ${b} AND item_id = ${quad}`))[0]?.A;
   const taken = await ltg();
   await db.exec(`UPDATE bot_avoid SET avoid_until = (SELECT now_() FROM rdb$database) + 0.1 WHERE ent_id = ${b} AND item_id = ${quad}`);
   const timed = await ltg();
   await db.exec(`DELETE FROM bot_avoid WHERE ent_id = ${b} AND item_id = ${quad}`);
-  const unknown = await ltg();
-  assert(present === quad && Math.abs(avoid - 120) < 1 && taken === null && timed === quad && unknown === null,
-    `a quad 48 off: the goal (${present === quad}); taken, avoided for its 120 s (${avoid?.toFixed(0)}) and no goal (${taken}); back in 0.1 s, a goal again (${timed === quad}); gone and not its own, nothing (${unknown})`);
+  const unknown = await ltg(), empty = await reached();
+  assert(notYet === null && present === quad && there === 0 && Math.abs(avoid - 60) < 1 && taken === null && timed === quad && unknown === quad && empty === 3,
+    `a quad 48 off: no goal before it has come (${notYet}), then the goal (${present === quad}, not reached: ${there}); taken, avoided for botlib's 60 s (${avoid?.toFixed(0)}) and no goal (${taken}); back in 0.1 s, a goal again (${timed === quad}); taken by another, still a goal (${unknown === quad}) until its place is seen empty (${empty})`);
+  // choosing a goal avoids it for its respawn time too (BotChooseLTGItem's BotAddToAvoidGoals): a bot thinking
+  // with no goal takes the quad, and would not choose it again
+  await db.exec(`UPDATE ents SET solid = 1 WHERE id = ${quad}`);
+  await db.exec(`UPDATE ents SET x = ${me.X}, y = ${me.Y}, z = ${me.Z}, goal_id = NULL, nbg_id = NULL, nbg_check = 1e9, enemy_id = NULL WHERE id = ${b}`);
+  await db.exec(`EXECUTE PROCEDURE link_ent(${b})`);
+  // (nobody to fight meanwhile: the others notarget)
+  await db.exec(`UPDATE ents SET flags = BIN_OR(flags, 64) WHERE classname IN ('bot', 'player') AND id <> ${b}`);
+  let chose = null;
+  for (let i = 0; i < 40 && chose === null; i++) { await db.exec(`UPDATE ents SET nextthink = 0 WHERE id = ${b}`); await db.exec(`EXECUTE PROCEDURE bot_think(${b})`); chose = (await q(`SELECT goal_id g FROM ents WHERE id = ${b}`))[0].G; }
+  await db.exec(`UPDATE ents SET flags = BIN_AND(flags, BIN_NOT(64)) WHERE classname IN ('bot', 'player') AND id <> ${b}`);
+  const chosenAvoid = (await q(`SELECT avoid_until - (SELECT now_() FROM rdb$database) a FROM bot_avoid WHERE ent_id = ${b} AND item_id = ${quad}`))[0]?.A;
+  assert(chose === quad && Math.abs(chosenAvoid - 60) < 1 && (await ltg()) === null,
+    `going for it (${chose} = ${quad}), the bot avoids it for 60 s (${chosenAvoid?.toFixed(0)}): not chosen again on the way (${await ltg()})`);
+  await db.exec(`UPDATE ents SET goal_id = NULL, nbg_check = NULL WHERE id = ${b}`);
+  await db.exec(`DELETE FROM bot_avoid WHERE ent_id = ${b}`);
   await db.exec(`DELETE FROM ents WHERE id = ${quad}`);
-  if (gone.length) await db.exec(`UPDATE ents SET solid = 1 WHERE id IN (${gone.join(',')})`);
+  if (seen.length) await db.exec(`UPDATE ents SET item_seen = 1 WHERE id IN (${seen.join(',')})`);
   await set('health = 100, armor = 0, weapons = 3, quad_finished = 0');
 
   // BotChooseBestFightWeapon: with every gun, the one its character weighs the most (bots/NAME_w.c); the

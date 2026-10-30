@@ -11,7 +11,7 @@ import { Bsp, parseVec, SURF, CONTENTS } from './bsp.js';
 import { Md3, parseAnimationCfg, parseSkin } from './md3.js';
 import { loadShaders, surfaceLook } from './shader.js';
 import { loadBotChat } from './botchat.js';
-import { loadItemWeights } from './itemweights.js';
+import { loadItemWeights, loadItemRespawns } from './itemweights.js';
 import { ITEMS, BOTS } from './gamedata.js';
 
 const CHUNK = 30000;
@@ -169,6 +169,8 @@ export async function loadResources(db, pak, { width = 320, height = 240, fov = 
     // and their item weights (src/itemweights.js)
     ...loadItemWeights(pak, BOTS.filter((b) => res.players.has(b.model))).map(([b, c, o1, v1, b1, o2, v2, b2, o3, v3, b3, w]) =>
       `INSERT INTO bot_iw (bot, cls, o1, v1, b1, o2, v2, b2, o3, v3, b3, w) VALUES (${lit(b)}, ${lit(c)}, ${o1}, ${lit(v1)}, ${b1}, ${o2}, ${lit(v2)}, ${b2}, ${o3}, ${lit(v3)}, ${b3}, ${w});`),
+    // and how long they avoid an item they went for (botfiles/items.c's respawntime)
+    ...loadItemRespawns(pak).map(([c, t]) => `UPDATE item_defs SET bot_respawn = ${t} WHERE cls = ${lit(c)};`),
   ];
   // (200 at a time: one statement may name tables at most 256 times)
   for (let i = 0; i < stmts.length; i += 200) await db.exec(`SET TERM ^ ;\nEXECUTE BLOCK AS BEGIN\n${stmts.slice(i, i + 200).join('\n')}\nEND^\nSET TERM ; ^`);

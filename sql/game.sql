@@ -991,7 +991,7 @@ AS
 DECLARE kind CHAR(1);
 BEGIN
   SELECT d.kind FROM ents e JOIN item_defs d ON d.cls = e.item WHERE e.id = :eid INTO kind;
-  UPDATE ents e SET e.solid = 1, e.alpha = 0, e.think = NULL, e.nextthink = NULL, e.teleport_time = now_() WHERE e.id = :eid;
+  UPDATE ents e SET e.solid = 1, e.alpha = 0, e.think = NULL, e.nextthink = NULL, e.teleport_time = now_(), e.item_seen = 1 WHERE e.id = :eid;
   EXECUTE PROCEDURE snd(eid, 0, IIF(kind = 'P', 'sound/items/poweruprespawn.wav', 'sound/items/respawn1.wav'), 1, 1);
 END^
 
@@ -1568,6 +1568,7 @@ BEGIN
   IF (suspended = 0) THEN EXECUTE PROCEDURE drop_to_floor(id); ELSE EXECUTE PROCEDURE link_ent(id);
   -- powerups appear a while after the match starts
   IF (delay_ > 0) THEN UPDATE ents e SET e.solid = 0, e.alpha = 1, e.think = 'item_respawn', e.nextthink = :delay_ WHERE e.id = :id;
+  ELSE UPDATE ents e SET e.item_seen = 1 WHERE e.id = :id;
   SUSPEND;
 END^
 
