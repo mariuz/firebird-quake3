@@ -643,7 +643,14 @@ landing under the apex by 30, within what the air acceleration covers while the 
 landing's height) and then flies the throw in tenths of a second as a bot flies it, steered as
 `bot_air_steer` steers, the box traced each step; the edge stands when the flight comes down on the
 landing's floor. Items first, then the highest. q3dm17 has 18 (the centre pad to the red armour's
-ledge, 530 across and 229 up), q3dm7 5, q3tourney2 10.
+ledge, 530 across and 229 up), q3dm7 5, q3tourney2 10. A plat 64 or more high (the AAS's
+*elevator* reachability) gets a node on it where it rests at the bottom (kind 7), one over it at the top
+(kind 8) and the ride between them (edge kind 7, one way); the top node has no floor while the plat is
+down, so it is linked on its own: off it onto up to four nodes at about its height within 160 of the
+plat's sides, the box clear to where the way leaves the plat and `wp_walkable` from there (another plat
+lowered at the top of the first counts: oa_dm3 chains two). Nothing walks or jumps onto the top node.
+None of the demo's arenas has a plat; of the hosted ones oa_dm2, oa_dm3, oa_dm7, pxlfan (four),
+czest1dm and sleekgrinder do.
 
 **Routing.** `wp_nearest(x, y, z, see)` finds the node nearest a spot (height weighted ×4), the
 nearest *in sight* for the bot's own position. `wp_route(src, dst, rj)` is a breadth-first search (over
@@ -673,7 +680,11 @@ slowing as it nears it, then `bot_rocket_jump` (`BotTravel_RocketJump`) faces th
 launcher, looks straight down, jumps and fires. When the edge is a jump (`BotTravel_Jump`), it
 walks onto the start (or is already past it toward the landing) and leaves it with the horizontal speed
 that lands it on the end node (at most 320) and 270 up, the jump's sound; `run_physics` flies it,
-unsteered. When the next node is a straight-up pad and the one after a steered edge's end (or the
+unsteered. When the next node is a plat's bottom and the one after its top, or the ride's start was just
+reached (`BotTravel_Elevator`), the bot waits beside the plat while it is not down (stepping on would be
+a fall into the shaft), walks onto it and to its middle when it is, and stands there while the plat takes
+it up (its trigger starts it, and keeps it up while touched); at the top the next node is a walk off.
+When the next node is a straight-up pad and the one after a steered edge's end (or the
 pad was just reached), the bot's route row takes that end as the place to steer for (`rj_x`, `rj_y`,
 `rj_z`) with `rj_hold`, its height: the pad throws it, and in the air it steers once it is over that
 height or coming down (a player who steers sooner hits the ledge's side). In a rocket jump's flight `run_physics` calls `bot_air_steer`

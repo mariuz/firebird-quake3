@@ -17,7 +17,7 @@
 CREATE TABLE waypoints (
   id   INTEGER NOT NULL PRIMARY KEY,
   x DOUBLE PRECISION NOT NULL, y DOUBLE PRECISION NOT NULL, z DOUBLE PRECISION NOT NULL,   -- where a standing player's origin is (floor + 25)
-  kind SMALLINT DEFAULT 0 NOT NULL,     -- 0 grid 1 spawn 2 item 3 jump pad 4 pad landing 5 teleporter 6 teleporter destination
+  kind SMALLINT DEFAULT 0 NOT NULL,     -- 0 grid 1 spawn 2 item 3 jump pad 4 pad landing 5 teleporter 6 teleporter destination 7 a plat, down 8 over a plat, up
   ent_id INTEGER,                       -- the item or trigger it stands for
   linked SMALLINT DEFAULT 0 NOT NULL    -- 1 once its walkable edges were traced (wp_link_chunk)
 );
@@ -26,7 +26,7 @@ CREATE TABLE wp_edges (
   a INTEGER NOT NULL,
   b INTEGER NOT NULL,
   len DOUBLE PRECISION NOT NULL,
-  kind SMALLINT DEFAULT 0 NOT NULL,     -- 0 walk 1 jump pad 2 teleporter 3 drop (one way) 4 rocket jump (one way) 5 jump (one way) 6 jump pad steered in the air (one way)
+  kind SMALLINT DEFAULT 0 NOT NULL,     -- 0 walk 1 jump pad 2 teleporter 3 drop (one way) 4 rocket jump (one way) 5 jump (one way) 6 jump pad steered in the air (one way) 7 a plat's ride up (one way)
   PRIMARY KEY (a, b)
 );
 CREATE INDEX wp_edges_a ON wp_edges (a);
@@ -270,6 +270,20 @@ BEGIN
     END
   END
 
+  -- the plats (the AAS's TRAVEL_ELEVATOR): a node on a plat at the bottom, where it rests, one over it at the
+  -- top, and the ride from the one to the other; the top's way off onto the landings is found as it is linked
+  -- (a plat under 64 high or 32 across is a step, not a lift)
+  FOR SELECT e.id, e.x + (e.minx + e.maxx) / 2, e.y + (e.miny + e.maxy) / 2, e.p1z + e.maxz, e.p2z + e.maxz FROM ents e
+       WHERE e.classname = 'func_plat' AND e.height >= 64 AND e.maxx - e.minx >= 32 AND e.maxy - e.miny >= 32 INTO eid, x, y, az, bz
+  DO
+  BEGIN
+    a = NULL; b = NULL;
+    EXECUTE PROCEDURE wp_add(x, y, az + 25, 7, eid) RETURNING_VALUES a;
+    EXECUTE PROCEDURE wp_add(x, y, bz + 25, 8, eid) RETURNING_VALUES b;
+    IF (a IS NOT NULL AND b IS NOT NULL AND a <> b) THEN
+      UPDATE OR INSERT INTO wp_edges (a, b, len, kind) VALUES (:a, :b, :bz - :az, 7) MATCHING (a, b);
+  END
+
   -- the grid over the floors is scanned by wp_build_chunk, a few columns at a time
   UPDATE OR INSERT INTO wp_build (id, gx, gy, minx, miny, minz, maxx, maxy, maxz, phase)
     VALUES (1, :minx + 64, :miny + 64, :minx, :miny, :minz, :maxx, :maxy, :maxz, 0) MATCHING (id);
@@ -400,13 +414,43 @@ CREATE OR ALTER PROCEDURE wp_link_chunk (cnt INTEGER)
 RETURNS (remaining INTEGER)
 AS
 DECLARE a INTEGER; DECLARE b INTEGER; DECLARE n INTEGER; DECLARE w SMALLINT; DECLARE done INTEGER = 0; DECLARE pass INTEGER;
+DECLARE f DOUBLE PRECISION; DECLARE ex DOUBLE PRECISION; DECLARE ey DOUBLE PRECISION; DECLARE ez DOUBLE PRECISION;
+DECLARE nx DOUBLE PRECISION; DECLARE ny DOUBLE PRECISION; DECLARE nz DOUBLE PRECISION;
+DECLARE sf INTEGER; DECLARE ct INTEGER; DECLARE als SMALLINT; DECLARE sts SMALLINT; DECLARE hit INTEGER;
 DECLARE ax DOUBLE PRECISION; DECLARE ay DOUBLE PRECISION; DECLARE az DOUBLE PRECISION; DECLARE bx DOUBLE PRECISION; DECLARE by_ DOUBLE PRECISION; DECLARE bz DOUBLE PRECISION;
+DECLARE gx DOUBLE PRECISION; DECLARE gy DOUBLE PRECISION; DECLARE k DOUBLE PRECISION;
 BEGIN
   FOR SELECT w1.id, w1.x, w1.y, w1.z FROM waypoints w1 WHERE w1.linked = 0 ORDER BY w1.id INTO a, ax, ay, az DO
   BEGIN
     IF (done >= cnt) THEN LEAVE;
     done = done + 1;
     UPDATE waypoints w SET w.linked = 1 WHERE w.id = :a;
+    -- over a plat at the top: the floor is the plat, there only when it is up; off it onto up to four nodes at
+    -- about that height within 160 of its sides (another plat's, down, among them), the box clear to where the
+    -- way leaves the plat and a walk from there on (BotFinishTravel_Elevator)
+    IF (EXISTS (SELECT 1 FROM waypoints w WHERE w.id = :a AND w.kind = 8)) THEN
+    BEGIN
+      n = 0;
+      FOR SELECT w2.id, w2.x, w2.y, w2.z, (p.maxx - p.minx) / 2, (p.maxy - p.miny) / 2 FROM waypoints w2 CROSS JOIN waypoints w JOIN ents p ON p.id = w.ent_id
+           WHERE w.id = :a AND w2.id <> :a AND w2.kind <> 8 AND w2.z < :az + 20 AND w2.z > :az - 40
+             AND ABS(w2.x - :ax) < (p.maxx - p.minx) / 2 + 160 AND ABS(w2.y - :ay) < (p.maxy - p.miny) / 2 + 160
+           ORDER BY (w2.x - :ax) * (w2.x - :ax) + (w2.y - :ay) * (w2.y - :ay)
+           INTO b, bx, by_, bz, gx, gy
+      DO
+      BEGIN
+        IF (n >= 4) THEN LEAVE;
+        -- (the point 16 past the plat's edge on the way)
+        k = MINVALUE(1, IIF(ABS(bx - ax) < 1e-3, 1, (gx + 16) / ABS(bx - ax)), IIF(ABS(by_ - ay) < 1e-3, 1, (gy + 16) / ABS(by_ - ay)));
+        EXECUTE PROCEDURE trace_move(NULL, -15, -15, -24, 15, 15, 32, ax, ay, az, ax + (bx - ax) * k, ay + (by_ - ay) * k, az, 65537)
+          RETURNING_VALUES f, ex, ey, ez, nx, ny, nz, sf, ct, als, sts, hit;
+        IF (f >= 1 AND sts = 0 AND (k >= 1 OR wp_walkable(ax + (bx - ax) * k, ay + (by_ - ay) * k, az, bx, by_, bz) > 0)) THEN
+        BEGIN
+          INSERT INTO wp_edges (a, b, len, kind) VALUES (:a, :b, vlen(:bx - :ax, :by_ - :ay, :bz - :az), 0);
+          n = n + 1;
+        END
+      END
+      CONTINUE;
+    END
     -- two passes: the ten nearest neighbours, then the four nearest on a lower level (the ten are
     -- all on this one when the grid is dense), so a ledge gets its way down
     pass = 0;
@@ -415,7 +459,7 @@ BEGIN
       n = 0;
       FOR SELECT w2.id, w2.x, w2.y, w2.z FROM waypoints w2
            WHERE w2.id <> :a AND ABS(w2.x - :ax) < IIF(:pass = 0, 420, 300) AND ABS(w2.y - :ay) < IIF(:pass = 0, 420, 300) AND ABS(w2.z - :az) < 450
-             AND (:pass = 0 OR w2.z < :az - 48)
+             AND (:pass = 0 OR w2.z < :az - 48) AND w2.kind <> 8
            ORDER BY (w2.x - :ax) * (w2.x - :ax) + (w2.y - :ay) * (w2.y - :ay) + (w2.z - :az) * (w2.z - :az) * 2
            INTO b, bx, by_, bz
       DO
@@ -444,7 +488,7 @@ BEGIN
     BEGIN
       n = 0;
       FOR SELECT w2.id, w2.x, w2.y, w2.z FROM waypoints w2 CROSS JOIN waypoints w JOIN ents p ON p.id = w.ent_id
-           WHERE w.id = :a AND w2.id <> :a AND w2.kind NOT IN (3, 5)
+           WHERE w.id = :a AND w2.id <> :a AND w2.kind NOT IN (3, 5, 8)
              AND w2.z < :az + p.p1z * p.p1z / 1600 - 30 AND w2.z > :az - 400 AND ABS(w2.x - :ax) < 1200 AND ABS(w2.y - :ay) < 1200
              AND vlen(w2.x - :ax, w2.y - :ay, 0) > 96
            ORDER BY IIF(w2.kind = 2, 0, 1), w2.z DESC, (w2.x - :ax) * (w2.x - :ax) + (w2.y - :ay) * (w2.y - :ay)
@@ -467,7 +511,7 @@ BEGIN
     BEGIN
       n = 0; pass = 0;
       FOR SELECT w2.id, w2.x, w2.y, w2.z FROM waypoints w2
-           WHERE w2.z > :az + 60 AND w2.z <= :az + 220 AND ABS(w2.x - :ax) < 260 AND ABS(w2.y - :ay) < 260 AND w2.kind NOT IN (3, 5)
+           WHERE w2.z > :az + 60 AND w2.z <= :az + 220 AND ABS(w2.x - :ax) < 260 AND ABS(w2.y - :ay) < 260 AND w2.kind NOT IN (3, 5, 8)
            ORDER BY (w2.x - :ax) * (w2.x - :ax) + (w2.y - :ay) * (w2.y - :ay)
            INTO b, bx, by_, bz
       DO

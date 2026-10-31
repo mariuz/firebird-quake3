@@ -359,6 +359,8 @@ DECLARE dst INTEGER; DECLARE src INTEGER; DECLARE odst INTEGER; DECLARE nid INTE
 DECLARE fails SMALLINT; DECLARE yaw DOUBLE PRECISION; DECLARE reach DOUBLE PRECISION; DECLARE prog_d DOUBLE PRECISION; DECLARE prog_t DOUBLE PRECISION; DECLARE stuck SMALLINT = 0;
 DECLARE last_n INTEGER; DECLARE cutn INTEGER; DECLARE rpath VARCHAR(400); DECLARE lx DOUBLE PRECISION; DECLARE ly DOUBLE PRECISION; DECLARE lz DOUBLE PRECISION;
 DECLARE p2 INTEGER; DECLARE n2 INTEGER;
+DECLARE plat INTEGER; DECLARE pst SMALLINT; DECLARE ptop DOUBLE PRECISION; DECLARE pcx DOUBLE PRECISION; DECLARE pcy DOUBLE PRECISION;
+DECLARE phx DOUBLE PRECISION; DECLARE phy DOUBLE PRECISION; DECLARE onplat SMALLINT; DECLARE riding SMALLINT;
 BEGIN
   moved = 0;
   t = now_();
@@ -433,6 +435,44 @@ BEGIN
     BEGIN
       SELECT w.x, w.y, w.z FROM waypoints w WHERE w.id = :n2 INTO lx, ly, lz;
       UPDATE OR INSERT INTO bot_routes (ent_id, rj_x, rj_y, rj_z, rj_until, rj_hold) VALUES (:eid, :lx, :ly, :lz, :t + 4, :lz + 8) MATCHING (ent_id);
+    END
+    -- a plat (BotTravel_Elevator): coming to it, the bot waits off it unless it is down; on it, to the middle,
+    -- and it stands there while the plat takes it up (the plat's trigger starts it); at the top the next node
+    -- is a walk off. `riding`: the ride's start reached, its end the next node
+    plat = NULL; riding = 0;
+    IF (last_n IS NOT NULL AND EXISTS (SELECT 1 FROM wp_edges e WHERE e.a = :last_n AND e.b = :nid AND e.kind = 7)) THEN
+    BEGIN
+      riding = 1;
+      SELECT w.ent_id FROM waypoints w WHERE w.id = :last_n INTO plat;
+    END
+    ELSE IF (n2 IS NULL AND p2 > 0 AND EXISTS (SELECT 1 FROM wp_edges e WHERE e.a = :nid AND e.b = CAST(SUBSTRING(:path FROM :p + 1 FOR :p2 - :p - 1) AS INTEGER) AND e.kind = 7)) THEN
+      SELECT w.ent_id FROM waypoints w WHERE w.id = :nid INTO plat;
+    IF (plat IS NOT NULL) THEN
+    BEGIN
+      SELECT p.mv_state, p.z + p.maxz, p.x + (p.minx + p.maxx) / 2, p.y + (p.miny + p.maxy) / 2, (p.maxx - p.minx) / 2, (p.maxy - p.miny) / 2
+        FROM ents p WHERE p.id = :plat INTO pst, ptop, pcx, pcy, phx, phy;
+      onplat = IIF(ABS(x - pcx) < phx + 8 AND ABS(y - pcy) < phy + 8 AND ABS(z - 24 - ptop) < 12, 1, 0);
+      IF (onplat = 1 OR (pst = 1 AND riding = 1)) THEN
+      BEGIN
+        -- onto it and to the middle; still there, it waits for the top
+        IF (vlen(pcx - x, pcy - y, 0) > 12) THEN
+        BEGIN
+          yaw = vectoyaw(pcx - x, pcy - y);
+          UPDATE ents e SET e.ideal_yaw = :yaw WHERE e.id = :eid;
+          moved = step_direction(eid, yaw, MINVALUE(dist, vlen(pcx - x, pcy - y, 0)));
+        END
+        ELSE moved = 1;
+        UPDATE OR INSERT INTO bot_routes (ent_id, target, dst_node, path, built, fails, prog_d, prog_t, last_node) VALUES (:eid, :target, :dst, :path, :built, 0, NULL, :t, :last_n) MATCHING (ent_id);
+        EXIT;
+      END
+      IF (pst <> 1 AND vlen(pcx - x, pcy - y, 0) < MAXVALUE(phx, phy) + 96) THEN
+      BEGIN
+        -- not down: wait by it, facing it (stepping on now would be a fall into the shaft)
+        UPDATE ents e SET e.ideal_yaw = vectoyaw(:pcx - :x, :pcy - :y) WHERE e.id = :eid;
+        moved = 1;
+        UPDATE OR INSERT INTO bot_routes (ent_id, target, dst_node, path, built, fails, prog_d, prog_t, last_node) VALUES (:eid, :target, :dst, :path, :built, 0, NULL, :t, :last_n) MATCHING (ent_id);
+        EXIT;
+      END
     END
     IF (last_n IS NOT NULL AND EXISTS (SELECT 1 FROM wp_edges e WHERE e.a = :last_n AND e.b = :nid AND e.kind = 4)) THEN
     BEGIN

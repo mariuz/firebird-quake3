@@ -11,7 +11,7 @@ import { FirebirdBrowser, DirectTransport } from 'firebird-wasm/browser';
 import { Pk3, PakSet } from '../src/pk3.js';
 import { loadShaders, surfaceLook } from '../src/shader.js';
 import { findPortals, mirrorView } from '../src/scene.js';
-import { createSchema, loadResources, loadMap, SQL_FILES } from '../src/loader.js';
+import { createSchema, loadResources, loadMap, buildWaypoints, SQL_FILES } from '../src/loader.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const dir = path.join(root, 'public/pak/maps');
@@ -51,6 +51,50 @@ async function targetPushes(map) {
     if (Math.hypot(v.VX - p.P1X, v.VY - p.P1Y, v.VZ - p.P1Z) < 1e-6 && Math.hypot(p.P1X, p.P1Y, p.P1Z) > 0 && snds === 1) ok++;
   }
   assert(ok === pushes.length, `${map}: ${ok} of ${pushes.length} target_push give their activator their velocity, the sound once`);
+}
+
+// a plat (the AAS's TRAVEL_ELEVATOR, BotTravel_Elevator): the waypoint graph rides each plat up to a landing;
+// a bot sent there over it waits beside the plat while it is up, steps on when it is down, rides it up and
+// walks off (the graph built for these maps only: it takes seconds)
+const PLAT_MAPS = new Set(['oa_dm7']);
+async function plats(map) {
+  if (!PLAT_MAPS.has(map)) return;
+  while ((await buildWaypoints(db, 1e9, 1e9)) > 0);
+  const rides = await q(`SELECT e.a, a.ent_id plat, (SELECT FIRST 1 o.b FROM wp_edges o WHERE o.a = e.b ORDER BY o.b) off_,
+                           (SELECT FIRST 1 i.a FROM wp_edges i WHERE i.b = e.a AND i.kind = 0 ORDER BY i.a) on_
+                         FROM wp_edges e JOIN waypoints a ON a.id = e.a WHERE e.kind = 7`);
+  const plat = (await q("SELECT COUNT(*) n FROM ents WHERE classname = 'func_plat' AND height >= 64"))[0].N;
+  const r = rides.find((x) => x.OFF_ && x.ON_);
+  assert(rides.length === plat && r, `${map}: ${rides.length} rides up for its ${plat} plats, ${rides.filter((x) => x.OFF_).length} with a way off at the top`);
+  if (!r) return;
+  const [st] = await q(`SELECT x, y, z FROM waypoints WHERE id = ${r.ON_}`);
+  const [c] = await q(`SELECT x, y, z FROM waypoints WHERE id = ${r.OFF_}`);
+  const pe = (await q('SELECT player_ent() pe FROM rdb$database'))[0].PE;
+  const b = (await q("SELECT FIRST 1 id FROM ents WHERE classname = 'bot'"))[0].ID;
+  await db.exec(`UPDATE ents SET flags = BIN_OR(flags, 64) WHERE id = ${pe}`);   // notarget: nothing to fight
+  const tgt = (await q(`SELECT id FROM spawn_ent('info_notnull', ${c.X}, ${c.Y}, ${c.Z})`))[0].ID;
+  await db.exec(`EXECUTE PROCEDURE plat_go_up(${r.PLAT})`);   // up first: the bot waits for it
+  await db.exec(`UPDATE ents SET x = ${st.X}, y = ${st.Y}, z = ${st.Z - 1}, vx = 0, vy = 0, vz = 0, health = 100, nextthink = 1e9, flags = BIN_OR(flags, 512), enemy_id = NULL, st = 'run' WHERE id = ${b}`);
+  await db.exec(`EXECUTE PROCEDURE link_ent(${b})`);
+  await db.exec(`DELETE FROM bot_routes WHERE ent_id = ${b}`);
+  let arrived = null, onWhileUp = 0, low = 1e9;
+  for (let i = 0; i < 600 && arrived === null; i++) {
+    if (i % 2 === 0) {
+      await db.exec(`EXECUTE PROCEDURE touch_triggers(${b})`);   // (what the bot's think does first)
+      if ((await q(`SELECT flags FROM ents WHERE id = ${b}`))[0].FLAGS & 512) await q(`SELECT moved FROM bot_follow_route(${b}, ${tgt}, 32)`);
+    }
+    await db.query('SELECT * FROM q3_tic(1, 0, 0, 0, 0, 0, 0, 1, 0)');
+    const [e] = await q(`SELECT e.x, e.y, e.z, p.mv_state ps, p.x + (p.minx + p.maxx) / 2 px, p.y + (p.miny + p.maxy) / 2 py, (p.maxx - p.minx) / 2 hx, (p.maxy - p.miny) / 2 hy
+                         FROM ents e, ents p WHERE e.id = ${b} AND p.id = ${r.PLAT}`);
+    low = Math.min(low, e.Z);
+    if (e.PS !== 1 && Math.abs(e.X - e.PX) < e.HX && Math.abs(e.Y - e.PY) < e.HY && e.Z < st.Z - 30) onWhileUp++;
+    if (Math.hypot(e.X - c.X, e.Y - c.Y) < 40 && Math.abs(e.Z - c.Z) < 30) arrived = i;
+  }
+  assert(arrived !== null && onWhileUp === 0 && low > st.Z - 30,
+    `${map}: a bot rides plat ${r.PLAT} up ${(c.Z - st.Z).toFixed(0)} to the landing (there at tic ${arrived}; into the shaft while it was up: ${onWhileUp})`);
+  await db.exec(`DELETE FROM ents WHERE id = ${tgt}`);
+  await db.exec(`UPDATE ents SET flags = BIN_AND(flags, BIN_NOT(64)) WHERE id = ${pe}`);
+  await db.exec(`UPDATE ents SET nextthink = 0 WHERE id = ${b}`);
 }
 
 // mirrors (a misc_portal_surface without a target): from 96 units before one, FRAME_PORTAL gives the reflected
@@ -174,6 +218,7 @@ for (const m of index) {
     assert(missing.size === 0 && alive === 2 && items > 0 && pak.mapSource(m.map) === m.pack,
       `${m.map} (${m.pack}, "${m.title}"): ${bsp.faces.length} faces, ${items} items, ${alive} players in the world, ${(performance.now() - t).toFixed(0)} ms${missing.size ? `; missing ${[...missing].slice(0, 4).join(', ')}` : ''}`);
     await targetPushes(m.map);
+    await plats(m.map);
     await mirrors(m.map, bsp);
     await areaPortals(m.map);
     await shooters(m.map);

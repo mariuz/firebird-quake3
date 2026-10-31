@@ -383,8 +383,15 @@ if (item) {
   await db.exec(`EXECUTE PROCEDURE link_ent(${b})`);
   // (nobody to fight meanwhile: the others notarget)
   await db.exec(`UPDATE ents SET flags = BIN_OR(flags, 64) WHERE classname IN ('bot', 'player') AND id <> ${b}`);
+  // (the goal can be dropped in the same think when the quad is off the graph, q3dm17's void, or taken at once:
+  // the avoid goal it left is what choosing it did)
+  const avoided = async () => (await q(`SELECT COUNT(*) n FROM bot_avoid WHERE ent_id = ${b} AND item_id = ${quad}`))[0].N > 0;
   let chose = null;
-  for (let i = 0; i < 40 && chose === null; i++) { await db.exec(`UPDATE ents SET nextthink = 0 WHERE id = ${b}`); await db.exec(`EXECUTE PROCEDURE bot_think(${b})`); chose = (await q(`SELECT goal_id g FROM ents WHERE id = ${b}`))[0].G; }
+  for (let i = 0; i < 40 && chose === null; i++) {
+    await db.exec(`UPDATE ents SET nextthink = 0 WHERE id = ${b}`); await db.exec(`EXECUTE PROCEDURE bot_think(${b})`);
+    // (still there, or taken by this bot on the way: its quad running)
+    if (await avoided()) chose = (await q(`SELECT IIF(g.solid = 1 OR e.quad_finished > now_(), g.id, NULL) g FROM ents g, ents e WHERE g.id = ${quad} AND e.id = ${b}`))[0].G;
+  }
   await db.exec(`UPDATE ents SET flags = BIN_AND(flags, BIN_NOT(64)) WHERE classname IN ('bot', 'player') AND id <> ${b}`);
   const chosenAvoid = (await q(`SELECT avoid_until - (SELECT now_() FROM rdb$database) a FROM bot_avoid WHERE ent_id = ${b} AND item_id = ${quad}`))[0]?.A;
   assert(chose === quad && Math.abs(chosenAvoid - 60) < 1 && (await ltg()) === null,
