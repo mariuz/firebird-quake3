@@ -97,6 +97,49 @@ async function plats(map) {
   await db.exec(`UPDATE ents SET nextthink = 0 WHERE id = ${b}`);
 }
 
+// a func_bobbing (the AAS's TRAVEL_FUNCBOB, BotTravel_FuncBobbing): oa_dm2's slider runs 64 along x in a slot
+// that leaves a gap at both ends; the graph rides it each way, and a bot sent across waits at the floor's edge
+// until it is at that end, runs onto it, rides it and runs off at the other (both ways, without falling in)
+const BOB_MAPS = new Set(['oa_dm2']);
+async function bobs(map) {
+  if (!BOB_MAPS.has(map)) return;
+  while ((await buildWaypoints(db, 1e9, 1e9)) > 0);
+  const rides = await q(`SELECT e.a, e.b, a.ent_id bob,
+                           (SELECT FIRST 1 o.b FROM wp_edges o JOIN waypoints ow ON ow.id = o.b WHERE o.a = e.b AND o.kind = 0 AND ow.kind <> 9 ORDER BY o.b) off_,
+                           (SELECT FIRST 1 i.a FROM wp_edges i JOIN waypoints iw ON iw.id = i.a WHERE i.b = e.a AND i.kind = 0 AND iw.kind <> 9 ORDER BY i.a) on_
+                         FROM wp_edges e JOIN waypoints a ON a.id = e.a WHERE e.kind = 8 ORDER BY e.a`);
+  const usable = rides.filter((r) => r.OFF_ && r.ON_);
+  const pe = (await q('SELECT player_ent() pe FROM rdb$database'))[0].PE;
+  const b = (await q("SELECT FIRST 1 id FROM ents WHERE classname = 'bot'"))[0].ID;
+  await db.exec(`UPDATE ents SET flags = BIN_OR(flags, 64) WHERE id = ${pe}`);   // notarget: nothing to fight
+  const done = [];
+  for (const r of usable) {
+    const [st] = await q(`SELECT x, y, z FROM waypoints WHERE id = ${r.ON_}`);
+    const [c] = await q(`SELECT x, y, z FROM waypoints WHERE id = ${r.OFF_}`);
+    const tgt = (await q(`SELECT id FROM spawn_ent('info_notnull', ${c.X}, ${c.Y}, ${c.Z})`))[0].ID;
+    await db.exec(`UPDATE ents SET x = ${st.X}, y = ${st.Y}, z = ${st.Z - 1}, vx = 0, vy = 0, vz = 0, health = 100, nextthink = 1e9, flags = BIN_OR(flags, 512), enemy_id = NULL, st = 'run' WHERE id = ${b}`);
+    await db.exec(`EXECUTE PROCEDURE link_ent(${b})`);
+    await db.exec(`DELETE FROM bot_routes WHERE ent_id = ${b}`);
+    let arrived = null, low = 1e9;
+    for (let i = 0; i < 400 && arrived === null; i++) {
+      if (i % 2 === 0) {
+        await db.exec(`EXECUTE PROCEDURE touch_triggers(${b})`);
+        if ((await q(`SELECT flags FROM ents WHERE id = ${b}`))[0].FLAGS & 512) await q(`SELECT moved FROM bot_follow_route(${b}, ${tgt}, 32)`);
+      }
+      await db.query('SELECT * FROM q3_tic(1, 0, 0, 0, 0, 0, 0, 1, 0)');
+      const [e] = await q(`SELECT x, y, z FROM ents WHERE id = ${b}`);
+      low = Math.min(low, e.Z);
+      if (Math.hypot(e.X - c.X, e.Y - c.Y) < 40 && Math.abs(e.Z - c.Z) < 30) arrived = i;
+    }
+    done.push({ arrived, fell: low < st.Z - 30 });
+    await db.exec(`DELETE FROM ents WHERE id = ${tgt}`);
+  }
+  assert(usable.length >= 2 && done.every((d) => d.arrived !== null && !d.fell),
+    `${map}: ${rides.length} rides on its func_bobbings, ${usable.length} with a way on and off; a bot rides them across (there at tics ${done.map((d) => d.arrived).join(', ')}, ${done.filter((d) => d.fell).length} falls)`);
+  await db.exec(`UPDATE ents SET flags = BIN_AND(flags, BIN_NOT(64)) WHERE id = ${pe}`);
+  await db.exec(`UPDATE ents SET nextthink = 0 WHERE id = ${b}`);
+}
+
 // mirrors (a misc_portal_surface without a target): from 96 units before one, FRAME_PORTAL gives the reflected
 // view's faces and the player's own body, and nothing whose origin is behind the glass
 async function mirrors(map, bsp) {
@@ -219,6 +262,7 @@ for (const m of index) {
       `${m.map} (${m.pack}, "${m.title}"): ${bsp.faces.length} faces, ${items} items, ${alive} players in the world, ${(performance.now() - t).toFixed(0)} ms${missing.size ? `; missing ${[...missing].slice(0, 4).join(', ')}` : ''}`);
     await targetPushes(m.map);
     await plats(m.map);
+    await bobs(m.map);
     await mirrors(m.map, bsp);
     await areaPortals(m.map);
     await shooters(m.map);

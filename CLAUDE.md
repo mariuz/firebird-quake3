@@ -69,7 +69,7 @@ explosion sprites, beams) and nothing else. The renderers never query the databa
 | camping (`info_camp` spots, the camper characteristic) | `bot_wants_to_camp`, `bot_camp`, `bot_roam_yaw` before `bot_think` in `sql/bots.sql`; `ents.camp_id`, `camp_until`, `camp_time` |
 | bot chat | `src/botchat.js` (the pak's botfiles into rows), `bot_say` and `bot_chat_event` at the top of `sql/bots.sql` |
 | team play (the leader, its orders, accompanying) | `bot_team_ai`, `bot_team_orders`, `bot_create_group`, `bot_accompany` before `bot_think` in `sql/bots.sql`; `team_member`, `team_mate_at` |
-| bot navigation (nodes, edges, routing, incremental build) | `sql/waypoints.sql`, `bot_follow_route` in `sql/bots.sql`; the edge kinds' tests (`wp_walkable`, `wp_jump`, `wp_rocket_jump`, `wp_pad_steer`; the plats' rides in `build_waypoints` and `wp_link_chunk`, tested on oa_dm7 by `scripts/maps-test.mjs`) |
+| bot navigation (nodes, edges, routing, incremental build) | `sql/waypoints.sql`, `bot_follow_route` in `sql/bots.sql`; the edge kinds' tests (`wp_walkable`, `wp_jump`, `wp_rocket_jump`, `wp_pad_steer`; the plats' and func_bobbings' rides in `build_waypoints` and `wp_link_chunk`, `wp_bob_gap`, `bob_under`, `bob_step`, tested on oa_dm7 and oa_dm2 by `scripts/maps-test.mjs`) |
 | the tic entry point, think/physics dispatch, scoring, `init_map` | the end of `sql/bots.sql` |
 | what a frame returns | `sql/render.sql` (`frame_all`), read in `src/scene.js` `FrameState.parse` |
 | area portals (a shut door hides the areas behind it) | `area_flood`, `areas_connected`, `ent_areas`, `adjust_area_portal` in `sql/game.sql` (called by `door_go_up`/`door_hit_bottom`); `Bsp.boxAreas` in `src/bsp.js`; `mark_faces` in `sql/render.sql` |

@@ -650,7 +650,9 @@ down, so it is linked on its own: off it onto up to four nodes at about its heig
 plat's sides, the box clear to where the way leaves the plat and `wp_walkable` from there (another plat
 lowered at the top of the first counts: oa_dm3 chains two). Nothing walks or jumps onto the top node.
 None of the demo's arenas has a plat; of the hosted ones oa_dm2, oa_dm3, oa_dm7, pxlfan (four),
-czest1dm and sleekgrinder do.
+czest1dm and sleekgrinder do. A `func_bobbing` (the AAS's `TRAVEL_FUNCBOB`) gets a node over it at each end
+of its swing (its middle ± `height` along its axis, kind 9) and the ride each way (edge kind 8); each end is
+linked as the plat's top is, and the way on too (a walk back from each way off).
 
 **Routing.** `wp_nearest(x, y, z, see)` finds the node nearest a spot (height weighted ×4), the
 nearest *in sight* for the bot's own position. `wp_route(src, dst, rj)` is a breadth-first search (over
@@ -684,6 +686,12 @@ unsteered. When the next node is a plat's bottom and the one after its top, or t
 reached (`BotTravel_Elevator`), the bot waits beside the plat while it is not down (stepping on would be
 a fall into the shaft), walks onto it and to its middle when it is, and stands there while the plat takes
 it up (its trigger starts it, and keeps it up while touched); at the top the next node is a walk off.
+For a `func_bobbing` (`BotTravel_FuncBobbing`) it walks on toward the platform until the floor's edge
+stops it, waits there until the swing is within 16 of its end (`wp_bob_gap`), gets on, stands in its
+middle until the swing is within 24 of the other end, and gets off. Getting on or off, a step that will
+not leave an edge (oa_dm2's slider runs in a slot that leaves 35 and 49 units of gap at its ends) becomes a
+run at 320 with a hop of 100 (`bob_step`, from within 96 of the platform's edge), as a player runs across;
+`bob_under` finds the one a bot stands on (15 past its sides: half the box may hang over).
 When the next node is a straight-up pad and the one after a steered edge's end (or the
 pad was just reached), the bot's route row takes that end as the place to steer for (`rj_x`, `rj_y`,
 `rj_z`) with `rj_hold`, its height: the pad throws it, and in the air it steers once it is over that

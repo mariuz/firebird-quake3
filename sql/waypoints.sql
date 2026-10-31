@@ -17,7 +17,7 @@
 CREATE TABLE waypoints (
   id   INTEGER NOT NULL PRIMARY KEY,
   x DOUBLE PRECISION NOT NULL, y DOUBLE PRECISION NOT NULL, z DOUBLE PRECISION NOT NULL,   -- where a standing player's origin is (floor + 25)
-  kind SMALLINT DEFAULT 0 NOT NULL,     -- 0 grid 1 spawn 2 item 3 jump pad 4 pad landing 5 teleporter 6 teleporter destination 7 a plat, down 8 over a plat, up
+  kind SMALLINT DEFAULT 0 NOT NULL,     -- 0 grid 1 spawn 2 item 3 jump pad 4 pad landing 5 teleporter 6 teleporter destination 7 a plat, down 8 over a plat, up 9 over a func_bobbing at one end of its swing
   ent_id INTEGER,                       -- the item or trigger it stands for
   linked SMALLINT DEFAULT 0 NOT NULL    -- 1 once its walkable edges were traced (wp_link_chunk)
 );
@@ -26,7 +26,7 @@ CREATE TABLE wp_edges (
   a INTEGER NOT NULL,
   b INTEGER NOT NULL,
   len DOUBLE PRECISION NOT NULL,
-  kind SMALLINT DEFAULT 0 NOT NULL,     -- 0 walk 1 jump pad 2 teleporter 3 drop (one way) 4 rocket jump (one way) 5 jump (one way) 6 jump pad steered in the air (one way) 7 a plat's ride up (one way)
+  kind SMALLINT DEFAULT 0 NOT NULL,     -- 0 walk 1 jump pad 2 teleporter 3 drop (one way) 4 rocket jump (one way) 5 jump (one way) 6 jump pad steered in the air (one way) 7 a plat's ride up (one way) 8 a func_bobbing's ride from one end of its swing to the other (one way, both ways)
   PRIMARY KEY (a, b)
 );
 CREATE INDEX wp_edges_a ON wp_edges (a);
@@ -117,6 +117,17 @@ BEGIN
   fl = wp_drop(x, y, z, drop_);
   IF (fl IS NULL OR fl <= -99999 OR wp_stand(x, y, fl) = 0) THEN RETURN NULL;
   RETURN fl;
+END^
+
+-- how far a func_bobbing is now from the end of its swing that node `n` (kind 9) stands over, along its axis
+CREATE OR ALTER FUNCTION wp_bob_gap (n INTEGER) RETURNS DOUBLE PRECISION
+AS
+DECLARE cur DOUBLE PRECISION; DECLARE tgt DOUBLE PRECISION;
+BEGIN
+  SELECT (p.x - p.p1x) * p.p2x + (p.y - p.p1y) * p.p2y + (p.z - p.p1z) * p.p2z,
+         (w.x - p.p1x - (p.minx + p.maxx) / 2) * p.p2x + (w.y - p.p1y - (p.miny + p.maxy) / 2) * p.p2y + (w.z - 25 - p.p1z - p.maxz) * p.p2z
+    FROM waypoints w JOIN ents p ON p.id = w.ent_id WHERE w.id = :n INTO cur, tgt;
+  RETURN ABS(cur - tgt);
 END^
 
 -- add a node unless one stands within 64 units already; returns its id
@@ -284,6 +295,23 @@ BEGIN
       UPDATE OR INSERT INTO wp_edges (a, b, len, kind) VALUES (:a, :b, :bz - :az, 7) MATCHING (a, b);
   END
 
+  -- the func_bobbings (the AAS's TRAVEL_FUNCBOB, AAS_Reachability_FuncBobbing): a node over it at each end of
+  -- its swing (its middle ± height along its axis, on its top) and the ride each way; the ways on and off are
+  -- found as the nodes are linked (one 32 across at least, swinging 16 or more)
+  FOR SELECT e.id, e.p1x + (e.minx + e.maxx) / 2, e.p1y + (e.miny + e.maxy) / 2, e.p1z + e.maxz, e.p2x * e.height, e.p2y * e.height, e.p2z * e.height FROM ents e
+       WHERE e.classname = 'func_bobbing' AND e.height >= 16 AND e.maxx - e.minx >= 32 AND e.maxy - e.miny >= 32 INTO eid, x, y, z, vx, vy, ft
+  DO
+  BEGIN
+    a = NULL; b = NULL;
+    EXECUTE PROCEDURE wp_add(x - vx, y - vy, z - ft + 25, 9, eid) RETURNING_VALUES a;
+    EXECUTE PROCEDURE wp_add(x + vx, y + vy, z + ft + 25, 9, eid) RETURNING_VALUES b;
+    IF (a IS NOT NULL AND b IS NOT NULL AND a <> b) THEN
+    BEGIN
+      UPDATE OR INSERT INTO wp_edges (a, b, len, kind) VALUES (:a, :b, vlen(:vx, :vy, :ft) * 2, 8) MATCHING (a, b);
+      UPDATE OR INSERT INTO wp_edges (a, b, len, kind) VALUES (:b, :a, vlen(:vx, :vy, :ft) * 2, 8) MATCHING (a, b);
+    END
+  END
+
   -- the grid over the floors is scanned by wp_build_chunk, a few columns at a time
   UPDATE OR INSERT INTO wp_build (id, gx, gy, minx, miny, minz, maxx, maxy, maxz, phase)
     VALUES (1, :minx + 64, :miny + 64, :minx, :miny, :minz, :maxx, :maxy, :maxz, 0) MATCHING (id);
@@ -428,11 +456,12 @@ BEGIN
     -- over a plat at the top: the floor is the plat, there only when it is up; off it onto up to four nodes at
     -- about that height within 160 of its sides (another plat's, down, among them), the box clear to where the
     -- way leaves the plat and a walk from there on (BotFinishTravel_Elevator)
-    IF (EXISTS (SELECT 1 FROM waypoints w WHERE w.id = :a AND w.kind = 8)) THEN
+    -- (a func_bobbing's end the same, and the way on too: the bot steps on when the swing is at that end)
+    IF (EXISTS (SELECT 1 FROM waypoints w WHERE w.id = :a AND w.kind IN (8, 9))) THEN
     BEGIN
       n = 0;
       FOR SELECT w2.id, w2.x, w2.y, w2.z, (p.maxx - p.minx) / 2, (p.maxy - p.miny) / 2 FROM waypoints w2 CROSS JOIN waypoints w JOIN ents p ON p.id = w.ent_id
-           WHERE w.id = :a AND w2.id <> :a AND w2.kind <> 8 AND w2.z < :az + 20 AND w2.z > :az - 40
+           WHERE w.id = :a AND w2.id <> :a AND w2.kind NOT IN (8, 9) AND w2.z < :az + 20 AND w2.z > :az - 40
              AND ABS(w2.x - :ax) < (p.maxx - p.minx) / 2 + 160 AND ABS(w2.y - :ay) < (p.maxy - p.miny) / 2 + 160
            ORDER BY (w2.x - :ax) * (w2.x - :ax) + (w2.y - :ay) * (w2.y - :ay)
            INTO b, bx, by_, bz, gx, gy
@@ -446,6 +475,8 @@ BEGIN
         IF (f >= 1 AND sts = 0 AND (k >= 1 OR wp_walkable(ax + (bx - ax) * k, ay + (by_ - ay) * k, az, bx, by_, bz) > 0)) THEN
         BEGIN
           INSERT INTO wp_edges (a, b, len, kind) VALUES (:a, :b, vlen(:bx - :ax, :by_ - :ay, :bz - :az), 0);
+          IF (EXISTS (SELECT 1 FROM waypoints w WHERE w.id = :a AND w.kind = 9) AND NOT EXISTS (SELECT 1 FROM wp_edges e WHERE e.a = :b AND e.b = :a)) THEN
+            INSERT INTO wp_edges (a, b, len, kind) VALUES (:b, :a, vlen(:bx - :ax, :by_ - :ay, :bz - :az), 0);
           n = n + 1;
         END
       END
@@ -459,7 +490,7 @@ BEGIN
       n = 0;
       FOR SELECT w2.id, w2.x, w2.y, w2.z FROM waypoints w2
            WHERE w2.id <> :a AND ABS(w2.x - :ax) < IIF(:pass = 0, 420, 300) AND ABS(w2.y - :ay) < IIF(:pass = 0, 420, 300) AND ABS(w2.z - :az) < 450
-             AND (:pass = 0 OR w2.z < :az - 48) AND w2.kind <> 8
+             AND (:pass = 0 OR w2.z < :az - 48) AND w2.kind NOT IN (8, 9)
            ORDER BY (w2.x - :ax) * (w2.x - :ax) + (w2.y - :ay) * (w2.y - :ay) + (w2.z - :az) * (w2.z - :az) * 2
            INTO b, bx, by_, bz
       DO
@@ -488,7 +519,7 @@ BEGIN
     BEGIN
       n = 0;
       FOR SELECT w2.id, w2.x, w2.y, w2.z FROM waypoints w2 CROSS JOIN waypoints w JOIN ents p ON p.id = w.ent_id
-           WHERE w.id = :a AND w2.id <> :a AND w2.kind NOT IN (3, 5, 8)
+           WHERE w.id = :a AND w2.id <> :a AND w2.kind NOT IN (3, 5, 8, 9)
              AND w2.z < :az + p.p1z * p.p1z / 1600 - 30 AND w2.z > :az - 400 AND ABS(w2.x - :ax) < 1200 AND ABS(w2.y - :ay) < 1200
              AND vlen(w2.x - :ax, w2.y - :ay, 0) > 96
            ORDER BY IIF(w2.kind = 2, 0, 1), w2.z DESC, (w2.x - :ax) * (w2.x - :ax) + (w2.y - :ay) * (w2.y - :ay)
@@ -511,7 +542,7 @@ BEGIN
     BEGIN
       n = 0; pass = 0;
       FOR SELECT w2.id, w2.x, w2.y, w2.z FROM waypoints w2
-           WHERE w2.z > :az + 60 AND w2.z <= :az + 220 AND ABS(w2.x - :ax) < 260 AND ABS(w2.y - :ay) < 260 AND w2.kind NOT IN (3, 5, 8)
+           WHERE w2.z > :az + 60 AND w2.z <= :az + 220 AND ABS(w2.x - :ax) < 260 AND ABS(w2.y - :ay) < 260 AND w2.kind NOT IN (3, 5, 8, 9)
            ORDER BY (w2.x - :ax) * (w2.x - :ax) + (w2.y - :ay) * (w2.y - :ay)
            INTO b, bx, by_, bz
       DO

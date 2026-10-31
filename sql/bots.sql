@@ -348,6 +348,37 @@ BEGIN
   UPDATE ents e SET e.vx = e.vx + :wx, e.vy = e.vy + :wy WHERE e.id = :eid;
 END^
 
+-- the func_bobbing an entity stands on, or NULL
+CREATE OR ALTER FUNCTION bob_under (eid INTEGER) RETURNS INTEGER
+AS
+DECLARE b INTEGER;
+BEGIN
+  SELECT FIRST 1 p.id FROM ents p JOIN ents e ON e.id = :eid
+   WHERE p.classname = 'func_bobbing' AND ABS(e.x - p.x - (p.minx + p.maxx) / 2) < (p.maxx - p.minx) / 2 + 15
+     AND ABS(e.y - p.y - (p.miny + p.maxy) / 2) < (p.maxy - p.miny) / 2 + 15 AND ABS(e.z + e.minz - p.z - p.maxz) < 12 INTO b;
+  RETURN b;
+END^
+
+-- a step toward (tx, ty); where it will not leave the edge of a func_bobbing (or onto one
+-- it, from within 96), off at run speed with a hop of 100 as a player runs across (6 over the lip 50 on: a slider flush with
+-- the floor would catch a flat run on its side); run_physics flies it
+CREATE OR ALTER FUNCTION bob_step (eid INTEGER, tx DOUBLE PRECISION, ty DOUBLE PRECISION, dist DOUBLE PRECISION) RETURNS SMALLINT
+AS
+DECLARE x DOUBLE PRECISION; DECLARE y DOUBLE PRECISION; DECLARE yaw DOUBLE PRECISION; DECLARE moved SMALLINT;
+BEGIN
+  SELECT e.x, e.y FROM ents e WHERE e.id = :eid INTO x, y;
+  yaw = vectoyaw(tx - x, ty - y);
+  UPDATE ents e SET e.ideal_yaw = :yaw WHERE e.id = :eid;
+  moved = step_direction(eid, yaw, MINVALUE(dist, vlen(tx - x, ty - y, 0)));
+  IF (moved = 0) THEN
+  BEGIN
+    UPDATE ents e SET e.vx = COS(:yaw * 0.0174532925e0) * 320, e.vy = SIN(:yaw * 0.0174532925e0) * 320, e.vz = 100,
+           e.flags = BIN_AND(e.flags, BIN_NOT(512)) WHERE e.id = :eid;
+    moved = 1;
+  END
+  RETURN moved;
+END^
+
 CREATE OR ALTER PROCEDURE bot_follow_route (eid INTEGER, target INTEGER, dist DOUBLE PRECISION)
 RETURNS (moved SMALLINT)
 AS
@@ -360,7 +391,7 @@ DECLARE fails SMALLINT; DECLARE yaw DOUBLE PRECISION; DECLARE reach DOUBLE PRECI
 DECLARE last_n INTEGER; DECLARE cutn INTEGER; DECLARE rpath VARCHAR(400); DECLARE lx DOUBLE PRECISION; DECLARE ly DOUBLE PRECISION; DECLARE lz DOUBLE PRECISION;
 DECLARE p2 INTEGER; DECLARE n2 INTEGER;
 DECLARE plat INTEGER; DECLARE pst SMALLINT; DECLARE ptop DOUBLE PRECISION; DECLARE pcx DOUBLE PRECISION; DECLARE pcy DOUBLE PRECISION;
-DECLARE phx DOUBLE PRECISION; DECLARE phy DOUBLE PRECISION; DECLARE onplat SMALLINT; DECLARE riding SMALLINT;
+DECLARE phx DOUBLE PRECISION; DECLARE phy DOUBLE PRECISION; DECLARE onplat SMALLINT; DECLARE riding SMALLINT; DECLARE bob INTEGER; DECLARE nxt INTEGER;
 BEGIN
   moved = 0;
   t = now_();
@@ -414,8 +445,9 @@ BEGIN
   p = POSITION(',', path, 2);
   IF (p = 0) THEN
   BEGIN
-    -- at the target's node: straight at it
-    EXECUTE PROCEDURE move_to_goal(eid, target, dist);
+    -- at the target's node: straight at it (off a func_bobbing as off one anywhere)
+    IF (bob_under(eid) IS NOT NULL AND NOT EXISTS (SELECT 1 FROM waypoints w WHERE w.id = :dst AND w.kind = 9)) THEN moved = bob_step(eid, tx, ty, dist);
+    ELSE EXECUTE PROCEDURE move_to_goal(eid, target, dist);
     moved = 1;
   END
   ELSE
@@ -451,7 +483,7 @@ BEGIN
     BEGIN
       SELECT p.mv_state, p.z + p.maxz, p.x + (p.minx + p.maxx) / 2, p.y + (p.miny + p.maxy) / 2, (p.maxx - p.minx) / 2, (p.maxy - p.miny) / 2
         FROM ents p WHERE p.id = :plat INTO pst, ptop, pcx, pcy, phx, phy;
-      onplat = IIF(ABS(x - pcx) < phx + 8 AND ABS(y - pcy) < phy + 8 AND ABS(z - 24 - ptop) < 12, 1, 0);
+      onplat = IIF(ABS(x - pcx) < phx + 15 AND ABS(y - pcy) < phy + 15 AND ABS(z - 24 - ptop) < 12, 1, 0);
       IF (onplat = 1 OR (pst = 1 AND riding = 1)) THEN
       BEGIN
         -- onto it and to the middle; still there, it waits for the top
@@ -470,6 +502,87 @@ BEGIN
         -- not down: wait by it, facing it (stepping on now would be a fall into the shaft)
         UPDATE ents e SET e.ideal_yaw = vectoyaw(:pcx - :x, :pcy - :y) WHERE e.id = :eid;
         moved = 1;
+        UPDATE OR INSERT INTO bot_routes (ent_id, target, dst_node, path, built, fails, prog_d, prog_t, last_node) VALUES (:eid, :target, :dst, :path, :built, 0, NULL, :t, :last_n) MATCHING (ent_id);
+        EXIT;
+      END
+    END
+    -- a func_bobbing (BotTravel_FuncBobbing): coming to an end of its swing, the bot waits by it until the
+    -- swing is within 16 of that end, then steps on; on it, to the middle and stands until it is within 24 of
+    -- the other end, where the next node is a walk off
+    bob = NULL; riding = 0;
+    IF (last_n IS NOT NULL AND EXISTS (SELECT 1 FROM wp_edges e WHERE e.a = :last_n AND e.b = :nid AND e.kind = 8)) THEN
+    BEGIN
+      riding = 1;
+      SELECT w.ent_id FROM waypoints w WHERE w.id = :nid INTO bob;
+    END
+    ELSE IF (bob_under(eid) IS NOT NULL AND NOT EXISTS (SELECT 1 FROM waypoints w WHERE w.id = :nid AND w.kind = 9 AND w.ent_id = bob_under(:eid))) THEN
+      riding = 2;   -- (on one, ridden to its end or stepped on in passing, the next node off it)
+    ELSE IF (p2 > 0) THEN
+    BEGIN
+      nxt = CAST(SUBSTRING(path FROM p + 1 FOR p2 - p - 1) AS INTEGER);
+      IF (EXISTS (SELECT 1 FROM wp_edges e WHERE e.a = :nid AND e.b = :nxt AND e.kind = 8)) THEN SELECT w.ent_id FROM waypoints w WHERE w.id = :nid INTO bob;
+    END
+    IF (riding = 2) THEN bob = bob_under(eid);
+    IF (bob IS NOT NULL) THEN
+    BEGIN
+      SELECT p.z + p.maxz, p.x + (p.minx + p.maxx) / 2, p.y + (p.miny + p.maxy) / 2, (p.maxx - p.minx) / 2, (p.maxy - p.miny) / 2
+        FROM ents p WHERE p.id = :bob INTO ptop, pcx, pcy, phx, phy;
+      onplat = IIF(ABS(x - pcx) < phx + 15 AND ABS(y - pcy) < phy + 15 AND ABS(z - 24 - ptop) < 12, 1, 0);
+      lx = NULL;
+      IF (riding = 2) THEN
+      BEGIN
+        -- off it: a step or a run across to the next node
+        lx = nx; ly = ny;
+      END
+      ELSE IF (onplat = 1 AND riding = 1 AND wp_bob_gap(nid) < 24) THEN
+      BEGIN
+        -- at the far end: off onto the node after the ride's end
+        IF (p2 > 0) THEN SELECT w.x, w.y FROM waypoints w WHERE w.id = CAST(SUBSTRING(:path FROM :p + 1 FOR :p2 - :p - 1) AS INTEGER) INTO lx, ly;
+      END
+      ELSE IF (onplat = 1) THEN
+      BEGIN
+        -- on it, not yet at the far end: to the middle, and stand
+        IF (vlen(pcx - x, pcy - y, 0) > 10) THEN
+        BEGIN
+          yaw = vectoyaw(pcx - x, pcy - y);
+          UPDATE ents e SET e.ideal_yaw = :yaw WHERE e.id = :eid;
+          moved = step_direction(eid, yaw, MINVALUE(dist, vlen(pcx - x, pcy - y, 0)));
+        END
+        ELSE moved = 1;
+        UPDATE OR INSERT INTO bot_routes (ent_id, target, dst_node, path, built, fails, prog_d, prog_t, last_node) VALUES (:eid, :target, :dst, :path, :built, 0, NULL, :t, :last_n) MATCHING (ent_id);
+        EXIT;
+      END
+      ELSE IF (wp_bob_gap(IIF(:riding = 1, :last_n, :nid)) > 16) THEN
+      BEGIN
+        IF (vlen(pcx - x, pcy - y, 0) < MAXVALUE(phx, phy) + 256) THEN
+        BEGIN
+          -- off it, the swing elsewhere: wait for it at the floor's edge (RESULTTYPE_WAITFORFUNCBOBBING; reach->start
+          -- is on the edge): on toward it until a step will not go (or it is underfoot, and stood on)
+          yaw = vectoyaw(pcx - x, pcy - y);
+          UPDATE ents e SET e.ideal_yaw = :yaw WHERE e.id = :eid;
+          IF (vlen(MAXVALUE(0, ABS(x - pcx) - phx), MAXVALUE(0, ABS(y - pcy) - phy), 0) > 24) THEN moved = step_direction(eid, yaw, dist);
+          moved = 1;
+          UPDATE OR INSERT INTO bot_routes (ent_id, target, dst_node, path, built, fails, prog_d, prog_t, last_node) VALUES (:eid, :target, :dst, :path, :built, 0, NULL, :t, :last_n) MATCHING (ent_id);
+          EXIT;
+        END
+      END
+      ELSE IF (vlen(pcx - x, pcy - y, 0) < MAXVALUE(phx, phy) + 160) THEN
+      BEGIN
+        -- the swing at this end: onto it, to the middle
+        lx = pcx; ly = pcy;
+      END
+      IF (lx IS NOT NULL) THEN
+      BEGIN
+        -- a step, or where a step will not leave the edge (the swing never quite meets the floor: oa_dm2's
+        -- slider leaves 35 units), off it at run speed as a player runs across (run_physics flies it)
+        -- (a run across only from within 96 of the platform's edge, getting on: oa_dm2's slider leaves 49 at one end)
+        IF (riding = 2 OR onplat = 1 OR vlen(MAXVALUE(0, ABS(x - pcx) - phx), MAXVALUE(0, ABS(y - pcy) - phy), 0) < 96) THEN moved = bob_step(eid, lx, ly, dist);
+        ELSE
+        BEGIN
+          yaw = vectoyaw(lx - x, ly - y);
+          UPDATE ents e SET e.ideal_yaw = :yaw WHERE e.id = :eid;
+          moved = step_direction(eid, yaw, MINVALUE(dist, vlen(lx - x, ly - y, 0)));
+        END
         UPDATE OR INSERT INTO bot_routes (ent_id, target, dst_node, path, built, fails, prog_d, prog_t, last_node) VALUES (:eid, :target, :dst, :path, :built, 0, NULL, :t, :last_n) MATCHING (ent_id);
         EXIT;
       END
