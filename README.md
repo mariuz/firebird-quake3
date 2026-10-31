@@ -42,7 +42,7 @@ npm run test:maps      # each of those arenas on top of the demo pak: its pictur
 npm test               # SQL smoke test in Node against the real Firebird WASM engine: the Arena Gate
 npm run test:dm7       # the same on the Temple of Retribution
 npm run test:bots      # the bots: they see, chase, shoot, pick things up, die and respawn; the score keeps up
-npm run serve          # http://localhost:8080/ — add -- --coi if your browser blocks service workers
+npm run serve          # http://localhost:8080/
 npm run screenshots    # headless frames to docs/ (node scripts/screenshot.mjs q3dm1 --at=x,y,z,yaw --bright=4)
 npm run bench          # where a tic and a frame spend their time
 npm run bench:tic      # the cost of a tic over 200 tics of play (median, p90); add --walk, --bots=N
@@ -55,9 +55,10 @@ and BFG work the same way. The demo has four arenas: q3dm1, q3dm7, q3dm17 and q3
 picked there (OpenArena's `pak1-maps.pk3` with its textures, a Quake III map you downloaded) goes on top of
 the demo, the way the game searches its paks, and its maps join the menu.
 
-Firebird WASM uses pthreads, so the page must be cross-origin isolated. The dev server sends the
-COOP/COEP headers with `--coi`; a static host like GitHub Pages cannot, so `coi-serviceworker.js`
-re-issues responses with the headers after a one-time reload.
+The page runs firebird-wasm's build without threads (`firebird-embedded-st`, its default since 0.9), which
+needs no `SharedArrayBuffer` and so no cross-origin isolation: it opens on any static host with no reload.
+`FB_THREADS=1 npm run build` builds the page on the threaded engine instead; that one needs the COOP/COEP
+headers (`npm run serve -- --coi`, or `coi-serviceworker.js` on a static host).
 
 ## How it works
 

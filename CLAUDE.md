@@ -31,7 +31,8 @@ explosion sprites, beams) and nothing else. The renderers never query the databa
   Read the PNGs. The live-site screenshot in the README was taken from the user's Chrome.
 - Browser checks: the Claude desktop app's built-in browser pane cannot start Firebird WASM (it
   hangs at "Starting Firebird 6"). Use the user's Chrome (Claude-in-Chrome tools) against
-  `PORT=8085 node scripts/build.mjs --serve --coi`; 8080 and 8081 are usually busy. A background tab
+  `PORT=8085 node scripts/build.mjs --serve` (the engine is the build without threads, so no `--coi` is
+  needed; `FB_THREADS=1` builds the threaded one, which wants `--coi`); 8080 and 8081 are usually busy. A background tab
   throttles the loop to about one frame a second, so override `document.hidden` and, for anything
   heavy, run SQL through the page's console (`#sql`, `#run-sql`, `#sql-out`). Close the tab and stop
   the server (it is a `node scripts/build.mjs --serve` process) when done. The server serves `dist/`, built

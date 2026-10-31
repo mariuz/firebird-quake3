@@ -1098,9 +1098,10 @@ events. Every event is checked against the pak in the smoke test so a mistyped n
 
 ## 11. The page and the loop
 
-`src/main.js` boots in this order: start Firebird 6 in a Worker (`FirebirdBrowser`, which needs the
-page to be cross-origin isolated; `public/coi-serviceworker.js` adds the COOP/COEP headers on GitHub
-Pages), fetch `./pak/pak0.pk3` (or take the user's file), `inflateAll`, `createSchema` (the SQL files
+`src/main.js` boots in this order: start Firebird 6 in a Worker (`FirebirdBrowser` on firebird-wasm's
+build without threads, `firebird-embedded-st`, which needs no cross-origin isolation; `scripts/build.mjs`
+copies it and leaves `public/coi-serviceworker.js` out of the page unless `FB_THREADS=1` asks for the
+threaded build, which needs the COOP/COEP headers), fetch `./pak/pak0.pk3` (or take the user's file), `inflateAll`, `createSchema` (the SQL files
 are imported as text by esbuild), `loadResources`, make the renderer from the settings, `startMap`.
 
 The loop (`frame`) runs on `requestAnimationFrame` with a 60 ms `setTimeout` fallback, at the

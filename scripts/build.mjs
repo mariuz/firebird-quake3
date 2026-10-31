@@ -53,19 +53,28 @@ const worker = await build({
   external: EXTERNAL,
   logLevel: 'warning',
 });
+// the engine build: the one without threads (firebird-embedded-st, firebird-wasm's default since 0.9), or the
+// threaded one with FB_THREADS=1 (it needs a cross-origin isolated page)
+const GLUE = process.env.FB_THREADS === '1' ? 'firebird-embedded' : 'firebird-embedded-st';
 fs.writeFileSync(
   path.join(OUT, 'firebird-engine-worker.js'),
-  "importScripts(new URL('./firebird-embedded.js', self.location.href).href);\n" +
-    'self.FIREBIRD_WORKER_OPTIONS = { locateFile: (f) => new URL(f, self.location.href).href };\n' +
+  `importScripts(new URL('./${GLUE}.js', self.location.href).href);\n` +
+    `self.FIREBIRD_WORKER_OPTIONS = { locateFile: (f) => new URL(f, self.location.href).href${GLUE === 'firebird-embedded' ? ', threads: true' : ''} };\n` +
     worker.outputFiles[0].text,
 );
 
-for (const f of ['firebird-embedded.js', 'firebird-embedded.wasm']) {
+for (const f of [`${GLUE}.js`, `${GLUE}.wasm`]) {
   fs.copyFileSync(path.join(PKG, 'wasm', f), path.join(OUT, f));
 }
 
 // public/ verbatim (index.html, css, service worker, pak/ if present)
 fs.cpSync(path.join(root, 'public'), OUT, { recursive: true });
+// without threads the page needs no cross-origin isolation: no service worker to get it, and no reload (the
+// script stays in dist/ for the browsers that have it registered)
+if (GLUE === 'firebird-embedded-st') {
+  const html = path.join(OUT, 'index.html');
+  fs.writeFileSync(html, fs.readFileSync(html, 'utf8').replace(/\s*<script src="\.\/coi-serviceworker\.js"><\/script>/, ''));
+}
 fs.writeFileSync(path.join(OUT, '.nojekyll'), '');
 
 const size = (dir) => fs.readdirSync(dir, { withFileTypes: true })

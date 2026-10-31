@@ -394,7 +394,9 @@ async function frame() {
     curFov = last.MATCH_OVER || last.DEAD ? settings.fov : underwaterFov(zoomedFov(settings.fov, zoomed, now - zoomAt), view.WATERLEVEL, view.TIME_);
     audio.setUnderwater(view.WATERLEVEL >= 3 && !last.MATCH_OVER);   // the head under: muffled
     const fpv = firstPersonView(view, state, dt, curFov);   // the kicks, the dips, the bob, the zoom: the view that is painted
-    const rows = (await db.query(`SELECT * FROM frame_all(${settings.renderer === 'sql' ? 1 : 0}, ${lastSoundId}, ${lastFxId}, ${wantSpeakers ? 1 : 0}, ${fpv.x}, ${fpv.y}, ${fpv.z}, ${fpv.yaw}, ${fpv.pitch}, ${curFov})`, [], arr)).rows;
+    // (its values bound, not written into the text: one statement the engine prepares once and keeps)
+    const rows = (await db.query('SELECT * FROM frame_all(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [settings.renderer === 'sql' ? 1 : 0, lastSoundId, lastFxId, wantSpeakers ? 1 : 0, fpv.x, fpv.y, fpv.z, fpv.yaw, fpv.pitch, curFov], arr)).rows;
     const fr = state.parse(rows);
     fr.sqlProjected = settings.renderer === 'sql';
     if (fr.eye) {
@@ -498,14 +500,8 @@ for (const b of document.querySelectorAll('[data-sql]')) b.addEventListener('cli
 
 // ── boot ────────────────────────────────────────────────────────────────
 async function openDatabase() {
-  if (!window.crossOriginIsolated && window.isSecureContext && 'serviceWorker' in navigator &&
-      Number(sessionStorage.getItem('firebird-quake:coi-reloads') || '0') < 2) {
-    setStatus('Enabling cross-origin isolation for Firebird WASM (one-time reload)…');
-    return new Promise(() => {});
-  }
-  if (!window.crossOriginIsolated) {
-    throw new Error('This page is not cross-origin isolated, so Firebird WASM cannot start. Reload once (the service worker enables it), and use HTTPS or localhost.');
-  }
+  // (the engine is firebird-wasm's build without threads: it needs no SharedArrayBuffer, so no cross-origin
+  // isolation and no reload to get it; a page built with FB_THREADS=1 loads the threaded one, which does)
   setStatus('Starting Firebird 6 (WebAssembly)…');
   const instance = new FirebirdBrowser('memory://quake3', {
     worker: new Worker(new URL('./firebird-engine-worker.js', import.meta.url)),
