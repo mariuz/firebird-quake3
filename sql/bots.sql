@@ -454,14 +454,15 @@ BEGIN
   BEGIN
     nid = CAST(SUBSTRING(path FROM 2 FOR p - 2) AS INTEGER);
     SELECT w.x, w.y, w.z FROM waypoints w WHERE w.id = :nid INTO nx, ny, nz;
-    -- the next node a pad that throws straight up and the one after a place steered to in the throw
-    -- (BotFinishTravel_JumpPad's air control): run_physics steers the flight there (bot_air_steer)
-    -- (or the pad already reached, standing on it, and the place the next node)
+    -- the next node a pad and the one after its landing, or a place a straight-up pad's throw is steered to
+    -- (BotFinishTravel_JumpPad's air control, every pad's): run_physics steers the flight there (bot_air_steer)
+    -- once over the landing's height or coming down (or the pad already reached, standing on it, and the place
+    -- the next node)
     p2 = POSITION(',', path, p + 1);
     n2 = NULL;
     IF (p2 > 0) THEN n2 = CAST(SUBSTRING(path FROM p + 1 FOR p2 - p - 1) AS INTEGER);
-    IF (n2 IS NOT NULL AND vlen(nx - x, ny - y, 0) < 300 AND EXISTS (SELECT 1 FROM wp_edges e WHERE e.a = :nid AND e.b = :n2 AND e.kind = 6)) THEN n2 = n2;
-    ELSE IF (last_n IS NOT NULL AND EXISTS (SELECT 1 FROM wp_edges e WHERE e.a = :last_n AND e.b = :nid AND e.kind = 6)) THEN n2 = nid;
+    IF (n2 IS NOT NULL AND vlen(nx - x, ny - y, 0) < 300 AND EXISTS (SELECT 1 FROM wp_edges e WHERE e.a = :nid AND e.b = :n2 AND e.kind IN (1, 6))) THEN n2 = n2;
+    ELSE IF (last_n IS NOT NULL AND EXISTS (SELECT 1 FROM wp_edges e WHERE e.a = :last_n AND e.b = :nid AND e.kind IN (1, 6))) THEN n2 = nid;
     ELSE n2 = NULL;
     IF (n2 IS NOT NULL) THEN
     BEGIN

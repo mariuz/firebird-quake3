@@ -590,6 +590,46 @@ if (item) {
   }
 }
 
+// a sloping pad's throw steered for its landing (BotFinishTravel_JumpPad, every pad's): the shortest, knocked 6
+// degrees off its line as it leaves the pad, the bot steers once over the landing's height or coming down, and lands there
+{
+  const edges = await q(`SELECT e.a, e.b, a.x ax, a.y ay, a.z az, b.x bx, b.y by_, b.z bz FROM wp_edges e JOIN waypoints a ON a.id = e.a JOIN waypoints b ON b.id = e.b
+                         JOIN ents p ON p.id = a.ent_id WHERE e.kind = 1 AND p.p1x * p.p1x + p.p1y * p.p1y > 10000
+                         ORDER BY (b.x - a.x) * (b.x - a.x) + (b.y - a.y) * (b.y - a.y)`);
+  if (!edges.length) console.log('(no sloping pad here)');
+  else {
+    const e = edges[0];
+    await db.exec(`UPDATE ents SET st = 'dead', deadflag = 1, health = 0, solid = 0, respawn_time = 1e9, enemy_id = NULL WHERE classname = 'bot' AND id <> ${b}`);
+    await db.exec(`UPDATE ents SET flags = BIN_OR(flags, 64) WHERE id = ${pe}`);   // notarget: nothing to fight
+    const tgt = (await q(`SELECT id FROM spawn_ent('info_notnull', ${e.BX}, ${e.BY_}, ${e.BZ})`))[0].ID;
+    await db.exec(`UPDATE ents SET x = ${e.AX}, y = ${e.AY}, z = ${e.AZ - 1}, vx = 0, vy = 0, vz = 0, health = 100, nextthink = 1e9, flags = BIN_OR(flags, 512), enemy_id = NULL, st = 'run' WHERE id = ${b}`);
+    await db.exec(`EXECUTE PROCEDURE link_ent(${b})`);
+    await db.exec(`DELETE FROM bot_routes WHERE ent_id = ${b}`);
+    let arrived = null, air = 0, steer = null, landed = null;
+    for (let i = 0; i < 100 && arrived === null; i++) {
+      const f = (await q(`SELECT flags FROM ents WHERE id = ${b}`))[0].FLAGS;
+      if (!(f & 512)) {
+        if (air++ === 0) await db.exec(`UPDATE ents SET vx = vx * COS(0.1047) - vy * SIN(0.1047), vy = vx * SIN(0.1047) + vy * COS(0.1047) WHERE id = ${b}`);
+        steer ??= (await q(`SELECT r.rj_x, r.rj_y FROM bot_routes r WHERE r.ent_id = ${b} AND r.rj_until > now_()`))[0] ?? null;
+      } else if (i % 2 === 0) {
+        await q(`SELECT moved FROM bot_follow_route(${b}, ${tgt}, 32)`);
+        await db.exec(`EXECUTE PROCEDURE touch_triggers(${b})`);   // (bot_think's, which launches it off the pad)
+      }
+      await tic();
+      const r = (await q(`SELECT x, y, z, flags FROM ents WHERE id = ${b}`))[0];
+      if ((r.FLAGS & 512) && air > 0 && landed === null) landed = Math.hypot(r.X - e.BX, r.Y - e.BY_);
+      if ((r.FLAGS & 512) && Math.hypot(r.X - e.BX, r.Y - e.BY_) < 64 && Math.abs(r.Z - (e.BZ - 1)) < 30) arrived = i;
+    }
+    // (unsteered, the knock puts it down 74 from the landing on q3dm17; steered, a few units)
+    assert(arrived !== null && steer && Math.hypot(steer.RJ_X - e.BX, steer.RJ_Y - e.BY_) < 1 && landed < 32,
+      `a sloping pad's throw ${Math.hypot(e.BX - e.AX, e.BY_ - e.AY).toFixed(0)} across, knocked 6 degrees off, is steered for its landing (${steer ? 'the landing' : 'nothing'}) and comes down ${landed?.toFixed(0)} from it (${arrived} tics)`);
+    await db.exec(`UPDATE ents SET flags = BIN_AND(flags, BIN_NOT(64)) WHERE id = ${pe}`);
+    await db.exec(`UPDATE ents SET respawn_time = 0, health = 1 WHERE classname = 'bot' AND id <> ${b}`);
+    await db.exec(`UPDATE ents SET nextthink = 0 WHERE id = ${b}`);
+    await db.exec(`DELETE FROM ents WHERE id = ${tgt}`);
+  }
+}
+
 // joining and leaving mid-game: addbot at a skill, one of each; kick, and nothing is left pointing at it
 {
   const absent = (await q("SELECT name FROM bot_defs d WHERE NOT EXISTS (SELECT 1 FROM ents e WHERE e.classname = 'bot' AND e.bot = d.name) ORDER BY name"))[0].NAME.trim();

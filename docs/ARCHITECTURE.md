@@ -684,7 +684,8 @@ walks onto the start (or is already past it toward the landing) and leaves it wi
 that lands it on the end node (at most 320) and 270 up, the jump's sound; `run_physics` flies it,
 steering for the end node with the air acceleration (`BotFinishTravel_Jump`'s air control: the route row's
 `rj_x`, `rj_y`, `rj_z` for `bot_air_steer`, until it lands); a jump down off a ledge is steered for the
-node below the same way (`BotFinishTravel_WalkOffLedge`). When the next node is a plat's bottom and the one after its top, or the ride's start was just
+node below the same way (`BotFinishTravel_WalkOffLedge`), and a pad's throw for its landing once over the
+landing's height or coming down (`BotFinishTravel_JumpPad`, every pad's, not only the straight-up ones). When the next node is a plat's bottom and the one after its top, or the ride's start was just
 reached (`BotTravel_Elevator`), the bot waits beside the plat while it is not down (stepping on would be
 a fall into the shaft), walks onto it and to its middle when it is, and stands there while the plat takes
 it up (its trigger starts it, and keeps it up while touched); at the top the next node is a walk off.
