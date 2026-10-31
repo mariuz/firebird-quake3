@@ -533,17 +533,22 @@ if (item) {
     await db.exec(`UPDATE ents SET x = ${e.AX}, y = ${e.AY}, z = ${e.AZ - 1}, vx = 0, vy = 0, vz = 0, health = 100, nextthink = 1e9, flags = BIN_OR(flags, 512), enemy_id = NULL, st = 'run' WHERE id = ${b}`);
     await db.exec(`EXECUTE PROCEDURE link_ent(${b})`);
     await db.exec(`DELETE FROM bot_routes WHERE ent_id = ${b}`);
-    let arrived = null, air = 0;
+    // (BotFinishTravel_Jump's air control: knocked 12 degrees off its line on its first tic in the air, it
+    // steers back for the far node)
+    let arrived = null, air = 0, steered = 0;
     for (let i = 0; i < 60 && arrived === null; i++) {
       const f = (await q(`SELECT flags FROM ents WHERE id = ${b}`))[0].FLAGS;
-      if (!(f & 512)) air++;
-      else if (i % 2 === 0) await q(`SELECT moved FROM bot_follow_route(${b}, ${tgt}, 32)`);
+      if (!(f & 512)) {
+        if (air++ === 0) await db.exec(`UPDATE ents SET vx = vx * COS(0.2094) - vy * SIN(0.2094), vy = vx * SIN(0.2094) + vy * COS(0.2094) WHERE id = ${b}`);
+        const [rt] = await q(`SELECT r.rj_x, r.rj_y, r.rj_until - now_() left_ FROM bot_routes r WHERE r.ent_id = ${b}`);
+        if (rt && rt.LEFT_ > 0 && Math.hypot(rt.RJ_X - e.BX, rt.RJ_Y - e.BY_) < 1) steered++;
+      } else if (i % 2 === 0) await q(`SELECT moved FROM bot_follow_route(${b}, ${tgt}, 32)`);
       await tic();
       const r = (await q(`SELECT x, y, z, flags FROM ents WHERE id = ${b}`))[0];
       if ((r.FLAGS & 512) && Math.hypot(r.X - e.BX, r.Y - e.BY_) < 48 && Math.abs(r.Z - (e.BZ - 1)) < 30) arrived = i;
     }
     const d = Math.hypot(e.BX - e.AX, e.BY_ - e.AY);
-    assert(arrived !== null && air >= 5, `a bot jumps a ${d.toFixed(0)}-unit gap (${(e.BZ - e.AZ).toFixed(0)} up): ${air} tics in the air, across in ${arrived}`);
+    assert(arrived !== null && air >= 5 && steered >= air - 1, `a bot jumps a ${d.toFixed(0)}-unit gap (${(e.BZ - e.AZ).toFixed(0)} up), knocked 12 degrees off on the way: ${air} tics in the air steering for the landing (${steered}), across in ${arrived}`);
     await db.exec(`UPDATE ents SET flags = BIN_AND(flags, BIN_NOT(64)) WHERE id = ${pe}`);
     await db.exec(`UPDATE ents SET respawn_time = 0, health = 1 WHERE classname = 'bot' AND id <> ${b}`);
     await db.exec(`UPDATE ents SET nextthink = 0 WHERE id = ${b}`);

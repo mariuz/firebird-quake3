@@ -628,7 +628,9 @@ BEGIN
       UPDATE ents e SET e.ideal_yaw = :yaw, e.yaw = :yaw, e.vx = COS(:yaw * 0.0174532925e0) * :reach, e.vy = SIN(:yaw * 0.0174532925e0) * :reach, e.vz = 270,
              e.flags = BIN_AND(e.flags, BIN_NOT(512)) WHERE e.id = :eid;
       EXECUTE PROCEDURE snd(eid, 2, 'sound/player/' || COALESCE((SELECT e.pmodel FROM ents e WHERE e.id = :eid), 'sarge') || '/jump1.wav', 1, 1);
-      UPDATE OR INSERT INTO bot_routes (ent_id, target, dst_node, path, built, fails, prog_d, prog_t, last_node) VALUES (:eid, :target, :dst, :path, :built, 0, NULL, :t + 1.5e0, :last_n) MATCHING (ent_id);
+      -- (BotFinishTravel_Jump: in the air it steers for the far node, run_physics's bot_air_steer, until it lands)
+      UPDATE OR INSERT INTO bot_routes (ent_id, target, dst_node, path, built, fails, prog_d, prog_t, last_node, rj_x, rj_y, rj_z, rj_until, rj_hold)
+        VALUES (:eid, :target, :dst, :path, :built, 0, NULL, :t + 1.5e0, :last_n, :nx, :ny, :nz, :t + 2, NULL) MATCHING (ent_id);
       moved = 1;
       EXIT;
     END
@@ -647,9 +649,11 @@ BEGIN
     IF (moved = 0 AND nz < z - 40 AND vlen(nx - x, ny - y, 0) < 320) THEN
     BEGIN
       -- the next node is down a ledge and the step "walked off an edge": jump down, as the AAS's
-      -- jump-down reachability does; gravity and fly_move take it from here (run_physics)
+      -- jump-down reachability does; gravity and fly_move take it from here (run_physics), steered in the air for
+      -- the node below (BotFinishTravel_WalkOffLedge's air control) until it lands
       UPDATE ents e SET e.vx = COS(:yaw * 0.0174532925e0) * 320, e.vy = SIN(:yaw * 0.0174532925e0) * 320, e.vz = 40,
              e.flags = BIN_AND(e.flags, BIN_NOT(512)) WHERE e.id = :eid;
+      UPDATE OR INSERT INTO bot_routes (ent_id, rj_x, rj_y, rj_z, rj_until, rj_hold) VALUES (:eid, :nx, :ny, :nz, :t + 3, NULL) MATCHING (ent_id);
       moved = 1;
     END
     IF (moved = 0) THEN moved = step_direction(eid, anglemod(yaw + 35), dist);
