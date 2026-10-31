@@ -377,6 +377,22 @@ export function followBolt(b, row, bsp) {
   return b;
 }
 
+/** CG_LightningBolt for another player's beam: from its interpolated origin (lerpOrigin) 26 up (DEFAULT_VIEWHEIGHT)
+ *  and 14 along the beam, in the direction of its tic's shot (the tic keeps the aim, not lerped angles), traced
+ *  768 units through the world; the tic's hit short of that, a player, stops it as for our own. `e` is the
+ *  shooter's entity as painted this frame. */
+export function followOtherBolt(b, e, bsp) {
+  const d = sub3(b.tb ?? b.b, b.ta ?? b.a), tl = Math.hypot(d[0], d[1], d[2]);
+  if (!(tl > 0)) return b;
+  const f = [d[0] / tl, d[1] / tl, d[2] / tl];
+  const a = [e.x + f[0] * 14, e.y + f[1] * 14, e.z + 26 + f[2] * 14];
+  let len = LIGHTNING_RANGE * bsp.traceLine(a, [a[0] + f[0] * LIGHTNING_RANGE, a[1] + f[1] * LIGHTNING_RANGE, a[2] + f[2] * LIGHTNING_RANGE], 1);
+  if (tl < len - 1) len = tl;
+  b.a = a;
+  b.b = [a[0] + f[0] * len, a[1] + f[1] * len, a[2] + f[2] * len];
+  return b;
+}
+
 /** RB_SurfaceLightningBolt: four ribbons 8 either side, the first facing the eye, each turned 45 degrees about
  *  the beam; lightningBolt's two stages (scrolling at 5 and 7.2, pulsing at 7.1 and 8.1 a second) */
 export function drawBolt(r, view, b, time) {
@@ -1012,6 +1028,10 @@ export function drawScene(renderer, hud, res, bsp, last, frame, opts = {}) {
   state.beams = state.beams.filter((b) => b.until > time && time >= b.t0 - 0.1);
   for (const b of state.beams) {
     if (b.kind === 'bolt' && b.owner === state.selfId && !last.DEAD && bsp?.traceLine) followBolt(b, last, bsp);
+    else if (b.kind === 'bolt' && bsp?.traceLine) {
+      const e = frame.ents.find((x) => x.id === b.owner);
+      if (e) followOtherBolt(b, e, bsp);
+    }
     (b.kind === 'rail' ? drawRail : drawBolt)(r, view, b, time);
   }
   // the impact flashes: the rail's ringFlashModel in railExplosion's two blended stages, a bullet's bulletFlashModel

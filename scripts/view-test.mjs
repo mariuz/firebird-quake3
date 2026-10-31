@@ -6,7 +6,7 @@
 //   node scripts/view-test.mjs
 
 import fs from 'node:fs';
-import { FrameState, firstPersonView, zoomedFov, fovY, mapTorsoToWeaponFrame, viewTorsoFrame, underwaterFov, sceneLights, gunFlashOrigin, litByDlights, MAX_DLIGHTS, drawRail, drawBolt, findPortals, portalView, mirrorView, portalFade, cameraRoll, perpendicular, floorBelow, floorUnderBox, drawShadows, colorFromString, boltImpact, ringStages, bulletStages, RING_TIME, followBolt, spriteExplosion, EXPLOSIONS } from '../src/scene.js';
+import { FrameState, firstPersonView, zoomedFov, fovY, mapTorsoToWeaponFrame, viewTorsoFrame, underwaterFov, sceneLights, gunFlashOrigin, litByDlights, MAX_DLIGHTS, drawRail, drawBolt, findPortals, portalView, mirrorView, portalFade, cameraRoll, perpendicular, floorBelow, floorUnderBox, drawShadows, colorFromString, boltImpact, ringStages, bulletStages, RING_TIME, followBolt, followOtherBolt, spriteExplosion, EXPLOSIONS } from '../src/scene.js';
 import { Renderer, tagTransform, autospriteQuads, fogST, fogFactor, md3Lod, entityFog, clipFace, polyFog, fogFade } from '../src/renderer.js';
 import { parseDeform, waveValue, deformVertex, envTexCoords, parseShaderScript, surfaceLook, shellMesh, eyeInModel, stageBrightness, stageTcMatrix, stageColor, stageAlpha, shaderStages, fogAdjust, blendFogAdjust, specularAlpha, SPECULAR_LIGHT } from '../src/shader.js';
 import { Md3, parseAnimationCfg, parseSkin } from '../src/md3.js';
@@ -799,6 +799,18 @@ if (fs.existsSync('public/pak/pak0.pk3')) {
       && ((turned.b[0] - turned.a[0]) * f[0] + (turned.b[1] - turned.a[1]) * f[1] + (turned.b[2] - turned.a[2]) * f[2]) / len(turned) > 0.9999
       && (wall <= 41 || Math.abs(len(on) - 40) < 1e-6),
       `the player's beam follows the view: from the muzzle along it to the wall (${wall.toFixed(0)}), or to what the tic's shot hit along it (${len(on).toFixed(0)})`);
+    // a bot's beam goes with the bot between tics: from 26 up and 14 along the tic's shot from where it is painted
+    // now, along the shot, to the wall or to what the tic hit
+    const e = { x: o[0] + 10, y: o[1] - 6, z: o[2] };
+    const shot = { ta: [o[0], o[1], o[2] + 26], tb: [o[0] + f[0] * 768, o[1] + f[1] * 768, o[2] + 26 + f[2] * 768] };
+    const ob = followOtherBolt({ ...shot }, e, bsp);
+    const oa = [e.x + f[0] * 14, e.y + f[1] * 14, e.z + 26 + f[2] * 14];
+    const owall = 768 * bsp.traceLine(oa, oa.map((v, i) => v + f[i] * 768), 1);
+    const short = followOtherBolt({ ta: shot.ta, tb: shot.ta.map((v, i) => v + f[i] * 30) }, e, bsp);
+    assert(Math.hypot(ob.a[0] - oa[0], ob.a[1] - oa[1], ob.a[2] - oa[2]) < 1e-6 && Math.abs(len(ob) - Math.min(owall, 768)) < 1e-6
+      && ((ob.b[0] - ob.a[0]) * f[0] + (ob.b[1] - ob.a[1]) * f[1] + (ob.b[2] - ob.a[2]) * f[2]) / len(ob) > 0.9999
+      && (owall <= 31 || Math.abs(len(short) - 30) < 1e-6),
+      `a bot's beam goes with the bot: from its painted origin (26 up, 14 on) along its shot to the wall (${len(ob).toFixed(0)} of ${owall.toFixed(0)}), or to the tic's hit (${len(short).toFixed(0)})`);
   }
   const legs2 = new Md3(pak.buffer('models/players/sarge/lower_2.md3'), 'lower_2');
   const skin = parseSkin(pak.text('models/players/sarge/lower_default.skin'));

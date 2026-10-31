@@ -945,8 +945,11 @@ units back along the beam, turned at random every frame and added (`boltImpact`)
 goes where the view looks this frame, as `CG_LightningBolt` takes the predicted view's angles: from 14 units
 ahead of the eye, traced 768 units through the world's brushes and patches by `Bsp.traceLine` (`CM_BoxTrace`
 with no box, `SURFACE_CLIP_EPSILON` short), stopped short where the tic's shot hit a body while the aim stays
-within 6 degrees of it (`followBolt`; `state.selfId` is the player's entity). `drawRail`, `drawBolt`,
-`boltImpact` and `followBolt` in `src/scene.js`.
+within 6 degrees of it (`followBolt`; `state.selfId` is the player's entity). A bot's beam goes with the bot
+between tics, as `CG_LightningBolt` draws another player's from its `lerpOrigin`: from 26 up and 14 along
+the shot from where the bot is painted this frame, in its tic's shot's direction (the tic keeps the aim, the
+lerped angles are the lagging view), traced the same way and stopped at the tic's hit (`followOtherBolt`).
+`drawRail`, `drawBolt`, `boltImpact`, `followBolt` and `followOtherBolt` in `src/scene.js`.
 
 *Shadows* are `CG_PlayerShadow`'s blobs (`cg_shadows 1`): for every player model in the frame and for
 the player itself, `floorUnderBox` finds the floor within 128 units as `CG_PlayerShadow`'s 30-unit box
