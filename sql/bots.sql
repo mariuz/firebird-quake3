@@ -226,18 +226,25 @@ BEGIN
 END^
 
 -- ── movement helpers (g_ai.c, as Quake 2 had them) ──────────────────────
+-- BotChangeViewAngles: the view turns toward where the bot wants to look, by the view factor's share of the
+-- angle left (a smooth slowdown) and no more than the turning a think allows (yaw_speed: the character's
+-- VIEW_MAXCHANGE, 240 a second at least, a tenth of it a think); the pitch the same way toward ideal_pitch, or
+-- level out of a fight
 CREATE OR ALTER PROCEDURE change_yaw (eid INTEGER)
 AS
 DECLARE cur DOUBLE PRECISION; DECLARE ideal DOUBLE PRECISION; DECLARE spd DOUBLE PRECISION; DECLARE mv DOUBLE PRECISION;
+DECLARE vf DOUBLE PRECISION; DECLARE pc DOUBLE PRECISION; DECLARE pi_ DOUBLE PRECISION; DECLARE pm DOUBLE PRECISION;
 BEGIN
-  SELECT anglemod(e.yaw), e.ideal_yaw, e.yaw_speed FROM ents e WHERE e.id = :eid INTO cur, ideal, spd;
-  IF (cur = ideal) THEN EXIT;
+  SELECT anglemod(e.yaw), e.ideal_yaw, e.yaw_speed, e.view_factor, e.pitch, COALESCE(e.ideal_pitch, 0) FROM ents e WHERE e.id = :eid INTO cur, ideal, spd, vf, pc, pi_;
   mv = ideal - cur;
   IF (ideal > cur) THEN BEGIN IF (mv >= 180) THEN mv = mv - 360; END
   ELSE BEGIN IF (mv <= -180) THEN mv = mv + 360; END
+  mv = mv * vf;
   IF (mv > 0) THEN BEGIN IF (mv > spd) THEN mv = spd; END
   ELSE BEGIN IF (mv < -spd) THEN mv = -spd; END
-  UPDATE ents e SET e.yaw = anglemod(:cur + :mv) WHERE e.id = :eid;
+  pm = (pi_ - COALESCE(pc, 0)) * vf;
+  IF (pm > spd) THEN pm = spd; ELSE IF (pm < -spd) THEN pm = -spd;
+  IF (mv <> 0 OR pm <> 0) THEN UPDATE ents e SET e.yaw = anglemod(:cur + :mv), e.pitch = COALESCE(e.pitch, 0) + :pm WHERE e.id = :eid;
 END^
 
 -- SV_StepDirection: turn to yaw and try to step dist that way
@@ -1046,6 +1053,7 @@ DECLARE tf DOUBLE PRECISION; DECLARE ttx DOUBLE PRECISION; DECLARE tty DOUBLE PR
 DECLARE tnx DOUBLE PRECISION; DECLARE tny DOUBLE PRECISION; DECLARE tnz DOUBLE PRECISION;
 DECLARE tsf INTEGER; DECLARE tct INTEGER; DECLARE tas SMALLINT; DECLARE tss SMALLINT; DECLARE thit INTEGER;
 DECLARE acc DOUBLE PRECISION; DECLARE askill DOUBLE PRECISION;
+DECLARE vyaw DOUBLE PRECISION; DECLARE vpitch DOUBLE PRECISION; DECLARE ay DOUBLE PRECISION; DECLARE ap DOUBLE PRECISION;
 BEGIN
   SELECT e.enemy_id, e.weapon, COALESCE(b.skill, 2) FROM ents e LEFT JOIN bot_defs b ON b.name = e.bot WHERE e.id = :eid INTO enemy, w, skill;
   IF (enemy IS NULL) THEN EXIT;
@@ -1074,8 +1082,17 @@ BEGIN
   END
   -- BotAimAtEnemy: at an invisible enemy the aim is 0.4 as good, nine times in ten
   IF (RAND() > 0.1e0 AND EXISTS (SELECT 1 FROM ents o LEFT JOIN player p ON p.ent_id = o.id WHERE o.id = :enemy AND IIF(o.classname = 'player', p.invis_finished, o.invis_finished) > now_())) THEN err = err / 0.4e0;
+  -- the shot goes where the view looks (FireWeapon takes the client's view angles; the view turns toward the
+  -- aim by BotChangeViewAngles, change_yaw), the scatter taken as an angle off it: once the view is on the
+  -- target the shot is the aim, while it is still turning the shot falls behind
+  SELECT e.yaw, COALESCE(e.pitch, 0) FROM ents e WHERE e.id = :eid INTO vyaw, vpitch;
+  ay = vectoyaw(dx, dy); ap = -ATAN2(dz, vlen(dx, dy, 0)) * 57.29578e0;
   dx = dx + crand() * err; dy = dy + crand() * err; dz = dz + crand() * err * 0.7e0;
-  UPDATE ents e SET e.pitch = -ATAN2(:dz, vlen(:dx, :dy, 0)) * 57.29578e0 WHERE e.id = :eid;
+  vyaw = vyaw + anglemod(vectoyaw(dx, dy) - ay + 180) - 180;
+  vpitch = vpitch + (-ATAN2(dz, vlen(dx, dy, 0)) * 57.29578e0 - ap);
+  dx = COS(vpitch * 0.0174532925e0) * COS(vyaw * 0.0174532925e0) * dl;
+  dy = COS(vpitch * 0.0174532925e0) * SIN(vyaw * 0.0174532925e0) * dl;
+  dz = -SIN(vpitch * 0.0174532925e0) * dl;
   -- BotCheckAttack: a teammate in the line of fire holds it
   IF ((SELECT g.gametype FROM game g WHERE g.id = 1) >= 3) THEN
   BEGIN
@@ -1235,7 +1252,8 @@ BEGIN
          e.flags = 32, e.st = 'stand', e.legs_anim = 22, e.legs_time = :t, e.torso_anim = 11, e.torso_time = :t, e.enemy_id = NULL, e.goal_id = NULL, e.nbg_id = NULL, e.nbg_check = NULL,
          e.attack_finished = :t + 1, e.teleport_time = :t + 0.3e0, e.lx = NULL, e.nextthink = :t + 0.1e0, e.think = 'bot_think', e.respawn_time = 0,
          e.quad_finished = 0, e.haste_finished = 0, e.invis_finished = 0, e.regen_finished = 0, e.enviro_finished = 0, e.health_tick = :t + 1,
-         e.yaw_speed = COALESCE(bot_cv(:eid, 'view_maxchange', NULL) / 10, bot_char((SELECT b.skill FROM bot_defs b WHERE b.name = e.bot), 'turn')) WHERE e.id = :eid;
+         e.yaw_speed = COALESCE(MAXVALUE(240, bot_cv(:eid, 'view_maxchange', NULL)) / 10, bot_char((SELECT b.skill FROM bot_defs b WHERE b.name = e.bot), 'turn')),
+         e.view_factor = bot_cv(:eid, 'view_factor', 1), e.ideal_pitch = NULL WHERE e.id = :eid;
   EXECUTE PROCEDURE link_ent(eid);
   EXECUTE PROCEDURE snd_at(x, y, z, 'sound/world/telein.wav', 1, 1);
   EXECUTE PROCEDURE fx(5, x, y, z + 9, 0, 0, 0, 1);
@@ -1584,7 +1602,9 @@ BEGIN
     d = vlen(ex - x, ey - y, ez - z);
     vis = visible(eid, enemy);
     IF (vis = 1) THEN srch = t + bot_char(skill, 'search');
+    -- (the view turns to it, up or down to its chest too: change_yaw's ideal_pitch)
     UPDATE ents e SET e.enemy_id = :enemy, e.search_time = :srch, e.st = 'run', e.ideal_yaw = vectoyaw(:ex - :x, :ey - :y), e.goal_id = IIF(:fresh = 1, NULL, e.goal_id),
+           e.ideal_pitch = -ATAN2(:ez + 8 - (:z + e.viewheight), MAXVALUE(1, vlen(:ex - :x, :ey - :y, 0))) * 57.29578e0,
            e.attack_finished = :af WHERE e.id = :eid;
     EXECUTE PROCEDURE change_yaw(eid);
     -- BotBattleUseItems: under 40 health it teleports away, under 60 it uses its medkit
@@ -1697,7 +1717,7 @@ BEGIN
   ELSE
   BEGIN
     -- nothing in sight: wander toward an item, or just roam
-    UPDATE ents e SET e.enemy_id = NULL, e.st = 'stand' WHERE e.id = :eid AND e.enemy_id IS NOT NULL;
+    UPDATE ents e SET e.enemy_id = NULL, e.st = 'stand', e.ideal_pitch = NULL WHERE e.id = :eid AND e.enemy_id IS NOT NULL;
     -- a teammate to accompany comes before the items (BotGetLongTermGoal)
     EXECUTE PROCEDURE bot_accompany(eid) RETURNING_VALUES busy, mate;
     -- then a camp spot (LTG_CAMP): gone to, or stayed at (no nearby goals then: BotLongTermGoal returns false)
@@ -1850,7 +1870,8 @@ BEGIN
          e.ammo2 = IIF((SELECT g.gametype FROM game g WHERE g.id = 1) = 3, 50, 100),
          e.think = 'bot_think', e.nextthink = :t + 0.5e0 + RAND() * 0.5e0, e.attack_finished = :t + 2, e.enter_time = :t WHERE e.id = :id;
   -- its turning from its character file (CHARACTERISTIC_VIEW_MAXCHANGE degrees a second, a think a tenth of it)
-  UPDATE ents e SET e.yaw_speed = COALESCE(bot_cv(:id, 'view_maxchange', NULL) / 10, e.yaw_speed) WHERE e.id = :id;
+  UPDATE ents e SET e.yaw_speed = COALESCE(MAXVALUE(240, bot_cv(:id, 'view_maxchange', NULL)) / 10, e.yaw_speed),
+         e.view_factor = bot_cv(:id, 'view_factor', 1) WHERE e.id = :id;
   -- in a team game, a team (PickTeam) and its colours (the model's red or blue skin)
   IF ((SELECT g.gametype FROM game g WHERE g.id = 1) >= 3) THEN
   BEGIN

@@ -529,7 +529,12 @@ went down since it last looked (`healthdecrease`, `ents.last_health`); and with 
 past 100 units that is not shooting and has not the bot in its 90 degrees is let be by a bot that would rather
 retreat from it (`BotFindEnemy`'s "check if we can avoid this enemy", `bot_aggression` under 50); anyone
 within 70 units of the last arrival by teleport or spawn (`EV_PLAYER_TELEPORT_IN`, `game.tele_time`, set by
-`fx` kind 5) is let be for 3 s; `VIEW_MAXCHANGE` the turning (a tenth of it a think);
+`fx` kind 5) is let be for 3 s; `VIEW_MAXCHANGE` and `VIEW_FACTOR` the turning
+(`BotChangeViewAngles`, `change_yaw`: each think the view turns the factor's share of the angle left toward
+where the bot wants to look, no more than a tenth of the maximum, 240 a second at least; the pitch too, toward
+`ideal_pitch`, the enemy's chest in a fight and level out of one), and the shot goes where the view looks with
+the aim's scatter carried on it (`FireWeapon` takes the view angles), so a bot still turning onto its enemy
+shoots behind it;
 `ATTACK_SKILL` how often it circle-strafes; `CROUCHER` the chance a think, a second after its last crouch,
 that it crouches in a fight for croucher × 5 s (`ents.attack_crouch`, `attackcrouch_time`: the box's top at 16,
 the eye at 12, a quarter of the speed, the crouched legs, no jump; up again where the standing box fits);

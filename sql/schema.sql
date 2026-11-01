@@ -354,6 +354,8 @@ CREATE TABLE ents (
   deaths     INTEGER DEFAULT 0 NOT NULL,
   ideal_yaw  DOUBLE PRECISION DEFAULT 0 NOT NULL,
   yaw_speed  DOUBLE PRECISION DEFAULT 30 NOT NULL,
+  view_factor DOUBLE PRECISION DEFAULT 1 NOT NULL,   -- a bot's CHARACTERISTIC_VIEW_FACTOR: the share of the angle left its view turns a think
+  ideal_pitch DOUBLE PRECISION,                      -- where a bot's view is turning to look up or down (NULL: level)
   attack_finished DOUBLE PRECISION DEFAULT 0 NOT NULL,
   pain_finished   DOUBLE PRECISION DEFAULT 0 NOT NULL,
   search_time     DOUBLE PRECISION DEFAULT 0 NOT NULL,

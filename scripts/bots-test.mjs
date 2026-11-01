@@ -236,8 +236,8 @@ if (item) {
   const side = (await q(`SELECT bot_find_target(${b}) t FROM rdb$database`))[0].T;
   await bset(b, `yaw = ${spot.YAW}`);
   const ahead = (await q(`SELECT bot_find_target(${b}) t FROM rdb$database`))[0].T;
-  assert([cv.RT, cv.AA, cv.AL].every((v) => v >= 0 && v <= 1) && cv.VM >= 1 && Math.abs(cv.YS - cv.VM / 10) < 1e-6 && side !== b2 && ahead === b2,
-    `its character: reaction ${cv.RT}, aim ${cv.AA}, alertness ${cv.AL}, turning ${cv.VM}°/s (${cv.YS} a think); the other bot at its side unnoticed (${side}), ahead noticed`);
+  assert([cv.RT, cv.AA, cv.AL].every((v) => v >= 0 && v <= 1) && cv.VM >= 1 && Math.abs(cv.YS - Math.max(240, cv.VM) / 10) < 1e-6 && side !== b2 && ahead === b2,
+    `its character: reaction ${cv.RT}, aim ${cv.AA}, alertness ${cv.AL}, turning ${cv.VM}°/s (${cv.YS} a think: 240 a second at least, BotChangeViewAngles); the other bot at its side unnoticed (${side}), ahead noticed`);
 
   // BotFindEnemy's "check if we can avoid this enemy": the other 140 units ahead with its back turned, not
   // shooting; a bot that would retreat from it (a machinegun, BotAggression 0) lets it be, one with a railgun
@@ -627,6 +627,43 @@ if (item) {
     await db.exec(`UPDATE ents SET respawn_time = 0, health = 1 WHERE classname = 'bot' AND id <> ${b}`);
     await db.exec(`UPDATE ents SET nextthink = 0 WHERE id = ${b}`);
     await db.exec(`DELETE FROM ents WHERE id = ${tgt}`);
+  }
+}
+
+// BotChangeViewAngles: the view turns toward the aim by the character's view factor's share of the angle left,
+// 240 a second at most at least; and FireWeapon shoots where the view looks. A bot facing 60 degrees off its
+// enemy, its aim made perfect, fires a rail along its view, not at the enemy; its view then closes on the
+// enemy a share at a time, and once on it the rail goes where it aims
+{
+  const [me] = await q(`SELECT e.bot, b.skill FROM ents e JOIN bot_defs b ON b.name = e.bot WHERE e.id = ${b}`);
+  const b2 = bots[1].ID;
+  for (const id of [b, b2]) if ((await q(`SELECT deadflag FROM ents WHERE id = ${id}`))[0].DEADFLAG) await db.exec(`EXECUTE PROCEDURE bot_respawn(${id})`);
+  const node = (await q('SELECT FIRST 1 x, y, z FROM waypoints w WHERE EXISTS (SELECT 1 FROM waypoints o WHERE ABS(o.z - w.z) < 4 AND ABS(o.y - w.y) < 4 AND o.x - w.x BETWEEN 250 AND 350) ORDER BY id'))[0];
+  if (!node) console.log('(no room for the view check)');
+  else {
+    const saved = (await q(`SELECT ckey, val FROM bot_chatchar WHERE bot = '${me.BOT.trim()}' AND skill = ${me.SKILL} AND ckey STARTING WITH 'aim_accuracy'`));
+    await db.exec(`DELETE FROM bot_chatchar WHERE bot = '${me.BOT.trim()}' AND skill = ${me.SKILL} AND ckey STARTING WITH 'aim_accuracy'`);
+    await db.exec(`INSERT INTO bot_chatchar (bot, skill, ckey, val) VALUES ('${me.BOT.trim()}', ${me.SKILL}, 'aim_accuracy', 1)`);
+    await db.exec(`UPDATE ents SET x = ${node.X}, y = ${node.Y}, z = ${node.Z}, vx = 0, vy = 0, vz = 0, yaw = 60, ideal_yaw = 0, pitch = 0, ideal_pitch = 0, view_factor = 0.5, yaw_speed = 24,
+                   weapons = BIN_OR(weapons, 64), weapon = 64, ammo7 = 20, enemy_id = ${b2}, health = 100, nextthink = 1e9 WHERE id = ${b}`);
+    await db.exec(`UPDATE ents SET x = ${node.X + 300}, y = ${node.Y}, z = ${node.Z}, vx = 0, vy = 0, vz = 0, health = 1000, nextthink = 1e9 WHERE id = ${b2}`);
+    for (const id of [b, b2]) await db.exec(`EXECUTE PROCEDURE link_ent(${id})`);
+    const rail = async () => {
+      const f0 = (await q('SELECT COALESCE(MAX(id), 0) m FROM fx_events'))[0].M;
+      await db.exec(`EXECUTE PROCEDURE bot_fire(${b})`);
+      const [r] = await q(`SELECT x, y, x2, y2 FROM fx_events WHERE id > ${f0} AND kind = 4`);
+      return r ? (Math.atan2(r.Y2 - r.Y, r.X2 - r.X) * 180) / Math.PI : null;
+    };
+    const off = await rail();
+    const yaws = [];
+    for (let i = 0; i < 6; i++) { await db.exec(`EXECUTE PROCEDURE change_yaw(${b})`); yaws.push((await q(`SELECT yaw FROM ents WHERE id = ${b}`))[0].YAW); }
+    const on = await rail();
+    // (60 → 36, by the cap of 24 a think; then halves: 18, 9, 4.5 …)
+    assert(off !== null && Math.abs(off - 60) < 1 && Math.abs(yaws[0] - 36) < 0.01 && Math.abs(yaws[1] - 18) < 0.01 && Math.abs(yaws[2] - 9) < 0.01 && Math.abs(on) < 2,
+      `a bot's rail goes where it looks: 60 degrees off its enemy it fires at ${off?.toFixed(1)}; its view turns ${yaws.map((y) => y.toFixed(1)).join(', ')} (half the angle left a think, 24 at most), then the rail goes at ${on?.toFixed(1)}`);
+    await db.exec(`DELETE FROM bot_chatchar WHERE bot = '${me.BOT.trim()}' AND skill = ${me.SKILL} AND ckey = 'aim_accuracy'`);
+    for (const r of saved) await db.exec(`INSERT INTO bot_chatchar (bot, skill, ckey, val) VALUES ('${me.BOT.trim()}', ${me.SKILL}, '${r.CKEY.trim()}', ${r.VAL})`);
+    await db.exec(`UPDATE ents SET nextthink = 0, enemy_id = NULL, health = 100, view_factor = COALESCE((SELECT c.val FROM bot_chatchar c WHERE c.bot = '${me.BOT.trim()}' AND c.skill = ${me.SKILL} AND c.ckey = 'view_factor'), 1) WHERE id IN (${b}, ${b2})`);
   }
 }
 
