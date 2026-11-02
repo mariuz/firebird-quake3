@@ -232,6 +232,8 @@ DECLARE vx DOUBLE PRECISION; DECLARE vy DOUBLE PRECISION; DECLARE ft DOUBLE PREC
 DECLARE f DOUBLE PRECISION; DECLARE ex DOUBLE PRECISION; DECLARE ey DOUBLE PRECISION; DECLARE ez DOUBLE PRECISION;
 DECLARE nx DOUBLE PRECISION; DECLARE ny DOUBLE PRECISION; DECLARE nz DOUBLE PRECISION;
 DECLARE sf INTEGER; DECLARE ct INTEGER; DECLARE als SMALLINT; DECLARE sts SMALLINT; DECLARE hit INTEGER;
+DECLARE t0x DOUBLE PRECISION; DECLARE t1x DOUBLE PRECISION; DECLARE t0y DOUBLE PRECISION; DECLARE t1y DOUBLE PRECISION;
+DECLARE t0z DOUBLE PRECISION; DECLARE t1z DOUBLE PRECISION;
 BEGIN
   DELETE FROM wp_edges;
   DELETE FROM waypoints;
@@ -239,12 +241,41 @@ BEGIN
   IF (minx IS NULL) THEN EXIT;
 
   -- the places that matter: spawn points, items, pads and their landings, teleporters and their destinations
-  FOR SELECT e.id, e.classname, e.x + (e.minx + e.maxx) / 2, e.y + (e.miny + e.maxy) / 2, e.z + (e.minz + e.maxz) / 2, e.target
+  FOR SELECT e.id, e.classname, e.x + (e.minx + e.maxx) / 2, e.y + (e.miny + e.maxy) / 2, e.z + (e.minz + e.maxz) / 2, e.target,
+             e.x + e.minx, e.x + e.maxx, e.y + e.miny, e.y + e.maxy, e.z + e.minz, e.z + e.maxz
         FROM ents e WHERE e.classname IN ('info_player_deathmatch', 'info_player_start', 'item', 'trigger_push', 'trigger_teleport', 'misc_teleporter_dest')
-       INTO eid, cls, x, y, z, tgt
+       INTO eid, cls, x, y, z, tgt, t0x, t1x, t0y, t1y, t0z, t1z
   DO
   BEGIN
     fl = wp_floor(x, y, z + 40, 300);
+    -- a trigger no one can stand in the middle of (q3dm7's teleporter, a slab against the wall of the mega
+    -- health's pit): the nearest place 8 apart within 24 of it where a player stands with the box in it
+    IF (fl IS NULL AND cls IN ('trigger_push', 'trigger_teleport')) THEN
+    BEGIN
+      bx = NULL; bz = NULL; gz = 1e9;
+      gx = t0x - 24;
+      WHILE (gx <= t1x + 24) DO
+      BEGIN
+        gy = t0y - 24;
+        WHILE (gy <= t1y + 24) DO
+        BEGIN
+          IF (vlen(gx - x, gy - y, 0) < gz AND gx + 15 >= t0x AND gx - 15 <= t1x AND gy + 15 >= t0y AND gy - 15 <= t1y) THEN
+          BEGIN
+            -- the box dropped (not a point: half of it may stand on a step's edge, the other half over the gap the
+            -- trigger fills), on a floor flat enough, its box meeting the trigger (24 under to 32 over the origin)
+            EXECUTE PROCEDURE trace_move(NULL, -15, -15, -24, 15, 15, 32, gx, gy, z + 40, gx, gy, z - 260, 65537)
+              RETURNING_VALUES f, ex, ey, ez, nx, ny, nz, sf, ct, als, sts, hit;
+            IF (sts = 0 AND f < 1 AND nz >= 0.7e0 AND ez - 24 <= t1z AND ez + 32 >= t0z) THEN
+            BEGIN
+              gz = vlen(gx - x, gy - y, 0); bx = gx; by_ = gy; bz = ez - 25;
+            END
+          END
+          gy = gy + 8;
+        END
+        gx = gx + 8;
+      END
+      IF (bz IS NOT NULL) THEN BEGIN x = bx; y = by_; fl = bz; END
+    END
     IF (fl IS NULL) THEN CONTINUE;
     a = NULL;
     EXECUTE PROCEDURE wp_add(x, y, fl + 25, CASE cls WHEN 'item' THEN 2 WHEN 'trigger_push' THEN 3 WHEN 'trigger_teleport' THEN 5 WHEN 'misc_teleporter_dest' THEN 6 ELSE 1 END, eid) RETURNING_VALUES a;
@@ -482,15 +513,16 @@ BEGIN
       END
       CONTINUE;
     END
-    -- two passes: the ten nearest neighbours, then the four nearest on a lower level (the ten are
-    -- all on this one when the grid is dense), so a ledge gets its way down
+    -- three passes: the ten nearest neighbours, then the three nearest on a lower level and the three nearest
+    -- on a higher one (the ten are all on this one when the grid is dense), so a ledge gets its way down and a
+    -- stair its way up (q3dm7's rocket launcher is 104 up a stair from the nearest node of the rest)
     pass = 0;
-    WHILE (pass < 2) DO
+    WHILE (pass < 3) DO
     BEGIN
       n = 0;
       FOR SELECT w2.id, w2.x, w2.y, w2.z FROM waypoints w2
            WHERE w2.id <> :a AND ABS(w2.x - :ax) < IIF(:pass = 0, 420, 300) AND ABS(w2.y - :ay) < IIF(:pass = 0, 420, 300) AND ABS(w2.z - :az) < 450
-             AND (:pass = 0 OR w2.z < :az - 48) AND w2.kind NOT IN (8, 9)
+             AND (:pass = 0 OR (:pass = 1 AND w2.z < :az - 48) OR (:pass = 2 AND w2.z > :az + 48)) AND w2.kind NOT IN (8, 9)
            ORDER BY (w2.x - :ax) * (w2.x - :ax) + (w2.y - :ay) * (w2.y - :ay) + (w2.z - :az) * (w2.z - :az) * 2
            INTO b, bx, by_, bz
       DO

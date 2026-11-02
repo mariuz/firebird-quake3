@@ -620,12 +620,16 @@ a player's box would rest, on its uphill corner), `wp_stand` checks it is in the
 slime or a `trigger_hurt` (the void of q3dm17) and that the box fits, and the scan goes on from under
 that floor to find the next level. A floor the box does not fit on is tried 40 units to each side (a
 wall beside the column), a column that finds nothing is tried 56 units to each side (corridors).
-`wp_add` merges anything within 64 units of an existing node.
+`wp_add` merges anything within 64 units of an existing node. A pad or teleporter whose middle no one can
+stand in gets its node at the nearest place within 24 of it where a dropped player box rests with the box in
+the trigger (q3dm7's teleporter fills a gap too narrow for a player between a clip and a step: its node is on
+the step's edge, half the box over the gap).
 
 **Edges** (`wp_edges`: `a → b`, length, kind 0 walk / 1 jump pad / 2 teleporter / 3 drop / 4 rocket jump / 5 jump / 6 pad steered).
-`wp_link_chunk` links each node to its ten nearest neighbours within 420 units, and then to the four
-nearest on a lower level (the ten are all on the node's own level when the grid is dense, and a
-ledge needs its way down), when `wp_walkable` says a player can get there: first a straight box
+`wp_link_chunk` links each node to its ten nearest neighbours within 420 units, then to the three
+nearest on a lower level and the three nearest on a higher one (the ten are all on the node's own level
+when the grid is dense; a ledge needs its way down, a stair its way up: q3dm7's rocket launcher is 104
+up a stair from the nearest node of the rest), when `wp_walkable` says a player can get there: first a straight box
 trace with the floor probed at a third and two thirds of the way (no pits, no lava); if that fails
 and the two are on one level, a chest-height point trace rules out walls at once; otherwise a
 *stepped walk* of 40-unit steps, each one tried 18 units up (three times for stairs and ramps) and

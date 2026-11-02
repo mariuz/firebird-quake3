@@ -25,6 +25,23 @@ const tic = (n = 1) => db.query(`SELECT * FROM q3_tic(${n}, 0, 0, 0, 0, 0, 0, 1,
 const pe = (await q('SELECT ent_id e FROM player'))[0].E;
 await db.exec(`UPDATE ents SET flags = BIN_OR(flags, 16) WHERE id = ${pe}`);   // we watch, invulnerable
 
+// the graph serves the whole arena: every item can be reached from the spawn points and left again (the
+// AAS's reachability over walks, steps, drops, jumps, pads, teleporters, rocket jumps). q3dm7's three behind
+// the floor plate its button opens are the exception: botlib's bots press the button (BotGetActivateGoal),
+// this port's do not
+{
+  const nodes = await q('SELECT w.id, w.kind, e.item FROM waypoints w LEFT JOIN ents e ON e.id = w.ent_id');
+  const fwd = new Map(), back = new Map();
+  for (const e of await q('SELECT a, b FROM wp_edges')) { (fwd.get(e.A) ?? fwd.set(e.A, []).get(e.A)).push(e.B); (back.get(e.B) ?? back.set(e.B, []).get(e.B)).push(e.A); }
+  const bfs = (starts, adj) => { const seen = new Set(starts), st = [...starts]; while (st.length) { const n = st.pop(); for (const m of adj.get(n) ?? []) if (!seen.has(m)) { seen.add(m); st.push(m); } } return seen; };
+  const spawns = nodes.filter((n) => n.KIND === 1).map((n) => n.ID);
+  const there = bfs(spawns, fwd), back_ = bfs(spawns, back);
+  const items = nodes.filter((n) => n.KIND === 2), left = items.filter((n) => !(there.has(n.ID) && back_.has(n.ID)));
+  const allowed = mapName === 'q3dm7' ? 3 : 0;
+  assert(items.length > 0 && left.length <= allowed,
+    `every item is on the bots' graph, from the spawns and back: ${items.length - left.length} of ${items.length}${left.length ? ` (left out: ${left.map((n) => n.ITEM.trim()).join(', ')})` : ''}`);
+}
+
 const bots = await q("SELECT id, bot, pmodel FROM ents WHERE classname = 'bot'");
 assert(bots.length === 4, `four bots joined (${bots.map((b) => b.BOT).join(', ')})`);
 
