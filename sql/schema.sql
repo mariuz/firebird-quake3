@@ -393,6 +393,7 @@ CREATE TABLE ents (
   acc_until  DOUBLE PRECISION DEFAULT 0 NOT NULL,
   acc_msg    DOUBLE PRECISION DEFAULT 0 NOT NULL,
   acc_arrived SMALLINT DEFAULT 0 NOT NULL,
+  acc_arrive_t DOUBLE PRECISION,             -- when it came to its companion (arrive_time): it looks at it 2 s, then about
   teleport_time DOUBLE PRECISION DEFAULT 0 NOT NULL,
   fly_sound_time DOUBLE PRECISION DEFAULT 0 NOT NULL,   -- fly_sound_debounce_time: a target_push's sound at most every 1.5 s
   area1      INTEGER,                    -- a brush model's areas (areanum, areanum2): a door between two holds their portal

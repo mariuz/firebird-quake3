@@ -359,8 +359,11 @@ sound, the lead state. Each tic:
    pairs, five a pair and a three, six to ten pairs, the second of each group told to accompany the
    first (`bot_create_group`, `cmd_accompany`, `cmd_accompanyme`). A bot so told (`ents.acc_id`,
    for 600 seconds) answers, goes to its companion along the graph when it has no enemy, and stands
-   by it within 112 units, saying once that it arrived (`bot_accompany`, the `LTG_TEAMACCOMPANY`
-   goal of `BotGetLongTermGoal`). `bot_say` says a line to everyone, to the team ("(Name): …",
+   by it within 112 units, saying once that it arrived with a gesture (`TORSO_GESTURE`, the model's
+   `taunt.wav`) (`bot_accompany`, the `LTG_TEAMACCOMPANY` goal of `BotGetLongTermGoal`). Standing by, it
+   looks at its companion for 2 s after arriving (`ents.acc_arrive_t`), then about for enemies now and then
+   (`bot_roam_yaw`, `BotRoamGoal`), crouches for 5 + 15 × croucher s now and then as a camper does, gestures
+   rarely, and backs off when the companion walks into it looking its way. `bot_say` says a line to everyone, to the team ("(Name): …",
    heard by the player on that team) or to one ("[Name]: …", heard when it is the player). The
    *tournament* (`gametype` 1, `GT_TOURNAMENT`) has two
    play and the others wait as spectators: the player through `player.spectator`, a bot through

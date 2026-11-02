@@ -194,6 +194,31 @@ const foe = blue[0], foe2 = blue[1];
   const told = [...heard].filter((m) => m.startsWith(`[${b0.BOT}]: `));
   // (once, or again when the leader's next orders reset its arrival, as BotTeamOrders' do in Quake III)
   assert(arrived === 1 && d < 160 && told.length >= 1 && told.length <= 3, `${b0.BOT} comes to us (${d.toFixed(0)} away) and tells us: ${told.join(' / ')}`);
+
+  // standing by us (LTG_TEAMACCOMPANY): it looks at us the first 2 s, then about for enemies (BotRoamGoal); and
+  // walked into by us looking its way, it backs off. (Its thinks run by hand, nothing else moving: our body
+  // and the bot held where they are, no enemy in sight)
+  {
+    await db.exec(`UPDATE ents SET flags = BIN_OR(flags, 64) WHERE classname IN ('bot', 'player') AND id <> ${b0.ID}`);
+    const think = async () => { await db.exec(`UPDATE ents SET nextthink = 0, enemy_id = NULL WHERE id = ${b0.ID}`); await db.exec(`EXECUTE PROCEDURE bot_think(${b0.ID})`); };
+    const look = async () => (await q(`SELECT e.yaw, ATAN2(m.y - e.y, m.x - e.x) * 57.29578 toward FROM ents e, ents m WHERE e.id = ${b0.ID} AND m.id = ${me}`))[0];
+    const off = (l) => Math.abs((((l.YAW - l.TOWARD) % 360) + 540) % 360 - 180);
+    await db.exec(`UPDATE ents SET acc_arrive_t = (SELECT time_ FROM game) WHERE id = ${b0.ID}`);
+    for (let i = 0; i < 12; i++) await think();
+    const atUs = off(await look());
+    await db.exec(`UPDATE ents SET acc_arrive_t = (SELECT time_ - 3 FROM game) WHERE id = ${b0.ID}`);
+    const heads = new Set();
+    for (let i = 0; i < 80; i++) { await think(); heads.add(Math.round((await look()).YAW / 10)); }
+    // walked into: our box against its (4 to spare), we face it
+    const [bp] = await q(`SELECT x, y, z FROM ents WHERE id = ${b0.ID}`);
+    await db.exec(`UPDATE ents SET x = ${bp.X - 32}, y = ${bp.Y}, z = ${bp.Z}, yaw = 0, vx = 0, vy = 0, vz = 0 WHERE id = ${me}`);
+    await db.exec(`EXECUTE PROCEDURE link_ent(${me})`);
+    await think();
+    const [ap] = await q(`SELECT x, y FROM ents WHERE id = ${b0.ID}`);
+    assert(atUs < 30 && heads.size >= 3 && ap.X - bp.X > 4,
+      `${b0.BOT} by us looks at us after arriving (${atUs.toFixed(0)} degrees off), then about (${heads.size} headings in 8 s); walked into, it backs off ${(ap.X - bp.X).toFixed(0)} units`);
+    await db.exec(`UPDATE ents SET flags = BIN_AND(flags, BIN_NOT(64)) WHERE classname IN ('bot', 'player') AND id <> ${b0.ID}`);
+  }
   await db.exec(`EXECUTE PROCEDURE bot_say(${b1.ID}, 'iamteamleader', NULL, NULL, NULL, NULL, NULL, NULL, -1, 0)`);
   const t1 = (await q('SELECT FIRST 1 msg FROM messages ORDER BY id DESC'))[0].MSG;
   await db.exec(`EXECUTE PROCEDURE bot_say(${red[0].ID}, 'iamteamleader', NULL, NULL, NULL, NULL, NULL, NULL, -1, 0)`);

@@ -219,8 +219,9 @@ console.log('bots', bots);
 assert(bots.every((b) => b.CLUSTER !== null), 'every bot is linked into the world');
 
 // cheat, then rocket the floor: splash damage must hurt us. Alive for it (a bot's rocket in the idle
-// tics may have knocked us into a void, which kills through god mode), the bots holding their fire
-if (s.DEAD || s.HEALTH <= 0) {
+// tics may have knocked us into a void, which kills through god mode; or we may still be falling into
+// one: in the air, we start again from a spawn point too), the bots holding their fire
+if (s.DEAD || s.HEALTH <= 0 || !s.ONGROUND) {
   await db.exec('EXECUTE PROCEDURE player_respawn');
   await db.exec("UPDATE ents SET flags = BIN_OR(flags, 16) WHERE classname = 'player'");
 }

@@ -1279,7 +1279,7 @@ DECLARE t DOUBLE PRECISION;
 BEGIN
   IF (eid = mate OR NOT EXISTS (SELECT 1 FROM ents e WHERE e.id = :eid AND e.classname = 'bot')) THEN EXIT;
   t = now_();
-  UPDATE ents e SET e.acc_id = :mate, e.acc_by = :by_, e.acc_until = :t + 600, e.acc_msg = :t + 2 * RAND(), e.acc_arrived = 0 WHERE e.id = :eid;
+  UPDATE ents e SET e.acc_id = :mate, e.acc_by = :by_, e.acc_until = :t + 600, e.acc_msg = :t + 2 * RAND(), e.acc_arrived = 0, e.acc_arrive_t = NULL WHERE e.id = :eid;
 END^
 
 -- BotCreateGroup: the others of the group follow its first; the leader tells each (cmd_accompanyme when
@@ -1374,15 +1374,23 @@ END^
 -- 600 seconds (accompany_stop, to the companion), and while the companion is alive, in sight and within
 -- the formation distance (3.5 × 32) stands by looking where it looks, saying once that it arrived
 -- (accompany_arrive); else goes to it. `busy` 0: no companion, the bot picks its own goal; `go` the
--- companion to go to, NULL to stay
+-- companion to go to, NULL to stay; `crouch` 1 while it crouches by it
+-- Standing by (BotGetLongTermGoal's LTG_TEAMACCOMPANY, within the formation distance): bumped into by the
+-- companion looking its way, it backs off; it crouches now and then (croucher, as camping); 2 s after arriving
+-- it looks at the companion, then about for enemies (BotRoamGoal); a gesture on arriving and now and then
+CREATE OR ALTER FUNCTION bot_roam_yaw (eid INTEGER) RETURNS DOUBLE PRECISION AS BEGIN RETURN 0; END^
+
 CREATE OR ALTER PROCEDURE bot_accompany (eid INTEGER)
-RETURNS (busy SMALLINT, go INTEGER)
+RETURNS (busy SMALLINT, go INTEGER, crouch SMALLINT)
 AS
 DECLARE t DOUBLE PRECISION; DECLARE mate INTEGER; DECLARE by_ INTEGER; DECLARE until_ DOUBLE PRECISION; DECLARE msg_t DOUBLE PRECISION;
 DECLARE arrived SMALLINT; DECLARE tm SMALLINT; DECLARE d DOUBLE PRECISION; DECLARE mhp INTEGER; DECLARE myaw DOUBLE PRECISION;
+DECLARE at_ DOUBLE PRECISION; DECLARE ct_ DOUBLE PRECISION; DECLARE cr DOUBLE PRECISION; DECLARE touch SMALLINT; DECLARE ux DOUBLE PRECISION; DECLARE uy DOUBLE PRECISION;
+DECLARE ul DOUBLE PRECISION; DECLARE moved SMALLINT;
 BEGIN
-  busy = 0; go = NULL;
-  SELECT e.acc_id, e.acc_by, e.acc_until, e.acc_msg, e.acc_arrived, e.pteam FROM ents e WHERE e.id = :eid INTO mate, by_, until_, msg_t, arrived, tm;
+  busy = 0; go = NULL; crouch = 0;
+  SELECT e.acc_id, e.acc_by, e.acc_until, e.acc_msg, e.acc_arrived, e.pteam, e.acc_arrive_t, e.attack_crouch FROM ents e WHERE e.id = :eid
+    INTO mate, by_, until_, msg_t, arrived, tm, at_, ct_;
   IF (mate IS NULL) THEN EXIT;
   t = now_();
   IF (team_member(mate, tm) = 0 OR team_member(eid, tm) = 0) THEN
@@ -1402,15 +1410,48 @@ BEGIN
     EXIT;
   END
   busy = 1;
-  SELECT vlen(m.x - e.x, m.y - e.y, m.z - e.z), m.health, m.yaw FROM ents m JOIN ents e ON e.id = :eid WHERE m.id = :mate INTO d, mhp, myaw;
+  SELECT vlen(m.x - e.x, m.y - e.y, m.z - e.z), m.health, m.yaw, e.x - m.x, e.y - m.y,
+         IIF(e.z + e.maxz > m.z + m.minz AND e.x + e.maxx > m.x + m.minx - 4 AND e.x + e.minx < m.x + m.maxx + 4
+             AND e.y + e.maxy > m.y + m.miny - 4 AND e.y + e.miny < m.y + m.maxy + 4
+             AND e.z + e.maxz > m.z + m.minz - 4 AND e.z + e.minz < m.z + m.maxz + 4, 1, 0)
+    FROM ents m JOIN ents e ON e.id = :eid WHERE m.id = :mate INTO d, mhp, myaw, ux, uy, touch;
   IF (mhp > 0 AND d < 112 AND visible(eid, mate) = 1) THEN
   BEGIN
-    IF (arrived = 0) THEN
+    -- bumped into by the companion, its look this way (within 45 degrees): back off
+    ul = vlen(ux, uy, 0);
+    IF (touch = 1 AND ul > 0 AND (COS(myaw * 0.0174532925e0) * ux + SIN(myaw * 0.0174532925e0) * uy) / ul > 0.7e0) THEN
+      moved = step_direction(eid, vectoyaw(ux, uy), 20);
+    -- a crouch now and then, not within 5 s of the last (croucher, a chance of it a second)
+    IF (COALESCE(ct_, 0) < t - 5) THEN
     BEGIN
-      EXECUTE PROCEDURE bot_say(eid, 'accompany_arrive', chat_name(mate), NULL, NULL, NULL, NULL, NULL, mate, 0);
-      UPDATE ents e SET e.acc_arrived = 1 WHERE e.id = :eid;
+      cr = bot_cv(eid, 'croucher', 0);
+      IF (RAND() < 0.1e0 * cr) THEN
+      BEGIN
+        ct_ = t + 5 + cr * 15;
+        UPDATE ents e SET e.attack_crouch = :ct_ WHERE e.id = :eid;
+      END
     END
-    UPDATE ents e SET e.ideal_yaw = :myaw WHERE e.id = :eid;
+    IF (at_ IS NULL OR at_ < t - 2) THEN
+    BEGIN
+      IF (arrived = 0) THEN
+      BEGIN
+        -- arrived: a gesture (TORSO_GESTURE, EV_TAUNT's taunt) and the word
+        EXECUTE PROCEDURE set_anims(eid, NULL, 6);
+        EXECUTE PROCEDURE snd(eid, 2, 'sound/player/' || COALESCE((SELECT e.pmodel FROM ents e WHERE e.id = :eid), 'sarge') || '/taunt.wav', 1, 1);
+        EXECUTE PROCEDURE bot_say(eid, 'accompany_arrive', chat_name(mate), NULL, NULL, NULL, NULL, NULL, mate, 0);
+        UPDATE ents e SET e.acc_arrived = 1, e.acc_arrive_t = :t WHERE e.id = :eid;
+        at_ = t;
+      END
+      ELSE IF (COALESCE(ct_, 0) > t) THEN crouch = 1;
+      ELSE IF (RAND() < 0.005e0) THEN
+      BEGIN
+        EXECUTE PROCEDURE set_anims(eid, NULL, 6);
+        EXECUTE PROCEDURE snd(eid, 2, 'sound/player/' || COALESCE((SELECT e.pmodel FROM ents e WHERE e.id = :eid), 'sarge') || '/taunt.wav', 1, 1);
+      END
+    END
+    -- just arrived: look at the companion; then about for enemies, now and then (0.8 × the think's 0.1 s)
+    IF (at_ > t - 2) THEN UPDATE ents e SET e.ideal_yaw = vectoyaw(-:ux, -:uy) WHERE e.id = :eid;
+    ELSE IF (RAND() < 0.08e0) THEN UPDATE ents e SET e.ideal_yaw = bot_roam_yaw(:eid) WHERE e.id = :eid;
     EXECUTE PROCEDURE change_yaw(eid);
     EXIT;
   END
@@ -1719,7 +1760,12 @@ BEGIN
     -- nothing in sight: wander toward an item, or just roam
     UPDATE ents e SET e.enemy_id = NULL, e.st = 'stand', e.ideal_pitch = NULL WHERE e.id = :eid AND e.enemy_id IS NOT NULL;
     -- a teammate to accompany comes before the items (BotGetLongTermGoal)
-    EXECUTE PROCEDURE bot_accompany(eid) RETURNING_VALUES busy, mate;
+    EXECUTE PROCEDURE bot_accompany(eid) RETURNING_VALUES busy, mate, ccr;
+    IF (ccr = 1) THEN
+    BEGIN
+      crouch = 1;
+      UPDATE ents e SET e.maxz = 16, e.viewheight = 12 WHERE e.id = :eid AND e.maxz <> 16;
+    END
     -- then a camp spot (LTG_CAMP): gone to, or stayed at (no nearby goals then: BotLongTermGoal returns false)
     IF (busy = 0) THEN
     BEGIN
