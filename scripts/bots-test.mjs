@@ -62,17 +62,18 @@ await db.exec(`UPDATE ents SET x = ${spot[0]}, y = ${spot[1]}, z = ${p.Z}, vx = 
 await db.exec(`EXECUTE PROCEDURE link_ent(${b})`);
 // (we have just spawned, and the bots let one just arrived be for 3 s: BotFindEnemy's lastteleport_time)
 await db.exec('UPDATE game SET tele_time = NULL WHERE id = 1');
-// (noticed at any tic: the fight that follows may kill it before the 70 are up)
-let found = null;
+// (noticed at any tic: the fight that follows may kill it before the 70 are up; its shots counted from the
+// first tic, since a sound event lasts 40 tics and the fight may be over, the enemy out of sight, by the 70th)
+const fired = async () => (await q("SELECT COUNT(*) n FROM sound_events WHERE snd LIKE 'sound/weapons/%' AND ent_id <> " + pe))[0].N;
+let found = null, shots = 0;
 for (let i = 0; i < 70; i++) {
   await tic();
   found ??= (await q(`SELECT enemy_id FROM ents WHERE id = ${b}`))[0].ENEMY_ID;
+  shots = Math.max(shots, await fired());
 }
 let s = (await q(`SELECT enemy_id, st, attack_finished, weapon FROM ents WHERE id = ${b}`))[0];
 assert(found !== null, `the bot found an enemy (${found}; now ${s.ST.trim()})`);
-const fired = async () => (await q("SELECT COUNT(*) n FROM sound_events WHERE snd LIKE 'sound/weapons/%' AND ent_id <> " + pe))[0].N;
 // (the fight may take a while to start: the reaction time, a turn, a run for an item first)
-let shots = await fired();
 for (let i = 0; i < 70 && shots === 0; i++) { await tic(); shots = await fired(); }
 assert(shots > 0, `the bots fired (${shots} shots)`);
 
