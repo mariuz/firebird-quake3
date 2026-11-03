@@ -68,8 +68,8 @@ fuzzy logic from the botfiles. What that leaves out:
 | **Fuzzy characteristics, the rest** | each character's reaction, aim (per gun), aim skill, alertness, turning (`VIEW_MAXCHANGE`, `VIEW_FACTOR`: the view lags the aim as `BotChangeViewAngles` turns it, and the shot goes where the view looks), attack skill, fire throttle, jumper and croucher are read (`bot_cv`); the camper takes it to the map's `info_camp` spots (`BotWantsToCamp`: q3dm7 has three); self-preservation, vengefulness and easy-fragger are not used; speed, hesitation and the search time stay the skill's |
 | **Team play, the rest** | in team deathmatch the leader and its accompany orders are Quake III's (`bot_team_ai`, `bot_team_orders`, `bot_accompany`); the player gives no orders (no chat to type, no voice commands), so the bots of the player's team, whom the player leads, get none, and they never answer `whereareyou` or the like; the companion is guarded as Quake III's bots guard it (looked at on arrival, then about for enemies, crouching, backing off when it walks into the bot); there is no CTF |
 | **AAS reachability kinds** | walk, step, jump down, jump across, rocket jump, pad, teleporter, elevator (a plat ridden up, waited for when it is not down), func_bobbing (waited for at the end of its swing, ridden to the other) are here; swim, ladder (n/a), grapple and BFG jump are not, nor a plat ridden down |
-| **Graph quality** | every item of q3dm1, q3dm17 and q3tourney2 is on the graph from the spawns and back, and all but three of q3dm7's (the bots test checks it); the grid finds nodes where a column drops onto a floor, so thin walkways between columns and the insides of doorways can lack nodes (q3dm7 has unreachable corners) |
-| **Buttons and the doors they open** | botlib's bots shoot or press a button whose door blocks their way (`BotGetActivateGoal`); here a door opened only by a button or by a trigger on its far side is a wall to the graph: q3dm7's red armour, rockets and shells are reached through the floor plate its button opens |
+| **Graph quality** | every item of the demo's four arenas is on the graph from the spawns and back (the bots test checks it); the grid finds nodes where a column drops onto a floor, so thin walkways between columns and the insides of doorways can lack nodes (q3dm7 has unreachable corners, and a node on its floor plate whose way off sends a bot into a corner) |
+| **Buttons, the rest** | a bot whose way is through a door a button opens presses the button and comes back (`BotGetActivateGoal`, see §8); the bots walk into every button: one with `health` wants shooting in Quake III (the activate goal's `shoot`), and this port's buttons fire on a touch whatever their health; a door is only gone for when nothing else leads there, and a bot does not open one for someone else |
 
 ## 6. Engine core (`qcommon/`, `server/`, `client/`)
 
@@ -111,7 +111,10 @@ teammates alone and holding fire with one in the way, the HUD's two scores and t
 order they came, "waiting for players" and the countdown when both are there, wins and losses, the
 loser to the back of the queue and the arena restarted for the next: `npm run test:tourney`); bots
 joining and leaving mid-game (`addbot` at a skill and `kick` from the page's menus: `G_AddBot`,
-`ClientDisconnect`, the goodbye of `BotChat_ExitGame`), swimming with its
+`ClientDisconnect`, the goodbye of `BotChat_ExitGame`), the bots' activate goals (`BotGetActivateGoal`: a door
+opened by a button or a trigger elsewhere is an edge of the graph marked with it, taken when nothing else leads
+there; a bot at a shut one goes and presses the button, or waits in the trigger: q3dm7's red armour, rockets and
+shells under the floor plate, `npm run test:bots:dm7`), swimming with its
 bubbles (shots and rockets in water, `CG_BubbleTrail`), the view's wave and the muffled sound with the
 head under (the demo's arenas have lava only, a registered pak's have water), crouching (`PM_CheckDuck`, the crouch animations, the
 smoothed eye; the bots crouch in their fights, `BotAttackMove`'s `MOVE_CROUCH`); the first-person view's kick away from a hit, landing dips by the

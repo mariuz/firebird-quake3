@@ -18,7 +18,7 @@ explosion sprites, beams) and nothing else. The renderers never query the databa
   Firebird's error with the statement head; "Column unknown X" inside a procedure means a local used
   in a query without its colon.
 - `npm test` (q3dm1 smoke), `npm run test:dm17` (jump pads), `npm run test:bots` (bots and the
-  waypoint hunt), `npm run test:bots:dm17` (bots on the pads), `npm run test:pmove` (the movement against Quake III's
+  waypoint hunt), `npm run test:bots:dm17` (bots on the pads), `npm run test:bots:dm7` (bots pressing q3dm7's button), `npm run test:pmove` (the movement against Quake III's
   `bg_pmove.c`), `npm run test:team` (team deathmatch, the team leader and its orders), `npm run test:tourney` (the tournament), `npm run test:maps` (every hosted OpenArena and Community Map-Pack
   arena on the demo pak; needs `npm run fetch-maps`), `npm run test:view` (the first-person
   view, the impact marks' clipping, the trails, the brass, the dynamic lights, the shader features, the fog, the portal's view, the shadows, the rail and lightning beams and the powerup shells, seconds, no engine). All run against the real WASM engine in
@@ -66,6 +66,7 @@ explosion sprites, beams) and nothing else. The renderers never query the databa
 | corpses (the body queue, sinking) | `body_queue`, `body_release`, `body_sink` in `sql/game.sql`; made in `player_die`/`bot_die`, released by the respawns |
 | bot behaviour, skill characteristics (`bot_char`), the characters' own (`bot_cv`, read by `src/botchat.js`) | `sql/bots.sql` |
 | the bots' item goals (weights, timing), their favourite guns | `src/itemweights.js` (the botfiles' `*_i.c` and `*_w.c` into `bot_iw` rows), `loadItemRespawns` (`items.c` into `item_defs.bot_respawn`); `bot_avoid_item`, `bot_goal_reached`, `bot_inv`, `bot_item_weight`, `bot_choose_ltg`, `bot_choose_nbg` (the nearby goal on the way, `ents.nbg_id`), `bot_avoid` and `bot_best_weapon` in `sql/bots.sql` |
+| doors opened by a button or a trigger (the bots' activate goals) | `wp_link_doors` in `sql/waypoints.sql` (`wp_edges.door_id`, `act_id`; `wp_route` takes them last); `bot_act_spot` and the door check in `bot_follow_route` in `sql/bots.sql` (`ents.act_id`, `act_until`) |
 | retreat or chase, grenade avoidance | `bot_aggression`, `bot_retreat_goal`, `bot_avoid_grenade` in `sql/bots.sql`, used in `bot_think` |
 | camping (`info_camp` spots, the camper characteristic) | `bot_wants_to_camp`, `bot_camp`, `bot_roam_yaw` before `bot_think` in `sql/bots.sql`; `ents.camp_id`, `camp_until`, `camp_time` |
 | bot chat | `src/botchat.js` (the pak's botfiles into rows), `bot_say` and `bot_chat_event` at the top of `sql/bots.sql` |

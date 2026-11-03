@@ -27,6 +27,8 @@ CREATE TABLE wp_edges (
   b INTEGER NOT NULL,
   len DOUBLE PRECISION NOT NULL,
   kind SMALLINT DEFAULT 0 NOT NULL,     -- 0 walk 1 jump pad 2 teleporter 3 drop (one way) 4 rocket jump (one way) 5 jump (one way) 6 jump pad steered in the air (one way) 7 a plat's ride up (one way) 8 a func_bobbing's ride from one end of its swing to the other (one way, both ways)
+  door_id INTEGER,                      -- a way through a door only open when something else opens it (wp_link_doors), and
+  act_id INTEGER,                       -- what does: a func_button, or a trigger_multiple the way starts in
   PRIMARY KEY (a, b)
 );
 CREATE INDEX wp_edges_a ON wp_edges (a);
@@ -594,6 +596,74 @@ BEGIN
   SUSPEND;
 END^
 
+-- the doors a button or a trigger elsewhere opens (botlib's BotGetActivateGoal, which takes a bot blocked by one to
+-- the button first): the graph is traced with them shut, so here, the graph done, each such door (its team with it)
+-- is taken out of the world for a moment and the nodes around it linked again along the ways that cross it, each
+-- edge marked with the door and what opens it. A trigger opens it only for an edge starting in the trigger (q3dm7's
+-- way out of the red armour's room); a button, for every one (the floor plate over that room)
+CREATE OR ALTER PROCEDURE wp_link_doors
+AS
+DECLARE tn VARCHAR(40); DECLARE dr INTEGER; DECLARE act INTEGER; DECLARE acls VARCHAR(40);
+DECLARE d0x DOUBLE PRECISION; DECLARE d1x DOUBLE PRECISION; DECLARE d0y DOUBLE PRECISION; DECLARE d1y DOUBLE PRECISION; DECLARE d0z DOUBLE PRECISION; DECLARE d1z DOUBLE PRECISION;
+DECLARE t0x DOUBLE PRECISION; DECLARE t1x DOUBLE PRECISION; DECLARE t0y DOUBLE PRECISION; DECLARE t1y DOUBLE PRECISION; DECLARE t0z DOUBLE PRECISION; DECLARE t1z DOUBLE PRECISION;
+DECLARE a INTEGER; DECLARE b INTEGER; DECLARE n INTEGER; DECLARE w SMALLINT; DECLARE pass INTEGER;
+DECLARE ax DOUBLE PRECISION; DECLARE ay DOUBLE PRECISION; DECLARE az DOUBLE PRECISION; DECLARE bx DOUBLE PRECISION; DECLARE by_ DOUBLE PRECISION; DECLARE bz DOUBLE PRECISION;
+BEGIN
+  FOR SELECT DISTINCT e.targetname FROM ents e WHERE e.classname = 'func_door' AND e.targetname IS NOT NULL AND e.targetname <> '' INTO tn DO
+  BEGIN
+    act = NULL;
+    SELECT FIRST 1 e.id, e.classname, e.x + e.minx, e.x + e.maxx, e.y + e.miny, e.y + e.maxy, e.z + e.minz, e.z + e.maxz FROM ents e
+     WHERE e.target = :tn AND e.classname IN ('func_button', 'trigger_multiple')
+     ORDER BY IIF(e.classname = 'func_button', 0, 1), e.id INTO act, acls, t0x, t1x, t0y, t1y, t0z, t1z;
+    IF (act IS NULL) THEN CONTINUE;
+    SELECT MIN(e.id), MIN(e.x + e.minx), MAX(e.x + e.maxx), MIN(e.y + e.miny), MAX(e.y + e.maxy), MIN(e.z + e.minz), MAX(e.z + e.maxz) FROM ents e
+     WHERE e.classname = 'func_door' AND (e.targetname = :tn OR e.linked_id IN (SELECT f.id FROM ents f WHERE f.targetname = :tn))
+      INTO dr, d0x, d1x, d0y, d1y, d0z, d1z;
+    UPDATE ents e SET e.solid = 0 WHERE e.classname = 'func_door' AND (e.targetname = :tn OR e.linked_id IN (SELECT f.id FROM ents f WHERE f.targetname = :tn));
+    FOR SELECT w1.id, w1.x, w1.y, w1.z FROM waypoints w1
+         WHERE w1.x BETWEEN :d0x - 300 AND :d1x + 300 AND w1.y BETWEEN :d0y - 300 AND :d1y + 300 AND w1.z BETWEEN :d0z - 300 AND :d1z + 300
+           AND w1.kind NOT IN (8, 9)
+           AND (:acls = 'func_button' OR (w1.x + 15 >= :t0x AND w1.x - 15 <= :t1x AND w1.y + 15 >= :t0y AND w1.y - 15 <= :t1y AND w1.z - 24 <= :t1z AND w1.z + 32 >= :t0z))
+         INTO a, ax, ay, az
+    DO
+    BEGIN
+      -- the nearest six whose way crosses the door's space (the box swept from a to b meets it), then the
+      -- nearest three of those well below (a hole the door covers)
+      pass = 0;
+      WHILE (pass < 2) DO
+      BEGIN
+        n = 0;
+        FOR SELECT w2.id, w2.x, w2.y, w2.z FROM waypoints w2
+             WHERE w2.id <> :a AND ABS(w2.x - :ax) < 420 AND ABS(w2.y - :ay) < 420 AND ABS(w2.z - :az) < 450 AND w2.kind NOT IN (8, 9)
+               AND (:pass = 0 OR w2.z < :az - 48)
+               AND MINVALUE(:ax, w2.x) - 16 <= :d1x AND MAXVALUE(:ax, w2.x) + 16 >= :d0x
+               AND MINVALUE(:ay, w2.y) - 16 <= :d1y AND MAXVALUE(:ay, w2.y) + 16 >= :d0y
+               AND MINVALUE(:az, w2.z) - 24 <= :d1z AND MAXVALUE(:az, w2.z) + 32 >= :d0z
+             ORDER BY (w2.x - :ax) * (w2.x - :ax) + (w2.y - :ay) * (w2.y - :ay) + (w2.z - :az) * (w2.z - :az) * 2
+             INTO b, bx, by_, bz
+        DO
+        BEGIN
+          IF (n >= IIF(:pass = 0, 6, 3)) THEN LEAVE;
+          n = n + 1;
+          IF (EXISTS (SELECT 1 FROM wp_edges e WHERE e.a = :a AND e.b = :b)) THEN CONTINUE;
+          w = wp_walkable(ax, ay, az, bx, by_, bz);
+          IF (w = 0) THEN
+          BEGIN
+            IF (wp_jump(ax, ay, az, bx, by_, bz) = 1) THEN
+              INSERT INTO wp_edges (a, b, len, kind, door_id, act_id) VALUES (:a, :b, vlen(:bx - :ax, :by_ - :ay, :bz - :az), 5, :dr, :act);
+            CONTINUE;
+          END
+          INSERT INTO wp_edges (a, b, len, kind, door_id, act_id) VALUES (:a, :b, vlen(:bx - :ax, :by_ - :ay, :bz - :az), IIF(:w = 3, 3, 0), :dr, :act);
+          IF (w = 1 AND ABS(bz - az) < 40 AND :acls = 'func_button' AND NOT EXISTS (SELECT 1 FROM wp_edges e WHERE e.a = :b AND e.b = :a)) THEN
+            INSERT INTO wp_edges (a, b, len, kind, door_id, act_id) VALUES (:b, :a, vlen(:bx - :ax, :by_ - :ay, :bz - :az), 0, :dr, :act);
+        END
+        pass = pass + 1;
+      END
+    END
+    UPDATE ents e SET e.solid = 4 WHERE e.classname = 'func_door' AND (e.targetname = :tn OR e.linked_id IN (SELECT f.id FROM ents f WHERE f.targetname = :tn));
+  END
+END^
+
 -- one column of the grid: down from the first open air to the floor below it, then on from under that
 -- floor; a floor the box does not fit on (a wall beside the column) is tried a little to each side,
 -- and a column that finds nothing at all tries beside itself (corridors)
@@ -672,7 +742,11 @@ BEGIN
   IF (phase = 1) THEN
   BEGIN
     EXECUTE PROCEDURE wp_link_chunk(links) RETURNING_VALUES remaining;
-    IF (remaining = 0) THEN UPDATE wp_build b SET b.phase = 2 WHERE b.id = 1;
+    IF (remaining = 0) THEN
+    BEGIN
+      EXECUTE PROCEDURE wp_link_doors;
+      UPDATE wp_build b SET b.phase = 2 WHERE b.id = 1;
+    END
   END
   SUSPEND;
 END^
@@ -700,26 +774,37 @@ BEGIN
 END^
 
 -- the route from node `src` to node `dst` as ',n1,n2,…,dst,' (without src), NULL when there is none; over
--- the rocket jumps too when `rj` is 1 (the travel flags with TFL_ROCKETJUMP)
+-- the rocket jumps too when `rj` is 1 (the travel flags with TFL_ROCKETJUMP); through a door something else
+-- opens only when there is no way around it (botlib routes through a shut door and gets the bot blocked by
+-- it; here it is the last resort, so the bots do not run to buttons for a shortcut)
 CREATE OR ALTER FUNCTION wp_route (src INTEGER, dst INTEGER, rj SMALLINT) RETURNS VARCHAR(400)
 AS
-DECLARE level INTEGER = 0; DECLARE added INTEGER; DECLARE path VARCHAR(400); DECLARE n INTEGER; DECLARE p INTEGER;
+DECLARE level INTEGER; DECLARE added INTEGER; DECLARE path VARCHAR(400); DECLARE n INTEGER; DECLARE p INTEGER; DECLARE doors SMALLINT = 0;
 BEGIN
   IF (src IS NULL OR dst IS NULL) THEN RETURN NULL;
   IF (src = dst) THEN RETURN ',' || dst || ',';
-  DELETE FROM wp_visit;
-  INSERT INTO wp_visit (node, prev, depth) VALUES (:src, NULL, 0);
-  WHILE (level < 40) DO
+  WHILE (doors < 2) DO
   BEGIN
-    INSERT INTO wp_visit (node, prev, depth)
-    SELECT x.b, MIN(x.node), :level + 1
-      FROM (SELECT e.b, v.node FROM wp_visit v JOIN wp_edges e ON e.a = v.node WHERE v.depth = :level AND (e.kind <> 4 OR :rj = 1)
-              AND NOT EXISTS (SELECT 1 FROM wp_visit w WHERE w.node = e.b)) x
-     GROUP BY x.b;
-    added = ROW_COUNT;
-    IF (added = 0) THEN RETURN NULL;
+    DELETE FROM wp_visit;
+    INSERT INTO wp_visit (node, prev, depth) VALUES (:src, NULL, 0);
+    level = 0;
+    WHILE (level < 40) DO
+    BEGIN
+      INSERT INTO wp_visit (node, prev, depth)
+      SELECT x.b, MIN(x.node), :level + 1
+        FROM (SELECT e.b, v.node FROM wp_visit v JOIN wp_edges e ON e.a = v.node WHERE v.depth = :level AND (e.kind <> 4 OR :rj = 1)
+                AND (e.door_id IS NULL OR :doors = 1)
+                AND NOT EXISTS (SELECT 1 FROM wp_visit w WHERE w.node = e.b)) x
+       GROUP BY x.b;
+      added = ROW_COUNT;
+      IF (added = 0) THEN LEAVE;
+      IF (EXISTS (SELECT 1 FROM wp_visit v WHERE v.node = :dst)) THEN LEAVE;
+      level = level + 1;
+    END
     IF (EXISTS (SELECT 1 FROM wp_visit v WHERE v.node = :dst)) THEN LEAVE;
-    level = level + 1;
+    -- (none: again through the doors, if there are any)
+    IF (NOT EXISTS (SELECT 1 FROM wp_edges e WHERE e.door_id IS NOT NULL)) THEN RETURN NULL;
+    doors = doors + 1;
   END
   IF (NOT EXISTS (SELECT 1 FROM wp_visit v WHERE v.node = :dst)) THEN RETURN NULL;
   -- walk back from the destination

@@ -664,14 +664,24 @@ lowered at the top of the first counts: oa_dm3 chains two). Nothing walks or jum
 None of the demo's arenas has a plat; of the hosted ones oa_dm2, oa_dm3, oa_dm7, pxlfan (four),
 czest1dm and sleekgrinder do. A `func_bobbing` (the AAS's `TRAVEL_FUNCBOB`) gets a node over it at each end
 of its swing (its middle ± `height` along its axis, kind 9) and the ride each way (edge kind 8); each end is
-linked as the plat's top is, and the way on too (a walk back from each way off).
+linked as the plat's top is, and the way on too (a walk back from each way off). The graph is traced with
+every door shut; once it is done, `wp_link_doors` takes each door that a `func_button` or a
+`trigger_multiple` opens (a `targetname` one of them targets; a door with an auto trigger opens as the bot walks
+up) out of the world for a moment, with its team, and links the nodes within 300 of it again along the ways
+that cross its space (the six nearest, and the three nearest well below: a hole the door covers), each new edge
+marked with the door (`door_id`) and what opens it (`act_id`). A trigger opens it only for the edges that start
+inside the trigger, so a door opened from one side stays one way. q3dm7's floor plate (`func_door` 140, opened
+by the button 141 on the wall of the room above) gets 48, drops into the room with the red armour, rockets and
+shells; its way out (door 104, opened by the trigger in front of it) gets 2.
 
 **Routing.** `wp_nearest(x, y, z, see)` finds the node nearest a spot (height weighted ×4), the
 nearest *in sight* for the bot's own position. `wp_route(src, dst, rj)` is a breadth-first search (over
 the rocket jumps only with `rj` 1, the travel flags with `TFL_ROCKETJUMP`): the
 frontier is the `wp_visit` global temporary table, each level inserted with one `INSERT … SELECT`
 from the edges of the previous level, stopping when the destination appears (40 levels at most), the
-path walked back through `prev` into a string `,n1,n2,…,dst,`. A route costs 1 to 4 ms.
+path walked back through `prev` into a string `,n1,n2,…,dst,`. A route costs 1 to 4 ms. The door edges are left
+out of the first search and taken only when it finds nothing (botlib routes through a shut door and lets the bot
+be blocked by it; here they are the last resort, so a bot does not run to a button for a shortcut).
 
 **Following.** `bot_follow_route(eid, target, dist)` in `bots.sql` keeps one row per bot in
 `bot_routes` (target entity, its node, the path, when it was built, consecutive failed steps). It
@@ -697,7 +707,13 @@ that lands it on the end node (at most 320) and 270 up, the jump's sound; `run_p
 steering for the end node with the air acceleration (`BotFinishTravel_Jump`'s air control: the route row's
 `rj_x`, `rj_y`, `rj_z` for `bot_air_steer`, until it lands); a jump down off a ledge is steered for the
 node below the same way (`BotFinishTravel_WalkOffLedge`), and a pad's throw for its landing once over the
-landing's height or coming down (`BotFinishTravel_JumpPad`, every pad's, not only the straight-up ones). When the next node is a plat's bottom and the one after its top, or the ride's start was just
+landing's height or coming down (`BotFinishTravel_JumpPad`, every pad's, not only the straight-up ones). When the
+edge to the next node is a door edge and the door is shut (`BotAIBlocked`, `BotGetActivateGoal`), a bot standing
+in the trigger that opens it waits for it; otherwise it takes the button as its *activate goal* (`ents.act_id`,
+for 20 s, then none for 10) and `bot_follow_route` calls itself for the way there: to `bot_act_spot`, a player's
+box out from the button's face along the way it is pushed (`BotFuncButtonActivateGoal`), then into it, in steps
+that end against it, until the button fires and the door starts to open; then back to its goal, through the door.
+q3dm7's plate stays open 10 s, enough for the way from the button (about 120 tics in the test). When the next node is a plat's bottom and the one after its top, or the ride's start was just
 reached (`BotTravel_Elevator`), the bot waits beside the plat while it is not down (stepping on would be
 a fall into the shaft), walks onto it and to its middle when it is, and stands there while the plat takes
 it up (its trigger starts it, and keeps it up while touched); at the top the next node is a walk off.
@@ -1172,6 +1188,7 @@ passes in Node is what runs in the browser.
 | `npm run test:dm7`, `test:dm17` | the smoke test on the other arenas (q3dm17 for the pads) |
 | `npm run test:bots` | `bots-test.mjs`: four bots join, see, fire, die, respawn, pick up a weapon, a bot hunts the player from the farthest spawn over the graph, a minute of play scores frags and strands nobody |
 | `npm run test:bots:dm17` | the same on q3dm17, plus: the bots take the jump pads |
+| `npm run test:bots:dm7` | the same on q3dm7, plus: a bot after an item under the floor plate presses the button that opens it |
 | `npm run test:view` | `view-test.mjs`: the first-person view's kicks, dips, lean and bob from synthetic tic rows, no engine |
 | `npm run test:pmove` | `pmove-test.mjs`: the player's movement beside a reference of Quake III's `bg_pmove.c` at 8 ms, on q3dm17's open floor |
 | `npm run bench`, `bench:tic`, `bench:raster` | tic and frame timings, the software painter's time per frame |

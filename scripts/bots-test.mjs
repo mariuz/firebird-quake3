@@ -26,9 +26,8 @@ const pe = (await q('SELECT ent_id e FROM player'))[0].E;
 await db.exec(`UPDATE ents SET flags = BIN_OR(flags, 16) WHERE id = ${pe}`);   // we watch, invulnerable
 
 // the graph serves the whole arena: every item can be reached from the spawn points and left again (the
-// AAS's reachability over walks, steps, drops, jumps, pads, teleporters, rocket jumps). q3dm7's three behind
-// the floor plate its button opens are the exception: botlib's bots press the button (BotGetActivateGoal),
-// this port's do not
+// AAS's reachability over walks, steps, drops, jumps, pads, teleporters, rocket jumps, and the doors a button
+// opens: q3dm7's red armour, rockets and shells under the floor plate its button opens)
 {
   const nodes = await q('SELECT w.id, w.kind, e.item FROM waypoints w LEFT JOIN ents e ON e.id = w.ent_id');
   const fwd = new Map(), back = new Map();
@@ -37,8 +36,7 @@ await db.exec(`UPDATE ents SET flags = BIN_OR(flags, 16) WHERE id = ${pe}`);   /
   const spawns = nodes.filter((n) => n.KIND === 1).map((n) => n.ID);
   const there = bfs(spawns, fwd), back_ = bfs(spawns, back);
   const items = nodes.filter((n) => n.KIND === 2), left = items.filter((n) => !(there.has(n.ID) && back_.has(n.ID)));
-  const allowed = mapName === 'q3dm7' ? 3 : 0;
-  assert(items.length > 0 && left.length <= allowed,
+  assert(items.length > 0 && left.length === 0,
     `every item is on the bots' graph, from the spawns and back: ${items.length - left.length} of ${items.length}${left.length ? ` (left out: ${left.map((n) => n.ITEM.trim()).join(', ')})` : ''}`);
 }
 
@@ -80,6 +78,8 @@ assert(shots > 0, `the bots fired (${shots} shots)`);
 
 // a bot dies and respawns (alive for it: the fight above may have killed it already)
 if ((await q(`SELECT deadflag FROM ents WHERE id = ${b}`))[0].DEADFLAG) await db.exec(`EXECUTE PROCEDURE bot_respawn(${b})`);
+// (its armour and battle suit gone: picked up in the fight, they would take most of the blow)
+await db.exec(`UPDATE ents SET armor = 0, enviro_finished = 0 WHERE id = ${b}`);
 const hpBefore = (await q(`SELECT health FROM ents WHERE id = ${b}`))[0].HEALTH;
 await db.exec(`EXECUTE PROCEDURE t_damage(${b}, ${pe}, ${pe}, ${hpBefore + 20}, 50, 0, 17)`);
 s = (await q(`SELECT st, deadflag, respawn_time FROM ents WHERE id = ${b}`))[0];
@@ -770,8 +770,10 @@ if (item) {
     await db.exec('UPDATE player SET quad_finished = 0');
   }
   // G_RunItem: one thrown into the void (a CONTENTS_NODROP brush, on the maps that have one) is gone when it gets there
+  // (open air over it down into it: q3dm7's lies under the lava pit's floor, nothing falls in)
   const nd = (await q('SELECT FIRST 1 (minx + maxx) / 2 x, (miny + maxy) / 2 y, maxz z FROM brushes WHERE contents < 0 ORDER BY (maxx - minx) * (maxy - miny) DESC'))[0];
-  if (nd) {
+  const open = nd && (await q(`SELECT startsolid s, fraction f FROM trace_move(NULL, -15, -15, -15, 15, 15, 15, ${nd.X}, ${nd.Y}, ${nd.Z + 40}, ${nd.X}, ${nd.Y}, ${nd.Z - 8}, 1)`))[0];
+  if (nd && open.S === 0 && open.F >= 1) {
     const holder = bots[1].ID;
     await db.exec(`UPDATE ents SET x = ${nd.X}, y = ${nd.Y}, z = ${nd.Z + 40}, vx = 0, vy = 0, vz = 0 WHERE id = ${holder}`);
     const last2 = (await q('SELECT MAX(id) m FROM ents'))[0].M;
@@ -783,6 +785,42 @@ if (item) {
     await db.exec(`EXECUTE PROCEDURE bot_respawn(${holder})`);
   }
   await db.exec("UPDATE ents SET nextthink = (SELECT time_ FROM game) WHERE classname = 'bot'");
+}
+
+// BotGetActivateGoal: a bot whose way to an item is through a door a button opens goes and presses the button,
+// comes back through the door and takes the item (q3dm7: the shells, rockets and red armour under the floor
+// plate, the button on the wall of the room above). Put by the plate (off it: the bot is to come back for it,
+// not ride it down), the rest of the arena held still, the item its goal throughout
+{
+  const [de] = await q(`SELECT FIRST 1 e.a, e.door_id, e.act_id, w.x, w.y, w.z FROM wp_edges e JOIN waypoints w ON w.id = e.a JOIN ents a ON a.id = e.act_id
+                         JOIN ents d ON d.id = e.door_id WHERE a.classname = 'func_button' AND e.kind = 3 AND w.z > d.z + d.maxz + 30 ORDER BY w.z, e.a`);
+  if (de) {
+    // the item: one the graph reaches from there only through the door
+    const fwd = new Map();
+    for (const e of await q('SELECT a, b FROM wp_edges WHERE door_id IS NULL')) (fwd.get(e.A) ?? fwd.set(e.A, []).get(e.A)).push(e.B);
+    const seen = new Set([de.A]), st = [de.A];
+    while (st.length) { const n = st.pop(); for (const m of fwd.get(n) ?? []) if (!seen.has(m)) { seen.add(m); st.push(m); } }
+    const behind = (await q("SELECT w.id, w.ent_id, TRIM(e.item) item FROM waypoints w JOIN ents e ON e.id = w.ent_id WHERE w.kind = 2 AND e.solid = 1")).filter((n) => !seen.has(n.ID));
+    const b = bots[0].ID, want = behind[0];
+    await db.exec(`UPDATE ents SET nextthink = 1e9 WHERE classname = 'bot' AND id <> ${b}`);
+    await db.exec(`UPDATE ents SET flags = BIN_OR(flags, 64) WHERE id = ${pe}`);
+    await db.exec(`EXECUTE PROCEDURE bot_respawn(${b})`);
+    await db.exec(`UPDATE ents SET x = ${de.X}, y = ${de.Y}, z = ${de.Z}, vx = 0, vy = 0, vz = 0, nextthink = (SELECT time_ FROM game) WHERE id = ${b}`);
+    await db.exec(`EXECUTE PROCEDURE link_ent(${b})`);
+    let went = false, pressed = -1, got = -1;
+    for (let i = 0; i < 900 && got < 0; i++) {
+      await db.exec(`UPDATE ents SET goal_id = ${want.ENT_ID}, nbg_id = NULL, nbg_check = 1e9, enemy_id = NULL, health = 100 WHERE id = ${b}`);
+      await tic();
+      const [s] = await q(`SELECT e.act_id, (SELECT mv_state FROM ents WHERE id = ${de.ACT_ID}) bst, (SELECT solid FROM ents WHERE id = ${want.ENT_ID}) isol FROM ents e WHERE e.id = ${b}`);
+      if (s.ACT_ID === de.ACT_ID) went = true;
+      if (pressed < 0 && s.BST !== 1) pressed = i;
+      if (s.ISOL !== 1) got = i;
+    }
+    assert(went && pressed >= 0 && got > pressed,
+      `a bot after the ${want.ITEM} behind door ${de.DOOR_ID} goes for its button (${went}), presses it (tic ${pressed}) and comes back for it (tic ${got})`);
+    await db.exec(`UPDATE ents SET flags = BIN_AND(flags, BIN_NOT(64)) WHERE id = ${pe}`);
+    await db.exec(`UPDATE ents SET nextthink = (SELECT time_ FROM game), goal_id = NULL WHERE classname = 'bot'`);
+  }
 }
 
 // BotWantsToCamp, BotGoCamp: a camper with a rocket launcher goes to an info_camp within 1.5 s of it and stays

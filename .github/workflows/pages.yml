@@ -77,6 +77,10 @@ jobs:
       - name: The bots on the jump pads
         run: npm run test:bots:dm17
 
+      # The bots on q3dm7: the button that opens the floor plate over the red armour
+      - name: The bots and the buttons
+        run: npm run test:bots:dm7
+
       - name: Team deathmatch
         run: npm run test:team
 

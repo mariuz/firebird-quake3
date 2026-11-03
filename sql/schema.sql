@@ -393,6 +393,8 @@ CREATE TABLE ents (
   acc_until  DOUBLE PRECISION DEFAULT 0 NOT NULL,
   acc_msg    DOUBLE PRECISION DEFAULT 0 NOT NULL,
   acc_arrived SMALLINT DEFAULT 0 NOT NULL,
+  act_id     INTEGER,                       -- a bot's activate goal (BotGetActivateGoal): the button (or trigger) that opens the
+  act_until  DOUBLE PRECISION,              -- shut door on its way, until when it tries; with no button, when it may try again
   acc_arrive_t DOUBLE PRECISION,             -- when it came to its companion (arrive_time): it looks at it 2 s, then about
   teleport_time DOUBLE PRECISION DEFAULT 0 NOT NULL,
   fly_sound_time DOUBLE PRECISION DEFAULT 0 NOT NULL,   -- fly_sound_debounce_time: a target_push's sound at most every 1.5 s

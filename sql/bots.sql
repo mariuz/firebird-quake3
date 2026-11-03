@@ -386,9 +386,44 @@ BEGIN
   RETURN moved;
 END^
 
+-- where a bot goes to set off a button or a trigger (BotGetActivateGoal, BotFuncButtonActivateGoal): before a
+-- button on a wall, a player's box (and one unit) out from its face along the way it is pushed, on the floor there; on a button in the
+-- floor, or in a trigger, its middle. (cx, cy, cz) is the middle, which the bot walks into from there
+CREATE OR ALTER PROCEDURE bot_act_spot (act INTEGER)
+RETURNS (sx DOUBLE PRECISION, sy DOUBLE PRECISION, sz DOUBLE PRECISION, cx DOUBLE PRECISION, cy DOUBLE PRECISION, cz DOUBLE PRECISION)
+AS
+DECLARE cls VARCHAR(40); DECLARE dx DOUBLE PRECISION; DECLARE dy DOUBLE PRECISION; DECLARE dz DOUBLE PRECISION; DECLARE l DOUBLE PRECISION;
+DECLARE hx DOUBLE PRECISION; DECLARE hy DOUBLE PRECISION; DECLARE f DOUBLE PRECISION;
+BEGIN
+  SELECT e.classname, e.x + (e.minx + e.maxx) / 2, e.y + (e.miny + e.maxy) / 2, e.z + (e.minz + e.maxz) / 2, e.p2x - e.p1x, e.p2y - e.p1y, e.p2z - e.p1z,
+         (e.maxx - e.minx) / 2, (e.maxy - e.miny) / 2
+    FROM ents e WHERE e.id = :act INTO cls, cx, cy, cz, dx, dy, dz, hx, hy;
+  IF (cls IS NULL) THEN EXIT;
+  sx = cx; sy = cy;
+  l = vlen(dx, dy, dz);
+  IF (cls = 'func_button' AND l > 1e-3 AND ABS(dz) / l < 0.7e0) THEN
+  BEGIN
+    dx = dx / l; dy = dy / l;
+    sx = cx - dx * (ABS(dx) * hx + ABS(dy) * hy + 16);
+    sy = cy - dy * (ABS(dx) * hx + ABS(dy) * hy + 16);
+  END
+  f = wp_floor(sx, sy, cz, 300);
+  sz = COALESCE(f + 25, cz);
+END^
+
+-- (declared here: it calls itself, for the way to a button)
 CREATE OR ALTER PROCEDURE bot_follow_route (eid INTEGER, target INTEGER, dist DOUBLE PRECISION)
 RETURNS (moved SMALLINT)
 AS
+BEGIN
+  moved = 0;
+END^
+
+CREATE OR ALTER PROCEDURE bot_follow_route (eid INTEGER, target INTEGER, dist DOUBLE PRECISION)
+RETURNS (moved SMALLINT)
+AS
+DECLARE act INTEGER; DECLARE act_t DOUBLE PRECISION; DECLARE dr INTEGER; DECLARE da INTEGER;
+DECLARE cx DOUBLE PRECISION; DECLARE cy DOUBLE PRECISION; DECLARE cz DOUBLE PRECISION;
 DECLARE x DOUBLE PRECISION; DECLARE y DOUBLE PRECISION; DECLARE z DOUBLE PRECISION;
 DECLARE tx DOUBLE PRECISION; DECLARE ty DOUBLE PRECISION; DECLARE tz DOUBLE PRECISION;
 DECLARE nx DOUBLE PRECISION; DECLARE ny DOUBLE PRECISION; DECLARE nz DOUBLE PRECISION; DECLARE nk SMALLINT;
@@ -402,8 +437,23 @@ DECLARE phx DOUBLE PRECISION; DECLARE phy DOUBLE PRECISION; DECLARE onplat SMALL
 BEGIN
   moved = 0;
   t = now_();
-  SELECT e.x, e.y, e.z FROM ents e WHERE e.id = :eid INTO x, y, z;
-  SELECT g.x, g.y, g.z FROM ents g WHERE g.id = :target INTO tx, ty, tz;
+  SELECT e.x, e.y, e.z, e.act_id, e.act_until FROM ents e WHERE e.id = :eid INTO x, y, z, act, act_t;
+  -- an activate goal (BotGoForActivateGoal): to the button first, until the door it opens is open (or 20 s
+  -- went by: then no other for 10, BotIsGoingToActivateEntity's memory)
+  IF (act IS NOT NULL AND target IS DISTINCT FROM act) THEN
+  BEGIN
+    IF (act_t < t) THEN UPDATE ents e SET e.act_id = NULL, e.act_until = :t + 10 WHERE e.id = :eid;
+    ELSE IF (NOT EXISTS (SELECT 1 FROM ents a JOIN ents d ON d.targetname = a.target AND d.classname = 'func_door' AND d.mv_state IN (1, 3) WHERE a.id = :act)) THEN
+      UPDATE ents e SET e.act_id = NULL, e.act_until = NULL WHERE e.id = :eid;
+    ELSE
+    BEGIN
+      EXECUTE PROCEDURE bot_follow_route(eid, act, dist) RETURNING_VALUES moved;
+      EXIT;
+    END
+    act = NULL;
+  END
+  IF (act IS NOT NULL AND target = act) THEN EXECUTE PROCEDURE bot_act_spot(target) RETURNING_VALUES tx, ty, tz, cx, cy, cz;
+  ELSE SELECT g.x, g.y, g.z FROM ents g WHERE g.id = :target INTO tx, ty, tz;
   IF (tx IS NULL OR x IS NULL) THEN EXIT;
   SELECT r.target, r.dst_node, r.path, r.built, r.fails, r.prog_d, r.prog_t, r.last_node FROM bot_routes r WHERE r.ent_id = :eid INTO rtarget, odst, path, built, fails, prog_d, prog_t, last_n;
   fails = COALESCE(fails, 0);
@@ -453,7 +503,16 @@ BEGIN
   IF (p = 0) THEN
   BEGIN
     -- at the target's node: straight at it (off a func_bobbing as off one anywhere)
-    IF (bob_under(eid) IS NOT NULL AND NOT EXISTS (SELECT 1 FROM waypoints w WHERE w.id = :dst AND w.kind = 9)) THEN moved = bob_step(eid, tx, ty, dist);
+    IF (act IS NOT NULL AND target = act) THEN
+    BEGIN
+      -- the button: to the spot before it, then into it (a trigger or a floor button: into its middle)
+      IF (vlen(tx - x, ty - y, 0) > 12) THEN yaw = vectoyaw(tx - x, ty - y); ELSE yaw = vectoyaw(cx - x, cy - y);
+      UPDATE ents e SET e.ideal_yaw = :yaw WHERE e.id = :eid;
+      moved = step_direction(eid, yaw, MINVALUE(dist, MAXVALUE(8, vlen(tx - x, ty - y, 0))));
+      -- (a step is all or nothing: the last one up against it short, so the box comes within 2 and sets it off)
+      IF (moved = 0) THEN moved = step_direction(eid, yaw, 2);
+    END
+    ELSE IF (bob_under(eid) IS NOT NULL AND NOT EXISTS (SELECT 1 FROM waypoints w WHERE w.id = :dst AND w.kind = 9)) THEN moved = bob_step(eid, tx, ty, dist);
     ELSE EXECUTE PROCEDURE move_to_goal(eid, target, dist);
     moved = 1;
   END
@@ -461,6 +520,32 @@ BEGIN
   BEGIN
     nid = CAST(SUBSTRING(path FROM 2 FOR p - 2) AS INTEGER);
     SELECT w.x, w.y, w.z FROM waypoints w WHERE w.id = :nid INTO nx, ny, nz;
+    -- the way on is through a door that is shut (BotAIBlocked, BotGetActivateGoal): standing in the trigger that
+    -- opens it, the bot waits for it; else off to the button that does, and back
+    IF (last_n IS NOT NULL AND (act IS NULL OR target <> act)) THEN
+      SELECT e.door_id, e.act_id FROM wp_edges e WHERE e.a = :last_n AND e.b = :nid INTO dr, da;
+    IF (dr IS NOT NULL AND EXISTS (SELECT 1 FROM ents d WHERE d.id = :dr AND d.mv_state IN (1, 3))) THEN
+    BEGIN
+      IF (EXISTS (SELECT 1 FROM ents a WHERE a.id = :da AND a.classname <> 'func_button'
+                    AND a.x + a.maxx >= :x - 15 AND a.x + a.minx <= :x + 15 AND a.y + a.maxy >= :y - 15 AND a.y + a.miny <= :y + 15
+                    AND a.z + a.maxz >= :z - 24 AND a.z + a.minz <= :z + 32)) THEN
+      BEGIN
+        UPDATE ents e SET e.ideal_yaw = vectoyaw(:nx - :x, :ny - :y) WHERE e.id = :eid;
+        moved = 1;
+        UPDATE OR INSERT INTO bot_routes (ent_id, target, dst_node, path, built, fails, prog_d, prog_t, last_node) VALUES (:eid, :target, :dst, :path, :built, 0, NULL, :t, :last_n) MATCHING (ent_id);
+        EXIT;
+      END
+      IF (COALESCE(act_t, 0) < t) THEN
+      BEGIN
+        UPDATE ents e SET e.act_id = :da, e.act_until = :t + 20 WHERE e.id = :eid;
+        EXECUTE PROCEDURE bot_follow_route(eid, da, dist) RETURNING_VALUES moved;
+        EXIT;
+      END
+      -- (it gave up on that button a moment ago: no way on for now)
+      UPDATE OR INSERT INTO bot_routes (ent_id, target, dst_node, path, built, fails, prog_d, prog_t) VALUES (:eid, :target, :dst, NULL, :t, 0, NULL, NULL) MATCHING (ent_id);
+      moved = -1;
+      EXIT;
+    END
     -- the next node a pad and the one after its landing, or a place a straight-up pad's throw is steered to
     -- (BotFinishTravel_JumpPad's air control, every pad's): run_physics steers the flight there (bot_air_steer)
     -- once over the landing's height or coming down (or the pad already reached, standing on it, and the place
@@ -654,9 +739,9 @@ BEGIN
       prog_d = NULL; prog_t = t;
     END
     ELSE moved = step_direction(eid, yaw, dist);
-    IF (moved = 0 AND nz < z - 40 AND vlen(nx - x, ny - y, 0) < 320) THEN
+    IF (moved = 0 AND nz < z - 24 AND vlen(nx - x, ny - y, 0) < 320) THEN
     BEGIN
-      -- the next node is down a ledge and the step "walked off an edge": jump down, as the AAS's
+      -- the next node is down a ledge (more than a step, 18, and the node 25 over its floor: 24) and the step "walked off an edge": jump down, as the AAS's
       -- jump-down reachability does; gravity and fly_move take it from here (run_physics), steered in the air for
       -- the node below (BotFinishTravel_WalkOffLedge's air control) until it lands
       UPDATE ents e SET e.vx = COS(:yaw * 0.0174532925e0) * 320, e.vy = SIN(:yaw * 0.0174532925e0) * 320, e.vz = 40,
@@ -1249,7 +1334,7 @@ BEGIN
   UPDATE ents e SET e.x = :x, e.y = :y, e.z = :z + 9, e.yaw = COALESCE(:yaw, 0), e.ideal_yaw = COALESCE(:yaw, 0), e.pitch = 0, e.vx = 0, e.vy = 0, e.vz = 0,
          e.solid = 3, e.movetype = 4, e.takedamage = 2, e.alpha = 0, e.deadflag = 0, e.viewheight = 26, e.maxz = 32, e.attack_crouch = NULL, e.hold_item = 0, e.health = 125, e.armor = 0, e.weapons = 3, e.weapon = 2,
          e.ammo2 = IIF((SELECT g.gametype FROM game g WHERE g.id = 1) = 3, 50, 100), e.ammo3 = 0, e.ammo4 = 0, e.ammo5 = 0, e.ammo6 = 0, e.ammo7 = 0, e.ammo8 = 0, e.ammo9 = 0,
-         e.flags = 32, e.st = 'stand', e.legs_anim = 22, e.legs_time = :t, e.torso_anim = 11, e.torso_time = :t, e.enemy_id = NULL, e.goal_id = NULL, e.nbg_id = NULL, e.nbg_check = NULL,
+         e.flags = 32, e.st = 'stand', e.legs_anim = 22, e.legs_time = :t, e.torso_anim = 11, e.torso_time = :t, e.enemy_id = NULL, e.goal_id = NULL, e.nbg_id = NULL, e.nbg_check = NULL, e.act_id = NULL, e.act_until = NULL,
          e.attack_finished = :t + 1, e.teleport_time = :t + 0.3e0, e.lx = NULL, e.nextthink = :t + 0.1e0, e.think = 'bot_think', e.respawn_time = 0,
          e.quad_finished = 0, e.haste_finished = 0, e.invis_finished = 0, e.regen_finished = 0, e.enviro_finished = 0, e.health_tick = :t + 1,
          e.yaw_speed = COALESCE(MAXVALUE(240, bot_cv(:eid, 'view_maxchange', NULL)) / 10, bot_char((SELECT b.skill FROM bot_defs b WHERE b.name = e.bot), 'turn')),
