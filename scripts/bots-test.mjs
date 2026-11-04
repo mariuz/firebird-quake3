@@ -58,6 +58,9 @@ for (const d of [200, 150, 100, 64]) {
 spot ??= [p.X + Math.cos((p.YAW * Math.PI) / 180) * 200, p.Y + Math.sin((p.YAW * Math.PI) / 180) * 200];
 // (facing us: BotFindEnemy's field of view is 90 degrees up close)
 const faceUs = (Math.atan2(p.Y - spot[1], p.X - spot[0]) * 180) / Math.PI;
+// (the other bots held still and unnoticed meanwhile: on q3dm7 a fight with one of them could take the bot out
+// of sight of everyone for the whole check)
+await db.exec(`UPDATE ents SET flags = BIN_OR(flags, 64), nextthink = 1e9 WHERE classname = 'bot' AND id <> ${b}`);
 await db.exec(`UPDATE ents SET x = ${spot[0]}, y = ${spot[1]}, z = ${p.Z}, vx = 0, vy = 0, vz = 0, enemy_id = NULL, yaw = ${faceUs}, ideal_yaw = ${faceUs} WHERE id = ${b}`);
 await db.exec(`EXECUTE PROCEDURE link_ent(${b})`);
 // (we have just spawned, and the bots let one just arrived be for 3 s: BotFindEnemy's lastteleport_time)
@@ -76,6 +79,7 @@ assert(found !== null, `the bot found an enemy (${found}; now ${s.ST.trim()})`);
 // (the fight may take a while to start: the reaction time, a turn, a run for an item first)
 for (let i = 0; i < 70 && shots === 0; i++) { await tic(); shots = await fired(); }
 assert(shots > 0, `the bots fired (${shots} shots)`);
+await db.exec(`UPDATE ents SET flags = BIN_AND(flags, BIN_NOT(64)), nextthink = (SELECT time_ FROM game) WHERE classname = 'bot' AND id <> ${b}`);
 
 // a bot dies and respawns (alive for it: the fight above may have killed it already)
 if ((await q(`SELECT deadflag FROM ents WHERE id = ${b}`))[0].DEADFLAG) await db.exec(`EXECUTE PROCEDURE bot_respawn(${b})`);
