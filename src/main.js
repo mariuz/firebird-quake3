@@ -11,6 +11,7 @@ import schemaSql from '../sql/schema.sql';
 import physicsSql from '../sql/physics.sql';
 import gameSql from '../sql/game.sql';
 import playerSql from '../sql/player.sql';
+import demoSql from '../sql/demo.sql';
 import waypointsSql from '../sql/waypoints.sql';
 import botsSql from '../sql/bots.sql';
 import renderSql from '../sql/render.sql';
@@ -22,6 +23,7 @@ import { GLRenderer } from './renderer-gl.js';
 import { Hud } from './hud.js';
 import { FrameState, drawScene, firstPersonView, zoomedFov, fovY, ZOOM_FOV, underwaterFov, findPortals, portalView, mirrorView, portalFade } from './scene.js';
 import { Q3Audio, weaponLoop } from './audio.js';
+import { exportDemo, importDemo, listDemos } from './demo.js';
 
 const $ = (id) => document.getElementById(id);
 const canvas = $('screen');
@@ -43,6 +45,8 @@ let lastTics = 1;        // how many tics the last q3_tic call ran (the displace
 let duckChange = 0, duckTime = -1e9;   // the eye's last crouch or stand step, and when it happened
 let running = false;
 let paused = false;
+let recording = false;     // a demo being recorded (sql/demo.sql: q3_tic keeps each snapshot)
+let demoPlaying = false;   // a demo playing: demo_play gives the tic rows, the game does not run
 let lastTic = 0;
 let lastSoundId = 0;
 let lastFxId = 0;
@@ -233,6 +237,8 @@ async function ensureMap(name) {
 
 async function startMap(name) {
   running = false;
+  demoPlaying = false;
+  if (recording) { recording = false; $('record').textContent = 'Record'; }
   await ensureMap(name);
   setStatus(`Loading ${name} into Firebird…`);
   const t0 = performance.now();
@@ -326,6 +332,15 @@ function viewRow(alpha, now) {
   const frac = Math.min(1, (now - lastTic) / TIC_MS);
   const yawLive = mouseYaw + ((k('ArrowLeft') ? 1 : 0) - (k('ArrowRight') ? 1 : 0)) * 7 * frac;
   const pitchLive = mousePitch + ((k('PageDown') ? 1 : 0) - (k('PageUp') ? 1 : 0)) * 5 * frac;
+  if (demoPlaying) {
+    // a demo: the recorded view between the two snapshots (CG_InterpolatePlayerState), no live mouse, no prediction
+    const v = { ...last };
+    if (!prev || alpha >= 1 || Math.hypot(last.PX - prev.PX, last.PY - prev.PY, last.PZ - prev.PZ) >= SNAP) return v;
+    v.PX = lerp(prev.PX, last.PX, alpha); v.PY = lerp(prev.PY, last.PY, alpha); v.PZ = lerp(prev.PZ, last.PZ, alpha);
+    v.VIEW_Z = lerp(prev.VIEW_Z, last.VIEW_Z, alpha); v.TIME_ = lerp(prev.TIME_, last.TIME_, alpha);
+    v.YAW = lerpAngle(prev.YAW, last.YAW, alpha); v.PITCH = lerpAngle(prev.PITCH, last.PITCH, alpha);
+    return v;
+  }
   if (last.MATCH_OVER || last.FOLLOW_NAME) return { ...last };   // the intermission camera and the eyes of the one followed do not turn with the mouse
   // (a turning mover under us turns the view on through the tic as it did through the last one)
   const v = { ...last, YAW: (last.YAW + yawLive + (last.MOVER_YAW || 0) * frac) % 360, PITCH: Math.max(-89, Math.min(89, last.PITCH + pitchLive)) };
@@ -368,7 +383,10 @@ async function frame() {
       if (now - lastTic > 200) lastTic = now;
       t = performance.now();
       prev = last;
-      last = (await db.query('SELECT * FROM q3_tic(?, ?, ?, ?, ?, ?, ?, ?, ?)', readInput(tics), { rowMode: 'object' })).rows[0];
+      const input = readInput(tics);   // (read while a demo plays too: the mouse and keys move nothing then)
+      last = demoPlaying
+        ? (await db.query('SELECT * FROM demo_play(?)', [tics], { rowMode: 'object' })).rows[0] ?? { ...prev, EXIT_KIND: 3 }
+        : (await db.query('SELECT * FROM q3_tic(?, ?, ?, ?, ?, ?, ?, ?, ?)', input, { rowMode: 'object' })).rows[0];
       perf.tic = performance.now() - t;
       ticked = tics;
       lastTics = tics;
@@ -424,7 +442,7 @@ async function frame() {
     if (fr.fx.length) { lastFxId = fr.fx[fr.fx.length - 1][0]; state.handleFx(renderer, fr.fx, view.TIME_, map.bsp); }
     if (ticked && (scoreboard || last.MATCH_OVER) && frameNo % 10 === 0) scores = (await db.query('SELECT * FROM scoreboard', [], arr)).rows;
     // the bots learn the arena while we play: a few grid columns, then a few nodes' edges, a tic (sql/waypoints.sql)
-    if (ticked && map.unlinked > 0) {
+    if (ticked && map.unlinked > 0 && !demoPlaying) {
       t = performance.now();
       map.unlinked = await buildWaypoints(db, perf.graph > 40 ? 1 : 3, perf.graph > 40 ? 1 : 2);   // smaller bites when a chunk ran long (q3dm7's 500 nodes)
       perf.graph = performance.now() - t;
@@ -454,7 +472,7 @@ function updateStats(ticked) {
   fpsN++; ticN += ticked;
   const now = performance.now();
   if (now - fpsT > 500) { fps = (fpsN * 1000) / (now - fpsT); tps = (ticN * 1000) / (now - fpsT); fpsT = now; fpsN = 0; ticN = 0; }
-  statsEl.textContent = `${fps.toFixed(1)} fps · ${tps.toFixed(0)} tics/s · q3_tic ${perf.tic.toFixed(0)} ms · frame query ${perf.faces.toFixed(0)} ms (${perf.rows} faces) · paint ${perf.draw.toFixed(0)} ms · ${renderer.particles.length} particles${map?.unlinked > 0 ? ` · bots mapping the arena (${map.unlinked} to go, ${perf.graph.toFixed(0)} ms)` : ''}`;
+  statsEl.textContent = `${demoPlaying ? 'demo · ' : recording ? 'recording · ' : ''}${fps.toFixed(1)} fps · ${tps.toFixed(0)} tics/s · q3_tic ${perf.tic.toFixed(0)} ms · frame query ${perf.faces.toFixed(0)} ms (${perf.rows} faces) · paint ${perf.draw.toFixed(0)} ms · ${renderer.particles.length} particles${map?.unlinked > 0 ? ` · bots mapping the arena (${map.unlinked} to go, ${perf.graph.toFixed(0)} ms)` : ''}`;
 }
 
 /** A portal or a mirror on screen and near enough to see through: what its camera sees (FRAME_PORTAL), as drawScene takes it */
@@ -511,7 +529,7 @@ async function openDatabase() {
   const v = await instance.query("SELECT rdb$get_context('SYSTEM', 'ENGINE_VERSION') AS v FROM rdb$database");
   $('engine').textContent = `Firebird ${v.rows[0].V}`;
   setStatus('Creating the Quake III schema (PSQL)…');
-  await createSchema(instance, { schema: schemaSql, physics: physicsSql, game: gameSql, waypoints: waypointsSql, player: playerSql, bots: botsSql, render: renderSql });
+  await createSchema(instance, { schema: schemaSql, physics: physicsSql, game: gameSql, waypoints: waypointsSql, player: playerSql, demo: demoSql, bots: botsSql, render: renderSql });
   return instance;
 }
 
@@ -604,6 +622,63 @@ $('renderer').addEventListener('change', (e) => {
 });
 $('brightness').value = String(settings.brightness);
 $('brightness').addEventListener('change', (e) => { settings.brightness = Number(e.target.value); saveSettings(); if (renderer) renderer.setBrightness(settings.brightness); });
+// demos (CL_Record, CL_PlayDemo; sql/demo.sql): record and stop, play one of this session's, save one to a file and
+// load it back (src/demo.js)
+async function refreshDemos() {
+  if (!db) return;
+  const list = await listDemos(db);
+  $('demos').replaceChildren(new Option('Demos…', ''), ...list.map((d) => new Option(`${d.MAP_NAME.trim()}, ${d.SECONDS.toFixed(0)} s (${d.ID})`, String(d.ID))));
+}
+$('record').addEventListener('click', async () => {
+  if (!db || !running || demoPlaying) return;
+  try {
+    if (!recording) await db.query('SELECT * FROM demo_record_start');
+    else await db.exec('EXECUTE PROCEDURE demo_record_stop');
+    recording = !recording;
+    $('record').textContent = recording ? 'Stop' : 'Record';
+    await refreshDemos();
+  } catch (err) { console.error(err); }
+});
+async function playDemo(id) {
+  const d = (await db.query('SELECT map_name, ent_id FROM demos WHERE id = ?', [id])).rows[0];
+  if (!d) return;
+  await startMap(d.MAP_NAME.trim());   // its arena (a recording running stops)
+  running = false;
+  await db.exec(`EXECUTE PROCEDURE demo_play_start(${id | 0})`);
+  lastSoundId = (await db.query('SELECT COALESCE(MAX(id), 0) m FROM sound_events')).rows[0].M;
+  lastFxId = (await db.query('SELECT COALESCE(MAX(id), 0) m FROM fx_events')).rows[0].M;
+  state.selfId = d.ENT_ID;
+  renderer.particles = []; state.explosions = []; state.beams = [];
+  lastTic = performance.now() - TIC_MS;
+  prev = null; prevPose = null; curPose = null; frameAt = 0;
+  demoPlaying = true;
+  running = true;
+}
+$('demos').addEventListener('focus', () => refreshDemos().catch((err) => console.error(err)));
+$('demos').addEventListener('change', (e) => {
+  const id = Number(e.target.value);
+  e.target.value = '';
+  if (id && db) playDemo(id).catch((err) => { console.error(err); setStatus(`Error: ${err.message}`, true); });
+});
+$('savedemo').addEventListener('click', async () => {
+  if (!db) return;
+  const [d] = await listDemos(db);
+  if (!d) { setStatus('No demo recorded yet', true); setTimeout(() => setStatus(''), 2000); return; }
+  const blob = new Blob([JSON.stringify(await exportDemo(db, d.ID))], { type: 'application/json' });
+  const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: `${d.MAP_NAME.trim()}-${d.ID}.q3demo.json` });
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+});
+$('demofile').addEventListener('change', async (e) => {
+  const f = e.target.files?.[0];
+  e.target.value = '';
+  if (!f || !db) return;
+  try {
+    const id = await importDemo(db, JSON.parse(await f.text()));
+    await refreshDemos();
+    await playDemo(id);
+  } catch (err) { console.error(err); setStatus(`Error: ${err.message}`, true); }
+});
 // spectating: out of the match and back (SetTeam)
 $('spectate').addEventListener('click', () => {
   if (!db || !running || !last) return;

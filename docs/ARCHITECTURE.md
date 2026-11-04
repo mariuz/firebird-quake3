@@ -1165,6 +1165,30 @@ and the others are one tic (50 ms) behind, as in the original. The rows then go 
 waypoint graph is incomplete, runs `buildWaypoints`. `document.hidden` pauses it. The stats line
 shows frames and tics per second separately.
 
+*Demos* (`sql/demo.sql`, Quake III's `record` and `demo`). Quake III's demo file is the stream of snapshots the
+client got from the server, the gamestate first; playback feeds them to cgame with no server running. Here a
+snapshot is rows. *Record* (`demo_record_start`) makes a `demos` row and sets `game.demo_rec`; from then on `q3_tic`
+ends by writing its own returned row into `demo_frames` (the playerState and the rest the page reads, with the one
+followed and the eye's height for `view_setup`) and calling `demo_snap`, which writes into `demo_ents` the
+entities whose state changed since the last snapshot (70 columns of `ents`, the entityState: origin, angles,
+velocity, model, frame, the player model, skin, animations and their times, the powerups' ends, the leaf and
+clusters, health, frags; compared with `demo_last`, the previous snapshot as the client holds it, as
+`MSG_WriteDeltaEntity` deltas against it; a removed one gets a `gone` row), and the tic's sounds, effects and
+console lines into `demo_sounds`, `demo_fx` and `demo_msgs`. The first snapshot has every entity (the baselines);
+on q3dm1 with three bots the rest average three, and a snapshot costs about 2 ms (on q3dm7's 170 entities too).
+*Stop*, or a new map (`init_map`), ends it. *Demos…* plays one: the page loads its arena (`startMap`), then
+`demo_play_start` empties `ents` and the console and points `player.ent_id` at the recorder's entity, and the
+loop calls `demo_play(tics)` instead of `q3_tic`: every snapshot up to `tics` past the one shown is applied (the
+changed entities `MERGE`d back into `ents`, the gone deleted, the sounds, effects and lines inserted again under
+new ids, the clock and the eye set as recorded), and the last one's frame row comes back as `q3_tic` would
+return it. `frame_all`, the painters, the HUD and the sound play it as they play the game; `viewRow`
+interpolates the recorded view between two snapshots and the mouse moves nothing (cgame's playback is the same,
+`CG_InterpolatePlayerState`). Past the last snapshot the row says `exit_kind` 3 and the arena starts again. *Save
+demo* writes the newest demo's rows to a JSON file, *Load demo* reads one back under a new id and plays it
+(`src/demo.js`; about 30 KB a second of play). `npm run test:demo` records six seconds of moving and firing with
+three bots, plays them back and checks every snapshot gives what was painted: the row, the models and poses in
+view, the sounds, the effects; and the same after a save and a load.
+
 Settings (map, bots, skill, frag limit, time limit, rotation, detail 640×480 / 320×240 / 160×120,
 brightness, renderer fast / sql / gl, prediction, sound and music volumes) persist in `localStorage`.
 During the intermission the HUD draws only the scoreboard, the console lines and "fire for" the next
@@ -1188,6 +1212,7 @@ passes in Node is what runs in the browser.
 | `npm run test:dm7`, `test:dm17` | the smoke test on the other arenas (q3dm17 for the pads) |
 | `npm run test:bots` | `bots-test.mjs`: four bots join, see, fire, die, respawn, pick up a weapon, a bot hunts the player from the farthest spawn over the graph, a minute of play scores frags and strands nobody |
 | `npm run test:bots:dm17` | the same on q3dm17, plus: the bots take the jump pads |
+| `npm run test:demo` | `demo-test.mjs`: a demo recorded on q3dm1 and played back gives every snapshot as it was painted, saved to JSON and loaded back too |
 | `npm run test:bots:dm7` | the same on q3dm7, plus: a bot after an item under the floor plate presses the button that opens it |
 | `npm run test:view` | `view-test.mjs`: the first-person view's kicks, dips, lean and bob from synthetic tic rows, no engine |
 | `npm run test:pmove` | `pmove-test.mjs`: the player's movement beside a reference of Quake III's `bg_pmove.c` at 8 ms, on q3dm17's open floor |

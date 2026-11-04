@@ -81,6 +81,10 @@ jobs:
       - name: The bots and the buttons
         run: npm run test:bots:dm7
 
+      # A demo recorded and played back: every snapshot as it was painted
+      - name: Demos
+        run: npm run test:demo
+
       - name: Team deathmatch
         run: npm run test:team
 

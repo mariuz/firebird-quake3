@@ -2813,6 +2813,14 @@ BEGIN
          weapons, weapon, pending_weapon, weaponstate, weapon_time, attack_start, attack_finished,
          px, py, pz, yaw, pitch, view_z, punch, msg, cprint, dmg_take, dmg_save, dmg_time, dmg_x, dmg_y, bonus_time, dead, exit_kind, frags, deaths, waterlevel, watertype, map_name, level_msg,
          quad, haste, invis, regen, enviro, flight, holdable, leaf, cluster, match_over, winner, land_time, onground, move_speed, weapon_sound, lead, ducked, fraglimit, timelimit, over_time, next_map, dmg_z, dmg_world, land_change, vx, vy, warmup_end, award, award_time, n_excellent, n_impressive, n_gauntlet, spectator, follow_name, mover_yaw, gametype, red_score, blue_score, team, acc_shots, acc_hits;
+  -- recording a demo: this snapshot (demo.sql)
+  IF (EXISTS (SELECT 1 FROM game g WHERE g.id = 1 AND g.demo_rec IS NOT NULL)) THEN
+  BEGIN
+    INSERT INTO demo_frames (demo_id, n, tic, time_, health, max_health, armor, bullets, shells, grenades, rockets, lightning, slugs, cells, bfg, weapons, weapon, pending_weapon, weaponstate, weapon_time, attack_start, attack_finished, px, py, pz, yaw, pitch, view_z, punch, msg, cprint, dmg_take, dmg_save, dmg_time, dmg_x, dmg_y, bonus_time, dead, exit_kind, frags, deaths, waterlevel, watertype, map_name, level_msg, quad, haste, invis, regen, enviro, flight, holdable, leaf, cluster, match_over, winner, land_time, onground, move_speed, weapon_sound, lead, ducked, fraglimit, timelimit, over_time, next_map, dmg_z, dmg_world, land_change, vx, vy, warmup_end, award, award_time, n_excellent, n_impressive, n_gauntlet, spectator, follow_name, mover_yaw, gametype, red_score, blue_score, team, acc_shots, acc_hits, follow_id, view_ofs)
+      SELECT g.demo_rec, g.demo_n, :tic, :time_, :health, :max_health, :armor, :bullets, :shells, :grenades, :rockets, :lightning, :slugs, :cells, :bfg, :weapons, :weapon, :pending_weapon, :weaponstate, :weapon_time, :attack_start, :attack_finished, :px, :py, :pz, :yaw, :pitch, :view_z, :punch, :msg, :cprint, :dmg_take, :dmg_save, :dmg_time, :dmg_x, :dmg_y, :bonus_time, :dead, :exit_kind, :frags, :deaths, :waterlevel, :watertype, :map_name, :level_msg, :quad, :haste, :invis, :regen, :enviro, :flight, :holdable, :leaf, :cluster, :match_over, :winner, :land_time, :onground, :move_speed, :weapon_sound, :lead, :ducked, :fraglimit, :timelimit, :over_time, :next_map, :dmg_z, :dmg_world, :land_change, :vx, :vy, :warmup_end, :award, :award_time, :n_excellent, :n_impressive, :n_gauntlet, :spectator, :follow_name, :mover_yaw, :gametype, :red_score, :blue_score, :team, :acc_shots, :acc_hits, p.follow_id, IIF(p.follow_id IS NULL, p.view_ofs - p.stepz, NULL)
+        FROM game g CROSS JOIN player p WHERE g.id = 1 AND p.id = 1;
+    EXECUTE PROCEDURE demo_snap;
+  END
   UPDATE player p SET p.dmg_take = 0, p.dmg_save = 0 WHERE p.id = 1 AND p.dmg_time < :time_ - 0.05e0;
   SUSPEND;
 END^
@@ -2840,6 +2848,9 @@ CREATE OR ALTER PROCEDURE init_map (map_name VARCHAR(32), world_model INTEGER, s
 AS
 DECLARE pe INTEGER; DECLARE b VARCHAR(16); DECLARE i INTEGER = 0; DECLARE n INTEGER; DECLARE skyname VARCHAR(64);
 BEGIN
+  -- a new map stops a recording, and ends a demo playing (demo.sql)
+  EXECUTE PROCEDURE demo_record_stop;
+  UPDATE game g SET g.demo_play = NULL WHERE g.id = 1;
   UPDATE game g SET g.tic = 0, g.time_ = 0, g.map_name = :map_name, g.next_map = NULL, g.exit_kind = 0, g.skill = :skill, g.world_model = :world_model,
          g.level_msg = NULL, g.gravity = 800, g.match_over = 0, g.winner = NULL, g.over_time = 0, g.num_bots = :num_bots,
          g.fraglimit = COALESCE(:fraglimit, 20), g.timelimit = COALESCE(:timelimit, 0), g.time_warnings = 0,

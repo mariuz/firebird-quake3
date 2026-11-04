@@ -84,7 +84,7 @@ export async function setRotation(db, names) {
   if (maps.length) await db.exec(`SET TERM ^ ;\nEXECUTE BLOCK AS BEGIN\n${maps.map((m, i) => `INSERT INTO map_list (ord, name) VALUES (${i}, ${lit(m)});`).join('\n')}\nEND^\nSET TERM ; ^`);
 }
 
-export const SQL_FILES = ['schema', 'physics', 'game', 'waypoints', 'player', 'bots', 'render'];
+export const SQL_FILES = ['schema', 'physics', 'game', 'waypoints', 'player', 'demo', 'bots', 'render'];
 
 export async function createSchema(db, sql) {
   await db.exec(sql.schema);

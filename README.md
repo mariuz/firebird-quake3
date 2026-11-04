@@ -42,6 +42,7 @@ npm run test:maps      # each of those arenas on top of the demo pak: its pictur
 npm test               # SQL smoke test in Node against the real Firebird WASM engine: the Arena Gate
 npm run test:dm7       # the same on the Temple of Retribution
 npm run test:bots      # the bots: they see, chase, shoot, pick things up, die and respawn; the score keeps up
+npm run test:demo      # a demo recorded and played back: every snapshot as it was painted
 npm run serve          # http://localhost:8080/
 npm run screenshots    # headless frames to docs/ (node scripts/screenshot.mjs q3dm1 --at=x,y,z,yaw --bright=4)
 npm run bench          # where a tic and a frame spend their time

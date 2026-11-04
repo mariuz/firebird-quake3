@@ -18,7 +18,7 @@ explosion sprites, beams) and nothing else. The renderers never query the databa
   Firebird's error with the statement head; "Column unknown X" inside a procedure means a local used
   in a query without its colon.
 - `npm test` (q3dm1 smoke), `npm run test:dm17` (jump pads), `npm run test:bots` (bots and the
-  waypoint hunt), `npm run test:bots:dm17` (bots on the pads), `npm run test:bots:dm7` (bots pressing q3dm7's button), `npm run test:pmove` (the movement against Quake III's
+  waypoint hunt), `npm run test:bots:dm17` (bots on the pads), `npm run test:bots:dm7` (bots pressing q3dm7's button), `npm run test:demo` (a demo recorded and played back), `npm run test:pmove` (the movement against Quake III's
   `bg_pmove.c`), `npm run test:team` (team deathmatch, the team leader and its orders), `npm run test:tourney` (the tournament), `npm run test:maps` (every hosted OpenArena and Community Map-Pack
   arena on the demo pak; needs `npm run fetch-maps`), `npm run test:view` (the first-person
   view, the impact marks' clipping, the trails, the brass, the dynamic lights, the shader features, the fog, the portal's view, the shadows, the rail and lightning beams and the powerup shells, seconds, no engine). All run against the real WASM engine in
@@ -90,6 +90,7 @@ explosion sprites, beams) and nothing else. The renderers never query the databa
 | HUD, icons, scoreboard | `src/hud.js` |
 | accuracy, the postgame medals | `acc_shots`/`acc_hits` counted in `fire_weapon` and at each weapon's hit (`log_accuracy_hit` in `sql/game.sql`); `postgameMedals` in `src/hud.js` |
 | sounds, music | `src/audio.js`; events are rows in `sound_events` written by `snd`/`snd_at` |
+| demos (record, play back, save, load) | `sql/demo.sql` (`demo_record_start`, `demo_snap`, `demo_play_start`, `demo_play`; the tables after `messages` in `sql/schema.sql`, `game.demo_rec`, `demo_play`); the snapshot's frame row written at the end of `q3_tic`; the entity columns a snapshot carries are listed in `demo_snap`, add one there and in `demo_ents`/`demo_last` when the frame reads a new one; `src/demo.js` (the file); the *Record* and *Demos…* controls and `demoPlaying` in `src/main.js` |
 | the page, settings, input, the loop, the console | `src/main.js`, `public/index.html`, `public/style.css` |
 | items, weapons, bot roster, player model | `src/gamedata.js`; the model played: `set_player_model` in `sql/bots.sql`, `player.model`/`skin`, the *Model* menu (`fillModelMenu`) in `src/main.js` |
 | pak parsing, BSP, MD3, shaders, images | `src/pk3.js` (`Pk3`, and `PakSet`: several paks searched as one), `src/bsp.js`, `src/md3.js`, `src/shader.js`, `src/image.js` |
