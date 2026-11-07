@@ -1189,6 +1189,22 @@ demo* writes the newest demo's rows to a JSON file, *Load demo* reads one back u
 three bots, plays them back and checks every snapshot gives what was painted: the row, the models and poses in
 view, the sounds, the effects; and the same after a save and a load.
 
+*Save games* (`sql/save.sql`, `src/save.js`; Quake III has none, its single player is a ladder of matches;
+Quake II's game library wrote its edicts and clients to disk, and this is that). The game is the rows of the
+tables play changes: `game`, `player`, `ents`, `messages`, `bot_avoid`, `bot_routes`, the waypoint graph
+(`waypoints`, `wp_edges`, `wp_build`: a graph half built goes on building from where it was), `areas` and
+`area_portals` (which doors are shut) and the bots' skills in `bot_defs`. *Save game* writes them as JSON with the
+names of the map's brush models; *Load game* loads the save's arena fresh from the pak (`startMap`), replaces those
+tables' rows with the saved ones (the brush model ids mapped by name: each load of a map numbers the world and its
+`*1`, `*2` … anew, while the pak's models keep theirs), and `save_restored` sets the rest in order: the entity and
+message sequences moved past the ids that came back, so the next rocket does not take a saved entity's id; the
+caches of what is in view (`vis_faces`, `ents.vis_cl`) dropped; the fresh arena's sounds and effects gone; no
+demo. The loop holds its tics while a save is written or read (`saving`). F5 saves into the browser's storage
+and F9 loads that (Quake II's quick save and load). About 80 KB for q3dm1, 120 KB for q3dm7 with its graph half
+built; a load takes 70 ms after the arena's. `npm run test:save` saves q3dm1, q3dm7 or q3dm17 in a fight with
+missiles in flight, plays on, loads it on a fresh arena and checks every table, the frame in view and the scores
+are as saved, then plays on with new entities past the saved ids.
+
 Settings (map, bots, skill, frag limit, time limit, rotation, detail 640×480 / 320×240 / 160×120,
 brightness, renderer fast / sql / gl, prediction, sound and music volumes) persist in `localStorage`.
 During the intermission the HUD draws only the scoreboard, the console lines and "fire for" the next
@@ -1213,6 +1229,7 @@ passes in Node is what runs in the browser.
 | `npm run test:bots` | `bots-test.mjs`: four bots join, see, fire, die, respawn, pick up a weapon, a bot hunts the player from the farthest spawn over the graph, a minute of play scores frags and strands nobody |
 | `npm run test:bots:dm17` | the same on q3dm17, plus: the bots take the jump pads |
 | `npm run test:demo` | `demo-test.mjs`: a demo recorded on q3dm1 and played back gives every snapshot as it was painted, saved to JSON and loaded back too |
+| `npm run test:save` | `save-test.mjs`: a game saved in a fight, played on, loaded on a fresh arena is back as saved, row for row, and plays on |
 | `npm run test:bots:dm7` | the same on q3dm7, plus: a bot after an item under the floor plate presses the button that opens it |
 | `npm run test:view` | `view-test.mjs`: the first-person view's kicks, dips, lean and bob from synthetic tic rows, no engine |
 | `npm run test:pmove` | `pmove-test.mjs`: the player's movement beside a reference of Quake III's `bg_pmove.c` at 8 ms, on q3dm17's open floor |

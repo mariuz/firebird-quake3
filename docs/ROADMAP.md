@@ -77,7 +77,7 @@ fuzzy logic from the botfiles. What that leaves out:
 | --- | --- |
 | **Networking** | none, by design: one player, local bots. Snapshots, prediction, delta compression, the master server do not apply |
 | **Console commands and cvars** | the SQL console replaces them; there is no `bind`, `cg_fov` and friends are settings in `localStorage` |
-| **Demos, the rest** | recorded and played back (see §8); no seeking, pausing or slow motion in a demo (Quake III has `timescale`), no free camera, and the file is the tables' rows as JSON, not a `.dm_68`; a save game (the tables dumped and loaded) is not there |
+| **Demos, the rest** | recorded and played back (see §8); no seeking, pausing or slow motion in a demo (Quake III has `timescale`), no free camera, and the file is the tables' rows as JSON, not a `.dm_68` |
 | **Light styles** | not in the demo maps |
 | **File system** | the page stacks the demo's pak, the pk3s picked from disk and one hosted map pack (`PakSet`); the game searches every `pak*.pk3` in `baseq3` and a mod directory at once, and a picked pk3's models, sounds and bot files are not read again (its maps and shaders are) |
 | **The menu, key binding** | the page's controls do this, the name, the model and the rail's colour played among them (*Name*, *Model*: every player model of the pak with its own skins, *Rail*: `color1`); no key binding |
@@ -90,7 +90,7 @@ fuzzy logic from the botfiles. What that leaves out:
 | Frame rate | the painter runs at the display's rate since the interpolation; a frame is the frame query (3 to 8 ms) plus the paint, and the tic (6 ms) lands on every third frame. Batching `q3_tic` and `frame_all` into one procedure would save a round trip on those; the software painter at 640×480 is paint-bound |
 | Bigger maps | OpenArena's and the Community Map-Pack's arenas (up to 11 000 faces, oa_thor; the hosted 41 up to 10 000) load in 1 to 13 s and play; their waypoint graphs take longer to build, and the hunt over them is tested on the demo's arenas only |
 | Load time | 1.3 s for q3dm1, the pak's inflate and the JPEGs dominate in the browser; the waypoint graph is already spread over frames |
-| Memory | the engine is `memory://`; nothing persists between page loads (settings aside) |
+| Memory | the engine is `memory://`; nothing persists between page loads but the settings and a quick save (F5) |
 
 ## 8. Already there (for the record)
 
@@ -113,7 +113,9 @@ loser to the back of the queue and the arena restarted for the next: `npm run te
 joining and leaving mid-game (`addbot` at a skill and `kick` from the page's menus: `G_AddBot`,
 `ClientDisconnect`, the goodbye of `BotChat_ExitGame`), demos (`record`, `demo`: every snapshot kept as rows, the
 entities delta-compressed against the last, played back into the tables the frame reads with the game not
-running, saved to a file and loaded back: `sql/demo.sql`, `npm run test:demo`), the bots' activate goals (`BotGetActivateGoal`: a door
+running, saved to a file and loaded back: `sql/demo.sql`, `npm run test:demo`), save games (Quake II's, which
+Quake III dropped: the tables play changes to a file or the browser's storage, F5 and F9, and back on a fresh
+arena: `sql/save.sql`, `npm run test:save`), the bots' activate goals (`BotGetActivateGoal`: a door
 opened by a button or a trigger elsewhere is an edge of the graph marked with it, taken when nothing else leads
 there; a bot at a shut one goes and presses the button, or waits in the trigger: q3dm7's red armour, rockets and
 shells under the floor plate, `npm run test:bots:dm7`), swimming with its

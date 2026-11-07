@@ -43,6 +43,7 @@ npm test               # SQL smoke test in Node against the real Firebird WASM e
 npm run test:dm7       # the same on the Temple of Retribution
 npm run test:bots      # the bots: they see, chase, shoot, pick things up, die and respawn; the score keeps up
 npm run test:demo      # a demo recorded and played back: every snapshot as it was painted
+npm run test:save      # a game saved in a fight and loaded back on a fresh arena (F5 and F9 on the page)
 npm run serve          # http://localhost:8080/
 npm run screenshots    # headless frames to docs/ (node scripts/screenshot.mjs q3dm1 --at=x,y,z,yaw --bright=4)
 npm run bench          # where a tic and a frame spend their time

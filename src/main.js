@@ -15,6 +15,7 @@ import demoSql from '../sql/demo.sql';
 import waypointsSql from '../sql/waypoints.sql';
 import botsSql from '../sql/bots.sql';
 import renderSql from '../sql/render.sql';
+import saveSql from '../sql/save.sql';
 import { Pk3, PakSet } from './pk3.js';
 import { createSchema, loadResources, loadMap, buildWaypoints, setView, setRotation } from './loader.js';
 import { loadShaders } from './shader.js';
@@ -24,6 +25,7 @@ import { Hud } from './hud.js';
 import { FrameState, drawScene, firstPersonView, zoomedFov, fovY, ZOOM_FOV, underwaterFov, findPortals, portalView, mirrorView, portalFade } from './scene.js';
 import { Q3Audio, weaponLoop } from './audio.js';
 import { exportDemo, importDemo, listDemos } from './demo.js';
+import { exportSave, importSave, saveMap } from './save.js';
 
 const $ = (id) => document.getElementById(id);
 const canvas = $('screen');
@@ -47,6 +49,7 @@ let running = false;
 let paused = false;
 let recording = false;     // a demo being recorded (sql/demo.sql: q3_tic keeps each snapshot)
 let demoPlaying = false;   // a demo playing: demo_play gives the tic rows, the game does not run
+let saving = false;        // a save game being written or read: the game waits (its tables are read or replaced)
 let lastTic = 0;
 let lastSoundId = 0;
 let lastFxId = 0;
@@ -96,6 +99,11 @@ window.addEventListener('keydown', (e) => {
   if (e.code === 'Tab') scoreboard = true;
   if (e.code === 'KeyZ') zoom(true);
   if (e.code === 'KeyP' || e.code === 'Pause') paused = !paused;
+  // quick save and quick load (Quake II's F6 and F9 are F5 and F9 here), into the browser's storage
+  if (e.code === 'F5' || e.code === 'F9') {
+    e.preventDefault();
+    if (e.code === 'F5') quickSave(); else quickLoad();
+  }
 });
 window.addEventListener('keyup', (e) => { keys.delete(e.code); if (e.code === 'Tab') scoreboard = false; if (e.code === 'KeyZ') zoom(false); });
 window.addEventListener('blur', () => { keys.clear(); zoom(false); });
@@ -366,7 +374,7 @@ function viewRow(alpha, now) {
 }
 
 async function frame() {
-  if (!running || paused || document.hidden) {
+  if (!running || paused || saving || document.hidden) {
     lastTic = performance.now();
     if (paused && renderer && last) { drawScene(renderer, hud, res, map.bsp, last, { faces: [], ents: [] }, { fov: settings.fov, state, playerModel: settings.model.split('/')[0] }); hud.drawCenter('paused', 80, 16); renderer.present(); }
     nextFrame();
@@ -442,7 +450,7 @@ async function frame() {
     if (fr.fx.length) { lastFxId = fr.fx[fr.fx.length - 1][0]; state.handleFx(renderer, fr.fx, view.TIME_, map.bsp); }
     if (ticked && (scoreboard || last.MATCH_OVER) && frameNo % 10 === 0) scores = (await db.query('SELECT * FROM scoreboard', [], arr)).rows;
     // the bots learn the arena while we play: a few grid columns, then a few nodes' edges, a tic (sql/waypoints.sql)
-    if (ticked && map.unlinked > 0 && !demoPlaying) {
+    if (ticked && map.unlinked > 0 && !demoPlaying && !saving) {
       t = performance.now();
       map.unlinked = await buildWaypoints(db, perf.graph > 40 ? 1 : 3, perf.graph > 40 ? 1 : 2);   // smaller bites when a chunk ran long (q3dm7's 500 nodes)
       perf.graph = performance.now() - t;
@@ -529,7 +537,7 @@ async function openDatabase() {
   const v = await instance.query("SELECT rdb$get_context('SYSTEM', 'ENGINE_VERSION') AS v FROM rdb$database");
   $('engine').textContent = `Firebird ${v.rows[0].V}`;
   setStatus('Creating the Quake III schema (PSQL)…');
-  await createSchema(instance, { schema: schemaSql, physics: physicsSql, game: gameSql, waypoints: waypointsSql, player: playerSql, demo: demoSql, bots: botsSql, render: renderSql });
+  await createSchema(instance, { schema: schemaSql, physics: physicsSql, game: gameSql, waypoints: waypointsSql, player: playerSql, demo: demoSql, bots: botsSql, render: renderSql, save: saveSql });
   return instance;
 }
 
@@ -678,6 +686,59 @@ $('demofile').addEventListener('change', async (e) => {
     await refreshDemos();
     await playDemo(id);
   } catch (err) { console.error(err); setStatus(`Error: ${err.message}`, true); }
+});
+// save games (sql/save.sql, src/save.js): the game as it stands to a file or the browser's storage, and back
+const QUICKSAVE = 'firebird-quake3:quicksave';
+const flash = (msg, bad = false) => { setStatus(msg, bad); setTimeout(() => setStatus(''), 1500); };
+async function takeSave() {
+  if (!db || !running || demoPlaying) return null;
+  saving = true;
+  try { return await exportSave(db); } finally { saving = false; }
+}
+async function loadGame(save) {
+  const name = saveMap(save);
+  await startMap(name);   // the arena fresh from the pak (a recording stops, a demo ends)
+  running = false;
+  saving = true;
+  try {
+    await importSave(db, save);
+    state.selfId = (await db.query('SELECT player_ent() pe FROM rdb$database')).rows[0].PE;
+    renderer.particles = []; state.explosions = []; state.beams = [];
+    map.unlinked = 1;     // the graph's build goes on from where the save had it
+    lastTic = performance.now() - TIC_MS;
+    prev = null; last = null; prevPose = null; curPose = null; frameAt = 0;
+  } finally { saving = false; running = true; }
+  flash('Game loaded');
+}
+async function quickSave() {
+  try {
+    const s = await takeSave();
+    if (!s) return;
+    localStorage.setItem(QUICKSAVE, JSON.stringify(s));
+    flash('Game saved (F9 loads it)');
+  } catch (err) { console.error(err); flash(`Quick save failed: ${err.message}`, true); }
+}
+async function quickLoad() {
+  let text = null;
+  try { text = localStorage.getItem(QUICKSAVE); } catch { /* storage blocked */ }
+  if (!text) { flash('No quick save yet (F5 saves)', true); return; }
+  try { await loadGame(JSON.parse(text)); } catch (err) { console.error(err); setStatus(`Error: ${err.message}`, true); }
+}
+$('savegame').addEventListener('click', async () => {
+  try {
+    const s = await takeSave();
+    if (!s) return;
+    const blob = new Blob([JSON.stringify(s)], { type: 'application/json' });
+    const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: `${s.map}-${Math.floor(s.time / 60)}m${String(Math.floor(s.time % 60)).padStart(2, '0')}s.q3save.json` });
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  } catch (err) { console.error(err); flash(`Save failed: ${err.message}`, true); }
+});
+$('loadgame').addEventListener('change', async (e) => {
+  const f = e.target.files?.[0];
+  e.target.value = '';
+  if (!f || !db) return;
+  try { await loadGame(JSON.parse(await f.text())); } catch (err) { console.error(err); setStatus(`Error: ${err.message}`, true); }
 });
 // spectating: out of the match and back (SetTeam)
 $('spectate').addEventListener('click', () => {
