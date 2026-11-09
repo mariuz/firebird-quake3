@@ -300,7 +300,7 @@ export async function loadMap(db, pak, res, name, { skill = 2, newGame = true, b
     const n = (k) => (e[k] === undefined || e[k] === '' || Number.isNaN(Number(e[k])) ? null : Number(e[k]));
     return [i, e.classname ?? 'unknown', e.targetname ?? null, e.target ?? null, e.team ?? null, e.model ?? null, o[0], o[1], o[2], n('angle'), angles[0], angles[1], angles[2],
       n('spawnflags') ?? 0, e.message ?? null, n('wait'), n('delay'), n('random'), n('speed'), n('lip'), n('height'), n('health'), n('light'), n('dmg'), n('count'),
-      e.noise ?? null, n('phase'), n('gravity'), e.music ?? null, n('notfree'), n('nobots'), n('notteam'), e.gametype ?? null];
+      e.noise ?? null, n('phase'), n('gravity'), e.music ?? null, n('notfree'), n('notbot') ?? n('nobots'), n('notteam'), e.gametype ?? null];
   });
   await bulkLoad(db, 'map_ents', entRows);
 

@@ -239,7 +239,7 @@ CREATE TABLE map_ents (
   gravity    DOUBLE PRECISION,
   music      VARCHAR(64),
   notfree    INTEGER,
-  nobots     INTEGER,
+  nobots     INTEGER,                    -- the "notbot" key: the bots leave it alone (a button they are not to use)
   notteam    INTEGER,
   gametype   VARCHAR(80)                   -- the game types it is in ("ffa tournament team ..."), Team Arena's key
 );

@@ -387,7 +387,7 @@ BEGIN
 END^
 
 -- where a bot goes to set off a button or a trigger (BotGetActivateGoal, BotFuncButtonActivateGoal): before a
--- button on a wall, a player's box (and one unit) out from its face along the way it is pushed, on the floor there; on a button in the
+-- button on a wall, a player's box (and one unit) out from its face along the way it is pushed (one to shoot, 64 more), on the floor there; on a button in the
 -- floor, or in a trigger, its middle. (cx, cy, cz) is the middle, which the bot walks into from there
 CREATE OR ALTER PROCEDURE bot_act_spot (act INTEGER)
 RETURNS (sx DOUBLE PRECISION, sy DOUBLE PRECISION, sz DOUBLE PRECISION, cx DOUBLE PRECISION, cy DOUBLE PRECISION, cz DOUBLE PRECISION)
@@ -404,12 +404,15 @@ BEGIN
   IF (cls = 'func_button' AND l > 1e-3 AND ABS(dz) / l < 0.7e0) THEN
   BEGIN
     dx = dx / l; dy = dy / l;
-    sx = cx - dx * (ABS(dx) * hx + ABS(dy) * hy + 16);
-    sy = cy - dy * (ABS(dx) * hx + ABS(dy) * hy + 16);
+    sx = cx - dx * (ABS(dx) * hx + ABS(dy) * hy + 16 + IIF(EXISTS (SELECT 1 FROM ents b WHERE b.id = :act AND b.takedamage > 0), 64, 0));
+    sy = cy - dy * (ABS(dx) * hx + ABS(dy) * hy + 16 + IIF(EXISTS (SELECT 1 FROM ents b WHERE b.id = :act AND b.takedamage > 0), 64, 0));
   END
   f = wp_floor(sx, sy, cz, 300);
   sz = COALESCE(f + 25, cz);
 END^
+
+-- (declared here, defined with the bot's aim below: the way to a button shoots one that wants shooting)
+CREATE OR ALTER PROCEDURE bot_fire (eid INTEGER) AS BEGIN END^
 
 -- (declared here: it calls itself, for the way to a button)
 CREATE OR ALTER PROCEDURE bot_follow_route (eid INTEGER, target INTEGER, dist DOUBLE PRECISION)
@@ -423,6 +426,9 @@ CREATE OR ALTER PROCEDURE bot_follow_route (eid INTEGER, target INTEGER, dist DO
 RETURNS (moved SMALLINT)
 AS
 DECLARE act INTEGER; DECLARE act_t DOUBLE PRECISION; DECLARE dr INTEGER; DECLARE da INTEGER;
+DECLARE ex DOUBLE PRECISION; DECLARE ey DOUBLE PRECISION; DECLARE ez DOUBLE PRECISION; DECLARE fx DOUBLE PRECISION; DECLARE fy DOUBLE PRECISION; DECLARE fz DOUBLE PRECISION;
+DECLARE f DOUBLE PRECISION; DECLARE hx DOUBLE PRECISION; DECLARE hy DOUBLE PRECISION; DECLARE hz DOUBLE PRECISION;
+DECLARE sf INTEGER; DECLARE ct INTEGER; DECLARE als SMALLINT; DECLARE sts SMALLINT; DECLARE hit INTEGER;
 DECLARE cx DOUBLE PRECISION; DECLARE cy DOUBLE PRECISION; DECLARE cz DOUBLE PRECISION;
 DECLARE x DOUBLE PRECISION; DECLARE y DOUBLE PRECISION; DECLARE z DOUBLE PRECISION;
 DECLARE tx DOUBLE PRECISION; DECLARE ty DOUBLE PRECISION; DECLARE tz DOUBLE PRECISION;
@@ -444,7 +450,7 @@ BEGIN
   BEGIN
     IF (act_t < t) THEN UPDATE ents e SET e.act_id = NULL, e.act_until = :t + 10 WHERE e.id = :eid;
     ELSE IF (NOT EXISTS (SELECT 1 FROM ents a JOIN ents d ON d.targetname = a.target AND d.classname = 'func_door' AND d.mv_state IN (1, 3) WHERE a.id = :act)) THEN
-      UPDATE ents e SET e.act_id = NULL, e.act_until = NULL WHERE e.id = :eid;
+      UPDATE ents e SET e.act_id = NULL, e.act_until = NULL, e.ideal_pitch = NULL WHERE e.id = :eid;
     ELSE
     BEGIN
       EXECUTE PROCEDURE bot_follow_route(eid, act, dist) RETURNING_VALUES moved;
@@ -455,6 +461,32 @@ BEGIN
   IF (act IS NOT NULL AND target = act) THEN EXECUTE PROCEDURE bot_act_spot(target) RETURNING_VALUES tx, ty, tz, cx, cy, cz;
   ELSE SELECT g.x, g.y, g.z FROM ents g WHERE g.id = :target INTO tx, ty, tz;
   IF (tx IS NULL OR x IS NULL) THEN EXIT;
+  -- a button to be shot (the activate goal's shoot): in sight within 1000, the view turned onto its middle and
+  -- the gun fired once the view is there (BotAimAtEnemy, BotCheckAttack with the button for the enemy)
+  IF (act IS NOT NULL AND target = act AND EXISTS (SELECT 1 FROM ents b WHERE b.id = :act AND b.classname = 'func_button' AND b.takedamage > 0)) THEN
+  BEGIN
+    EXECUTE PROCEDURE eye_of(eid) RETURNING_VALUES ex, ey, ez, fx, fy, fz;
+    IF (vlen(cx - ex, cy - ey, cz - ez) < 1000) THEN
+    BEGIN
+      EXECUTE PROCEDURE trace_move(eid, 0, 0, 0, 0, 0, 0, ex, ey, ez, cx, cy, cz, 1) RETURNING_VALUES f, hx, hy, hz, nx, ny, nz, sf, ct, als, sts, hit;
+      IF (hit = act OR f >= 0.999e0) THEN
+      BEGIN
+        yaw = vectoyaw(cx - ex, cy - ey);
+        UPDATE ents e SET e.ideal_yaw = :yaw, e.ideal_pitch = -ATAN2(:cz - :ez, vlen(:cx - :ex, :cy - :ey, 0)) * 57.29578e0 WHERE e.id = :eid;
+        EXECUTE PROCEDURE change_yaw(eid);
+        IF (EXISTS (SELECT 1 FROM ents e WHERE e.id = :eid AND e.attack_finished <= :t
+                      AND ABS(anglemod(e.yaw - :yaw + 180) - 180) < 8 AND ABS(e.pitch - COALESCE(e.ideal_pitch, 0)) < 8)) THEN
+        BEGIN
+          UPDATE ents e SET e.enemy_id = :act WHERE e.id = :eid;
+          EXECUTE PROCEDURE bot_fire(eid);
+          UPDATE ents e SET e.enemy_id = NULL, e.attack_finished = :t + fire_time(e.weapon) WHERE e.id = :eid;
+        END
+        moved = 1;
+        UPDATE OR INSERT INTO bot_routes (ent_id, target, dst_node, path, built, fails, prog_d, prog_t) VALUES (:eid, :target, NULL, NULL, :t, 0, NULL, :t) MATCHING (ent_id);
+        EXIT;
+      END
+    END
+  END
   SELECT r.target, r.dst_node, r.path, r.built, r.fails, r.prog_d, r.prog_t, r.last_node FROM bot_routes r WHERE r.ent_id = :eid INTO rtarget, odst, path, built, fails, prog_d, prog_t, last_n;
   fails = COALESCE(fails, 0);
   -- no progress toward the next node for a while (a corpse, a mover, a corner the steps slide along): stuck
@@ -1149,9 +1181,9 @@ BEGIN
   -- aim at the chest; a skilled bot leads projectiles by the target's velocity, a poor one aims where it was
   -- (an aim skill over 0.5 predicts the movement; without the character files, skill 3 and up)
   lead = IIF(IIF(askill IS NULL, skill >= 3, askill > 0.5e0), CASE w WHEN 16 THEN 1 / 900e0 WHEN 128 THEN 1 / 2000e0 WHEN 8 THEN 1 / 700e0 ELSE 0 END, 0);
-  SELECT o.x + o.vx * :lead * vlen(o.x - :ex, o.y - :ey, o.z - :ez) - IIF(:skill <= 2, o.vx * 0.1e0, 0),
-         o.y + o.vy * :lead * vlen(o.x - :ex, o.y - :ey, o.z - :ez) - IIF(:skill <= 2, o.vy * 0.1e0, 0),
-         o.z + (o.minz + o.maxz) / 2 + 8
+  SELECT o.x + o.vx * :lead * vlen(o.x - :ex, o.y - :ey, o.z - :ez) - IIF(:skill <= 2, o.vx * 0.1e0, 0) + IIF(o.solid = 4, (o.minx + o.maxx) / 2, 0),
+         o.y + o.vy * :lead * vlen(o.x - :ex, o.y - :ey, o.z - :ez) - IIF(:skill <= 2, o.vy * 0.1e0, 0) + IIF(o.solid = 4, (o.miny + o.maxy) / 2, 0),
+         o.z + (o.minz + o.maxz) / 2 + IIF(o.solid = 4, 0, 8)   -- (a brush model, a button shot at: its middle)
     FROM ents o WHERE o.id = :enemy INTO tx, ty, tz;
   dx = tx - ex; dy = ty - ey; dz = tz - ez;
   dl = vlen(dx, dy, dz);

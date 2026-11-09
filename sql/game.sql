@@ -767,10 +767,10 @@ BEGIN
       ELSE IF (tst = 0) THEN UPDATE ents e SET e.nextthink = e.ltime + e.wait_ WHERE e.id = (SELECT d.owner_id FROM ents d WHERE d.id = :tid) AND e.think = 'plat_go_down';
     END
   END
-  -- buttons are fired by touching the brush itself
+  -- buttons are fired by touching the brush itself (SP_func_button: one with health is shot, not touched)
   IF (spec = 1) THEN EXIT;
   FOR SELECT e.id FROM ents e
-       WHERE e.classname = 'func_button' AND e.mv_state = 1
+       WHERE e.classname = 'func_button' AND e.mv_state = 1 AND e.takedamage = 0
          AND e.x + e.maxx + 2 >= :px + :mnx AND e.x + e.minx - 2 <= :px + :mxx
          AND e.y + e.maxy + 2 >= :py + :mny AND e.y + e.miny - 2 <= :py + :mxy
          AND e.z + e.maxz + 2 >= :pz + :mnz AND e.z + e.minz - 2 <= :pz + :mxz
@@ -1182,10 +1182,9 @@ BEGIN
     EXIT;
   END
   IF (cls = 'func_button') THEN
-  BEGIN
-    UPDATE ents e SET e.takedamage = 0 WHERE e.id = :targ;
+    -- G_Damage: "shootable doors / buttons don't actually have any health": a hit uses one at rest (button_fire
+    -- does nothing to one on its way), and it stays shootable
     EXECUTE PROCEDURE button_fire(targ, attacker);
-  END
   ELSE IF (cls IN ('trigger_multiple', 'trigger_once')) THEN
   BEGIN
     UPDATE ents e SET e.takedamage = 0 WHERE e.id = :targ;

@@ -614,6 +614,8 @@ BEGIN
     act = NULL;
     SELECT FIRST 1 e.id, e.classname, e.x + e.minx, e.x + e.maxx, e.y + e.miny, e.y + e.maxy, e.z + e.minz, e.z + e.maxz FROM ents e
      WHERE e.target = :tn AND e.classname IN ('func_button', 'trigger_multiple')
+       -- (not one the map keeps the bots off: its "notbot" key)
+       AND NOT EXISTS (SELECT 1 FROM map_ents m WHERE m.classname = e.classname AND m.target = e.target AND m.nobots = 1)
      ORDER BY IIF(e.classname = 'func_button', 0, 1), e.id INTO act, acls, t0x, t1x, t0y, t1y, t0z, t1z;
     IF (act IS NULL) THEN CONTINUE;
     SELECT MIN(e.id), MIN(e.x + e.minx), MAX(e.x + e.maxx), MIN(e.y + e.miny), MAX(e.y + e.maxy), MIN(e.z + e.minz), MAX(e.z + e.maxz) FROM ents e

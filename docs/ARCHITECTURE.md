@@ -713,7 +713,12 @@ in the trigger that opens it waits for it; otherwise it takes the button as its 
 for 20 s, then none for 10) and `bot_follow_route` calls itself for the way there: to `bot_act_spot`, a player's
 box out from the button's face along the way it is pushed (`BotFuncButtonActivateGoal`), then into it, in steps
 that end against it, until the button fires and the door starts to open; then back to its goal, through the door.
-q3dm7's plate stays open 10 s, enough for the way from the button (about 120 tics in the test). When the next node is a plat's bottom and the one after its top, or the ride's start was just
+q3dm7's plate stays open 10 s, enough for the way from the button (about 120 tics in the test). A button with
+`health` is not touched but shot (`SP_func_button` gives it no touch; `G_Damage` uses a mover hit at rest, and it
+stays shootable): a bot with one for its activate goal heads for a spot 64 further out, and from wherever it sees
+the button's middle within 1000 units it turns its view onto it and fires once the view is there (`bot_fire` with
+the button for the enemy, aiming at a brush model's middle), the activate goal's `shoot`. A button the map marks
+`notbot` (the key the loader reads into `map_ents.nobots`) opens no door edges. When the next node is a plat's bottom and the one after its top, or the ride's start was just
 reached (`BotTravel_Elevator`), the bot waits beside the plat while it is not down (stepping on would be
 a fall into the shaft), walks onto it and to its middle when it is, and stands there while the plat takes
 it up (its trigger starts it, and keeps it up while touched); at the top the next node is a walk off.

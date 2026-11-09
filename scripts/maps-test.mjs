@@ -237,6 +237,42 @@ async function moverLoops(map) {
     `${map}: the looping sounds go with their movers (${before.size} placed, ${moved} of ${moving.length} moving ones followed)`);
 }
 
+// a button that wants shooting (oa_dm2's has "health" 1): walked into, it
+// stays (SP_func_button gives it no touch); a bot whose activate goal it is turns its view up onto it and shoots
+// it (the activate goal's shoot), and the door opens (G_Damage uses a mover hit at rest)
+async function shootButtons(map) {
+  const [btn] = await q(`SELECT e.id, e.target FROM ents e WHERE e.classname = 'func_button' AND e.takedamage > 0
+                           AND NOT EXISTS (SELECT 1 FROM map_ents m WHERE m.classname = e.classname AND m.target = e.target AND m.nobots = 1)
+                           AND EXISTS (SELECT 1 FROM ents d WHERE d.classname = 'func_door' AND d.targetname = e.target) ORDER BY e.id ROWS 1`);
+  if (!btn) return;
+  const [b] = await q("SELECT id FROM ents WHERE classname = 'bot' ROWS 1");
+  const pe = (await q('SELECT player_ent() pe FROM rdb$database'))[0].PE;
+  await db.exec(`UPDATE ents SET flags = BIN_OR(flags, 80) WHERE id = ${pe}`);
+  const [s] = (await db.query(`EXECUTE BLOCK RETURNS (sx DOUBLE PRECISION, sy DOUBLE PRECISION, sz DOUBLE PRECISION, cx DOUBLE PRECISION, cy DOUBLE PRECISION, cz DOUBLE PRECISION)
+                               AS BEGIN EXECUTE PROCEDURE bot_act_spot(${btn.ID}) RETURNING_VALUES sx, sy, sz, cx, cy, cz; SUSPEND; END`)).rows;
+  // walked into: the bot's box against the button's middle
+  const [bb] = await q(`SELECT x + minx x0, x + maxx x1, y + miny y0, y + maxy y1, z + minz z0, z + maxz z1 FROM ents WHERE id = ${btn.ID}`);
+  await db.exec(`UPDATE ents SET x = ${(bb.X0 + bb.X1) / 2}, y = ${(bb.Y0 + bb.Y1) / 2}, z = ${(bb.Z0 + bb.Z1) / 2} WHERE id = ${b.ID}`);
+  await db.exec(`EXECUTE PROCEDURE touch_triggers(${b.ID})`);
+  const [touched] = await q(`SELECT mv_state st FROM ents WHERE id = ${btn.ID}`);
+  await db.exec(`UPDATE ents SET x = ${s.SX}, y = ${s.SY}, z = ${s.SZ}, vx = 0, vy = 0, vz = 0, act_id = ${btn.ID}, act_until = (SELECT time_ + 20 FROM game), enemy_id = NULL,
+                 health = 100, weapon = 2, ammo2 = 100, nextthink = (SELECT time_ FROM game) WHERE id = ${b.ID}`);
+  await db.exec(`EXECUTE PROCEDURE link_ent(${b.ID})`);
+  const [goal] = await q("SELECT FIRST 1 id FROM ents WHERE classname = 'item' ORDER BY id");
+  let shot = -1, opened = -1, pitch = 0;
+  for (let i = 0; i < 120 && opened < 0; i++) {
+    await db.exec(`UPDATE ents SET goal_id = ${goal.ID}, nbg_id = NULL, nbg_check = 1e9, enemy_id = NULL WHERE id = ${b.ID}`);
+    await q('SELECT * FROM q3_tic(1, 0, 0, 0, 0, 0, 0, 1, 0)');
+    const [r] = await q(`SELECT e.pitch, (SELECT COUNT(*) FROM sound_events WHERE ent_id = e.id AND snd LIKE 'sound/weapons/%') snd,
+                                (SELECT MIN(d.mv_state) FROM ents d WHERE d.classname = 'func_door' AND d.targetname = '${btn.TARGET}') dst FROM ents e WHERE e.id = ${b.ID}`);
+    if (shot < 0 && r.SND > 0) { shot = i; pitch = r.PITCH; }
+    if (r.DST !== 1) opened = i;
+  }
+  assert(touched.ST === 1 && shot >= 0 && opened >= shot,
+    `${map}: a button that wants shooting stays when walked into (${touched.ST === 1}); a bot sent to it looks up at it (${pitch.toFixed(0)} degrees), shoots it (tic ${shot}) and its door opens (tic ${opened})`);
+  await db.exec(`UPDATE ents SET flags = BIN_AND(flags, BIN_NOT(80)) WHERE id = ${pe}`);
+}
+
 for (const m of index) {
   const pk3 = new Pk3(fs.readFileSync(path.join(dir, m.file)).buffer);
   pk3.label = m.pack;
@@ -263,6 +299,7 @@ for (const m of index) {
     await targetPushes(m.map);
     await plats(m.map);
     await bobs(m.map);
+    await shootButtons(m.map);
     await mirrors(m.map, bsp);
     await areaPortals(m.map);
     await shooters(m.map);
