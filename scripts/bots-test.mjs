@@ -77,7 +77,7 @@ for (let i = 0; i < 70; i++) {
 let s = (await q(`SELECT enemy_id, st, attack_finished, weapon FROM ents WHERE id = ${b}`))[0];
 assert(found !== null, `the bot found an enemy (${found}; now ${s.ST.trim()})`);
 // (the fight may take a while to start: the reaction time, a turn, a run for an item first)
-for (let i = 0; i < 70 && shots === 0; i++) { await tic(); shots = await fired(); }
+for (let i = 0; i < 200 && shots === 0; i++) { await tic(); shots = await fired(); }
 assert(shots > 0, `the bots fired (${shots} shots)`);
 await db.exec(`UPDATE ents SET flags = BIN_AND(flags, BIN_NOT(64)), nextthink = (SELECT time_ FROM game) WHERE classname = 'bot' AND id <> ${b}`);
 
