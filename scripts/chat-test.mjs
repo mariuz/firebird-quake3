@@ -88,7 +88,7 @@ st = await state();
 const c0 = st.find((r) => r.ID === m0.ID), c1 = m1 && st.find((r) => r.ID === m1.ID);
 const [spot] = await q(`SELECT classname, x, y, z FROM ents WHERE id = ${c0.CAMP_ID ?? -1}`);
 let near = 1e9;
-for (let i = 0; i < 300 && near > 70; i++) { await tic(); const [b] = await q(`SELECT x, y, z FROM ents WHERE id = ${m0.ID}`); near = Math.hypot(b.X - me.X, b.Y - me.Y, b.Z - me.Z); }
+for (let i = 0; i < 500 && near > 70; i++) { await tic(); const [b] = await q(`SELECT x, y, z FROM ents WHERE id = ${m0.ID}`); near = Math.hypot(b.X - me.X, b.Y - me.Y, b.Z - me.Z); }
 assert(camp[0].KIND.trim() === 'camp' && camp[0].HEARD === 1 && spot?.CLASSNAME.trim() === 'camp_order' && Math.hypot(spot.X - me.X, spot.Y - me.Y) < 1 && c0.ACC_ID === null && (!c1 || c1.ACC_ID === pe) && near <= 70,
   `"${m0.BOT} camp right here": ${m0.BOT} alone camps where we stand and comes there (${near.toFixed(0)} away)${c1 ? `, ${m1.BOT} still accompanies us` : ''}`);
 

@@ -66,7 +66,7 @@ let lastFxId = 0;
 let frameNo = 0;
 let scores = [];
 const state = new FrameState();
-const settings = { map: 'q3dm1', detail: 'medium', sfx: 70, music: 40, musicMode: 'tracks', skill: 2, bots: 3, fov: 90, renderer: 'fast', brightness: 4, predict: true, fraglimit: 20, timelimit: 10, rotate: true, name: 'Player', model: 'sarge/default', rail: 4, gametype: 'ffa', team: 'auto', botai: 1, chatModel: false };
+const settings = { map: 'q3dm1', detail: 'medium', sfx: 70, music: 40, musicMode: 'tracks', skill: 2, bots: 3, fov: 90, renderer: 'fast', brightness: 4, predict: true, fraglimit: 20, timelimit: 10, rotate: true, name: 'Player', model: 'sarge/default', rail: 4, gametype: 'ffa', team: 'auto', botai: 3, chatModel: false };
 try { Object.assign(settings, JSON.parse(localStorage.getItem('firebird-quake3:settings') || '{}')); } catch { /* defaults */ }
 const saveSettings = () => { try { localStorage.setItem('firebird-quake3:settings', JSON.stringify(settings)); } catch { /* ignore */ } };
 const viewWidth = () => (settings.detail === 'high' ? 640 : settings.detail === 'low' ? 160 : 320);
@@ -811,8 +811,9 @@ function startEmbedder() {
 $('chatmodel').checked = settings.chatModel;
 $('chatmodel').addEventListener('change', (e) => { settings.chatModel = e.target.checked; saveSettings(); if (e.target.checked) startEmbedder(); });
 if (settings.chatModel) startEmbedder();
-// the bots' fight moves: Quake III's, the learned ones (sql/bots.sql bot_rl_move, the table of src/botq.js), or
-// learned and learning on while we play (the table then kept in the browser's storage when a match ends)
+// the bots' fight moves: Quake III's, the network's (sql/bots.sql bot_rl_move and bot_nn_best, the weights of
+// src/botnn.js), the table's (src/botq.js), or the table's and learning on while we play (the table then kept in
+// the browser's storage when a match ends)
 $('botai').value = String(settings.botai);
 $('botai').addEventListener('change', (e) => {
   settings.botai = Number(e.target.value); saveSettings();

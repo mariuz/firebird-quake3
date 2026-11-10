@@ -88,10 +88,11 @@
           <option value="sql">Software: SQL projects every vertex</option>
           <option value="gl">WebGL: a port of Quake III's renderer</option>
         </select></label>
-        <label title="How the bots move in a fight: as Quake III's bots do, by what they learned in self-play (reinforcement learning: a Q table in the database), or learned and still learning while you play (kept in this browser)">Bot AI <select id="botai">
+        <label title="How the bots move in a fight: as Quake III's bots do, by what a small neural network learned from self-play (deep Q-learning; its forward pass runs in SQL), by a Q table learned the same way, or by the table while it goes on learning as you play (kept in this browser)">Bot AI <select id="botai">
           <option value="0">Quake III</option>
-          <option value="1">Learned</option>
-          <option value="2">Learning</option>
+          <option value="3">Learned: network</option>
+          <option value="1">Learned: table</option>
+          <option value="2">Learning: table</option>
         </select></label>
         <label title="Draw your own position predicted ahead of the last 20 Hz tic (cg_nopredict 0); off shows where the database last put you">Predict <input id="predict" type="checkbox"></label>
         <label title="Sound effects volume">Sound <input id="sfxvol" type="range" min="0" max="100" step="5"></label>
