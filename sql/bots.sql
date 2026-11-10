@@ -2021,14 +2021,15 @@ BEGIN
       EXECUTE PROCEDURE bot_follow_route(eid, goal, spd) RETURNING_VALUES moved;
       IF (moved <= 0) THEN EXECUTE PROCEDURE move_to_goal(eid, goal, spd);
     END
-    -- the learned fight move (bot_rl_move), with the enemy in sight; where it knows nothing, Quake III's below
-    ELSE IF (bot_rl_move(eid, enemy, vis, rlm, d, ez - z, w, spd) = 1) THEN BEGIN END
     ELSE IF ((vis = 0 OR ABS(ez - z) > 48 OR d > 900) AND aggr > 50) THEN
     BEGIN
       -- out of sight, or on another floor: hunt it along the waypoints (and over the jump pads)
       EXECUTE PROCEDURE bot_follow_route(eid, enemy, spd) RETURNING_VALUES moved;
       IF (moved <= 0) THEN EXECUTE PROCEDURE move_to_goal(eid, enemy, spd);
     END
+    -- the learned fight move (bot_rl_move), with the enemy in sight and within reach on this floor (the hunt above
+    -- is the way there, not a move of the fight); where it knows nothing, Quake III's below
+    ELSE IF (bot_rl_move(eid, enemy, vis, rlm, d, ez - z, w, spd) = 1) THEN BEGIN END
     ELSE IF (vis = 0) THEN BEGIN END   -- no chase in it and nothing to run for: it waits where it is
     ELSE IF (d > 350 OR w = 1) THEN EXECUTE PROCEDURE move_to_goal(eid, enemy, spd);
     ELSE IF (RAND() < bot_cv(eid, 'attack_skill', bot_char(skill, 'strafe'))) THEN
