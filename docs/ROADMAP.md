@@ -77,7 +77,7 @@ fuzzy logic from the botfiles. What that leaves out:
 | --- | --- |
 | **Networking** | none, by design: one player, local bots. Snapshots, prediction, delta compression, the master server do not apply |
 | **Console commands and cvars** | the SQL console replaces them; there is no `bind`, `cg_fov` and friends are settings in `localStorage` |
-| **Demos, the rest** | recorded and played back (see §8); no seeking, pausing or slow motion in a demo (Quake III has `timescale`), no free camera, and the file is the tables' rows as JSON, not a `.dm_68` |
+| **Demos, the rest** | recorded and played back, paused, seeked and slowed or sped up (see §8); no free camera, and the file is the tables' rows as JSON, not a `.dm_68` |
 | **Light styles** | not in the demo maps |
 | **File system** | the page stacks the demo's pak, the pk3s picked from disk and one hosted map pack (`PakSet`); the game searches every `pak*.pk3` in `baseq3` and a mod directory at once, and a picked pk3's models, sounds and bot files are not read again (its maps and shaders are) |
 | **The menu, key binding** | the page's controls do this, the name, the model and the rail's colour played among them (*Name*, *Model*: every player model of the pak with its own skins, *Rail*: `color1`); no key binding |
@@ -113,7 +113,8 @@ loser to the back of the queue and the arena restarted for the next: `npm run te
 joining and leaving mid-game (`addbot` at a skill and `kick` from the page's menus: `G_AddBot`,
 `ClientDisconnect`, the goodbye of `BotChat_ExitGame`), demos (`record`, `demo`: every snapshot kept as rows, the
 entities delta-compressed against the last, played back into the tables the frame reads with the game not
-running, saved to a file and loaded back: `sql/demo.sql`, `npm run test:demo`), save games (Quake II's, which
+running, saved to a file and loaded back, paused (P), seeked (a slider, ← and →: `demo_seek`) and played at ¼× to 4×
+(`timescale`): `sql/demo.sql`, `npm run test:demo`), save games (Quake II's, which
 Quake III dropped: the tables play changes to a file or the browser's storage, F5 and F9, and back on a fresh
 arena: `sql/save.sql`, `npm run test:save`), the bots' activate goals (`BotGetActivateGoal`: a door
 opened by a button or a trigger elsewhere is an edge of the graph marked with it, taken when nothing else leads

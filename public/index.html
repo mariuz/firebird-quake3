@@ -100,6 +100,8 @@
         <select id="kickbot" title="A bot leaves the match now (kick)"><option value="">Remove bot…</option></select>
         <button id="record" type="button" title="Record a demo of the match (record): every snapshot from now until Stop or the end of the arena">Record</button>
         <select id="demos" title="Play a demo recorded or loaded here (demo): its arena loads and the match is watched as it was played; at its end the arena starts again"><option value="">Demos…</option></select>
+        <span id="demobar" hidden><input id="demoseek" type="range" min="0" max="1" step="0.05" value="0" title="Where the demo is: drag to seek (← and → skip 5 s; P pauses)">
+          <select id="demospeed" title="Playback speed (timescale)"><option value="0.25">¼×</option><option value="0.5">½×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option></select></span>
         <button id="savedemo" type="button" title="Save the newest demo to a file">Save demo</button>
         <label title="Play a demo file saved here">Load demo <input id="demofile" type="file" accept=".json,application/json"></label>
         <button id="savegame" type="button" title="Save the game as it stands to a file (F5 saves it in the browser, F9 loads that)">Save game</button>

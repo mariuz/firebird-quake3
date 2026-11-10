@@ -278,4 +278,30 @@ BEGIN
   SUSPEND;
 END^
 
+-- seeking (the page's slider, and its keys): the tables as the snapshot before `n` left them, all at once (each
+-- entity's last row up to there, those gone left out, the console's last lines), so that the next demo_play(1)
+-- shows snapshot `n` itself with its sounds and effects
+CREATE OR ALTER PROCEDURE demo_seek (n INTEGER)
+AS
+DECLARE d INTEGER; DECLARE last_n INTEGER;
+BEGIN
+  SELECT g.demo_play FROM game g WHERE g.id = 1 INTO d;
+  IF (d IS NULL) THEN EXIT;
+  SELECT COUNT(*) - 1 FROM demo_frames f WHERE f.demo_id = :d INTO last_n;
+  n = MAXVALUE(0, MINVALUE(n, last_n));
+  DELETE FROM ents;
+  INSERT INTO ents (id, classname, model_id, frame, skin, effects, x, y, z, vx, vy, vz, pitch, yaw, roll, minx, miny, minz, maxx, maxy, maxz, solid, movetype, flags, health, deadflag, st, alpha, weapon, pmodel, pskin, color1, legs_anim, legs_time, torso_anim, torso_time, award, award_time, waterlevel, watertype, quad_finished, haste_finished, invis_finished, regen_finished, enviro_finished, leaf, cluster, clusters, area1, area2, loop_sound, count_, bot, pteam, queued, frags, deaths, wins, losses, spec_time, viewheight, body_of, owner_id, item, armor, n_excellent, n_impressive, n_gauntlet, acc_shots, acc_hits, lx, ly, lz)
+    SELECT x.id, x.classname, x.model_id, x.frame, x.skin, x.effects, x.x, x.y, x.z, x.vx, x.vy, x.vz, x.pitch, x.yaw, x.roll, x.minx, x.miny, x.minz, x.maxx, x.maxy, x.maxz, x.solid, x.movetype, x.flags, x.health, x.deadflag, x.st, x.alpha, x.weapon, x.pmodel, x.pskin, x.color1, x.legs_anim, x.legs_time, x.torso_anim, x.torso_time, x.award, x.award_time, x.waterlevel, x.watertype, x.quad_finished, x.haste_finished, x.invis_finished, x.regen_finished, x.enviro_finished, x.leaf, x.cluster, x.clusters, x.area1, x.area2, x.loop_sound, x.count_, x.bot, x.pteam, x.queued, x.frags, x.deaths, x.wins, x.losses, x.spec_time, x.viewheight, x.body_of, x.owner_id, x.item, x.armor, x.n_excellent, x.n_impressive, x.n_gauntlet, x.acc_shots, x.acc_hits, x.x, x.y, x.z FROM demo_ents x
+     WHERE x.demo_id = :d AND x.gone = 0
+       AND x.n = (SELECT MAX(y.n) FROM demo_ents y WHERE y.demo_id = :d AND y.id = x.id AND y.n < :n);
+  DELETE FROM messages;
+  INSERT INTO messages (id, time_, msg)
+    SELECT NEXT VALUE FOR msg_seq, t.time_, t.msg FROM (
+      SELECT FIRST 7 f.time_, m.msg, m.n, m.k FROM demo_msgs m JOIN demo_frames f ON f.demo_id = m.demo_id AND f.n = m.n
+       WHERE m.demo_id = :d AND m.n < :n ORDER BY m.n DESC, m.k DESC) t ORDER BY t.n, t.k;
+  DELETE FROM sound_events;
+  DELETE FROM fx_events;
+  UPDATE game g SET g.demo_n = :n - 1 WHERE g.id = 1;
+END^
+
 SET TERM ; ^

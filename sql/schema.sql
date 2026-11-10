@@ -711,6 +711,8 @@ CREATE TABLE demo_ents (
   PRIMARY KEY (demo_id, n, id)
 );
 -- what the last snapshot said of each entity (the delta's base: the client's previous snapshot)
+-- (an entity's last row up to a snapshot: demo_seek)
+CREATE INDEX demo_ents_id ON demo_ents (demo_id, id, n);
 CREATE TABLE demo_last (
   id INTEGER NOT NULL PRIMARY KEY,
   classname VARCHAR(40),

@@ -49,7 +49,9 @@ let running = false;
 let paused = false;
 let recording = false;     // a demo being recorded (sql/demo.sql: q3_tic keeps each snapshot)
 let demoPlaying = false;   // a demo playing: demo_play gives the tic rows, the game does not run
-let saving = false;        // a save game being written or read: the game waits (its tables are read or replaced)
+let saving = false;
+let demoSpeed = 1;         // a demo's playback speed (timescale): the tics come that much faster or slower
+let demoInfo = null;       // the demo playing: { id, start: its first snapshot's time, seconds }        // a save game being written or read: the game waits (its tables are read or replaced)
 let lastTic = 0;
 let lastSoundId = 0;
 let lastFxId = 0;
@@ -99,6 +101,7 @@ window.addEventListener('keydown', (e) => {
   if (e.code === 'Tab') scoreboard = true;
   if (e.code === 'KeyZ') zoom(true);
   if (e.code === 'KeyP' || e.code === 'Pause') paused = !paused;
+  if (demoPlaying && (e.code === 'ArrowLeft' || e.code === 'ArrowRight') && last) seekDemo(last.TIME_ - demoInfo.start + (e.code === 'ArrowLeft' ? -5 : 5)).catch((err) => console.error(err));
   // quick save and quick load (Quake II's F6 and F9 are F5 and F9 here), into the browser's storage
   if (e.code === 'F5' || e.code === 'F9') {
     e.preventDefault();
@@ -246,6 +249,7 @@ async function ensureMap(name) {
 async function startMap(name) {
   running = false;
   demoPlaying = false;
+  $('demobar').hidden = true;
   if (recording) { recording = false; $('record').textContent = 'Record'; }
   await ensureMap(name);
   setStatus(`Loading ${name} into Firebird…`);
@@ -385,9 +389,10 @@ async function frame() {
     const dt = frameAt ? Math.min(0.1, (now - frameAt) / 1000) : 0.016;
     frameAt = now;
     let ticked = 0, t;
-    if (now - lastTic >= TIC_MS) {
-      const tics = Math.min(2, Math.floor((now - lastTic) / TIC_MS));   // at most two tics a frame: better slow motion than a stall
-      lastTic += tics * TIC_MS;
+    const ticMs = demoPlaying ? TIC_MS / demoSpeed : TIC_MS;   // (a demo at its speed)
+    if (now - lastTic >= ticMs) {
+      const tics = Math.min(demoPlaying ? 8 : 2, Math.floor((now - lastTic) / ticMs));   // at most two tics a frame: better slow motion than a stall
+      lastTic += tics * ticMs;
       if (now - lastTic > 200) lastTic = now;
       t = performance.now();
       prev = last;
@@ -411,7 +416,7 @@ async function frame() {
         return;
       }
     }
-    const alpha = Math.max(0, Math.min(1, (now - lastTic) / TIC_MS));
+    const alpha = Math.max(0, Math.min(1, (now - lastTic) / ticMs));
     const view = viewRow(alpha, now);
 
     t = performance.now();
@@ -466,6 +471,7 @@ async function frame() {
     perf.draw = performance.now() - t;
     updateStats(ticked);
     if (ticked) { const sp = $('spectate'), label = last.SPECTATOR ? 'Join' : 'Spectate'; if (sp.textContent !== label) sp.textContent = label; }
+    if (ticked && demoPlaying && demoInfo && document.activeElement !== $('demoseek')) $('demoseek').value = String(Math.max(0, last.TIME_ - demoInfo.start));
   } catch (err) {
     console.error(err);
     setStatus(`Error: ${err.message}`, true);
@@ -659,9 +665,25 @@ async function playDemo(id) {
   renderer.particles = []; state.explosions = []; state.beams = [];
   lastTic = performance.now() - TIC_MS;
   prev = null; prevPose = null; curPose = null; frameAt = 0;
+  const [f] = (await db.query('SELECT MIN(time_) t0, MAX(time_) - MIN(time_) s FROM demo_frames WHERE demo_id = ?', [id])).rows;
+  demoInfo = { id, start: f.T0, seconds: f.S };
+  $('demoseek').max = String(f.S); $('demoseek').value = '0';
+  $('demobar').hidden = false;
   demoPlaying = true;
   running = true;
 }
+// seeking a demo (the slider, ← and →): to the snapshot at that time; the next tic shows it
+async function seekDemo(seconds) {
+  if (!demoPlaying || !demoInfo) return;
+  const s = Math.max(0, Math.min(demoInfo.seconds, seconds));
+  const [r] = (await db.query('SELECT MIN(n) n FROM demo_frames WHERE demo_id = ? AND time_ >= ?', [demoInfo.id, demoInfo.start + s - 1e-6])).rows;
+  await db.exec(`EXECUTE PROCEDURE demo_seek(${r.N ?? 0})`);
+  renderer.particles = []; state.explosions = []; state.beams = [];
+  prev = null; prevPose = null; curPose = null;
+  lastTic = performance.now() - TIC_MS / demoSpeed;
+}
+$('demoseek').addEventListener('input', (e) => seekDemo(Number(e.target.value)).catch((err) => console.error(err)));
+$('demospeed').addEventListener('change', (e) => { demoSpeed = Number(e.target.value) || 1; });
 $('demos').addEventListener('focus', () => refreshDemos().catch((err) => console.error(err)));
 $('demos').addEventListener('change', (e) => {
   const id = Number(e.target.value);

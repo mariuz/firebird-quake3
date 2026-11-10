@@ -87,6 +87,21 @@ const [r2] = await q('SELECT * FROM demo_play(2)');
 const [r3] = await q('SELECT * FROM demo_play(2)');
 assert(sig(r2) === live[1].row && sig(r3) === live[3].row, `two tics a call: the 2nd and 4th snapshots (${r2.TIC}, ${r3.TIC})`);
 
+// seeking (the page's slider): forward, back, past the end; each lands on the snapshot as it was painted (its models
+// and poses), and playing on from there goes on from it
+{
+  const at = async (n) => { await db.exec(`EXECUTE PROCEDURE demo_seek(${n})`); const [row] = await q('SELECT * FROM demo_play(1)'); return { row, fr: await frameOf(row) }; };
+  const t0 = performance.now();
+  const a = await at(60);
+  const ms = performance.now() - t0;
+  const b = await at(10);
+  const [c] = await q('SELECT * FROM demo_play(1)');
+  const e = await at(1000);
+  const ok = (x, i) => sig(x.row) === live[i].row && x.fr.models === live[i].frame.models;
+  assert(ok(a, 60) && ok(b, 10) && sig(c) === live[11].row && sig(e.row) === live[119].row,
+    `seeking: to the 61st snapshot (${ms.toFixed(0)} ms), back to the 11th and on to the 12th, past the end to the last: each as painted (${ok(a, 60)}, ${ok(b, 10)}, ${sig(c) === live[11].row}, ${sig(e.row) === live[119].row})`);
+}
+
 // saved to a file and loaded back (the page's Save and Load): the same demo under a new id
 const text = JSON.stringify(await exportDemo(db, did));
 const did2 = await importDemo(db, JSON.parse(text));

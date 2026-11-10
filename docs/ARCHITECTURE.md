@@ -1188,7 +1188,11 @@ changed entities `MERGE`d back into `ents`, the gone deleted, the sounds, effect
 new ids, the clock and the eye set as recorded), and the last one's frame row comes back as `q3_tic` would
 return it. `frame_all`, the painters, the HUD and the sound play it as they play the game; `viewRow`
 interpolates the recorded view between two snapshots and the mouse moves nothing (cgame's playback is the same,
-`CG_InterpolatePlayerState`). Past the last snapshot the row says `exit_kind` 3 and the arena starts again. *Save
+`CG_InterpolatePlayerState`). Past the last snapshot the row says `exit_kind` 3 and the arena starts again. While a demo plays, P pauses it, the
+speed menu plays it at ¼× to 4× (`timescale`: the loop's tic interval divided by it, up to eight tics a call), and the
+slider, ← and → (5 s back or on) seek: `demo_seek(n)` puts the tables as the snapshot before `n` left them in one
+statement (each entity's last row up to there, by the `demo_ents (demo_id, id, n)` index, those gone left out, the
+console's last lines), and the next `demo_play(1)` shows `n` itself; a seek takes about 30 ms. *Save
 demo* writes the newest demo's rows to a JSON file, *Load demo* reads one back under a new id and plays it
 (`src/demo.js`; about 30 KB a second of play). `npm run test:demo` records six seconds of moving and firing with
 three bots, plays them back and checks every snapshot gives what was painted: the row, the models and poses in
