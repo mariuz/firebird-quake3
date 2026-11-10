@@ -612,6 +612,86 @@ substitution of `syn.c`, the typing delay (Quake III's bots stand still for the 
 at their `CHAT_CPM`), the chat balloon and `hit_talking`, and replies to what the player says. The HUD
 wraps long console lines.
 
+### Talking to the bots: `chat.sql`, EmbeddingGemma 2
+
+botlib reads what a teammate says by matching its words against `match.c`'s templates (`BotMatchMessage`) and
+acts on it in `ai_cmd.c` (`BotMatch_HelpAccompany`, `_Camp`, `_GetItem`, `_Kill`, `_Dismiss`, `_WhereAreYou`,
+`_WhatAreYouDoing`). The port has the same orders but matches by meaning. `src/intents.js` lists the intents
+(accompany, camp, dismiss, kill, get with an item's class, whereareyou, whatareyoudoing, hello, taunt, praise,
+and small talk that asks nothing) with a few ways of saying each, 94 phrases in all. `scripts/embed-intents.mjs`
+embeds them once with Google's EmbeddingGemma 2 (`onnx-community/embeddinggemma-2-ONNX`, the text model alone at
+4 bits, the task prefix for sentence similarity, the leading 128 of its 768 dimensions normalized again, its
+Matryoshka truncation) into `src/intentvecs.js`, and the loader puts them in `bot_phrase_dims`, a row a dimension.
+On the page, T or Y opens the *Say* line; with *Understand* ticked `src/chat.js` fetches Transformers.js and the
+model (175 MB once, then the browser's cache; WebGPU only: the quantized builds keep the embedding table
+quantized, which onnxruntime's WebAssembly backend cannot run), embeds the line the same way and passes the
+128 numbers to `player_say(msg, vec)`. That is all the JavaScript does: the text becomes numbers. In SQL the
+vector goes into a temporary table and the cosine similarity to every phrase is one join and a `SUM(d.v * s.v)`
+grouped by phrase; the best phrase's intent is what was meant, if it reaches 0.905 (the model rates any two
+short lines about 0.9 alike: of the test lines the unrelated ones reach 0.898 at most, the meant ones 0.912 at
+least). Without a vector a phrase has to be in the line word for word.
+
+An order is for the bots of the player's team, those named in the line or all of them, as only a teammate is
+obeyed in Quake III; in a free-for-all the console says so. `bot_take_order` then does it: *accompany* is
+`bot_order_accompany` (the bot answers `accompany_start` and comes); *camp* spawns a `camp_order` entity where
+the player stands and sets it as the bot's camp spot for 600 s (`TEAM_CAMP_TIME`); *get* sets `ents.get_id` to
+the nearest item of the class for 60 s, which `bot_think` keeps as the goal until the bot has taken it (not
+merely come within 40 units) or sees it gone, saying `getitem_gotit` or `getitem_notthere`; *kill* sets the
+enemy, named or the nearest, for 180 s; *dismiss* clears them all. A question is answered by the bots named, the
+team, or the nearest bot, from the bots' chat files: `location` with the nearest item's name, and `accompanying`,
+`camping`, `gettingitem`, `killing` or `roaming` by what it is doing. `npm run test:chat` runs without the model
+on 25 lines embedded beforehand (`scripts/say-fixtures.json`): none of them is a phrase of the list, one is
+French, three are small talk, and all are understood; then in a team game the team follows, one bot named camps
+where we stand, fetches the rocket launcher and says it has it, the team stands down and goes after an enemy.
+
+### The learned fight moves: `bot_rl_move`, a Q table and a network
+
+Quake III's bots move in a fight by `BotAttackMove`: closer when far, a strafe by the attack skill, a jump or a
+crouch by the character. On top of that the port's bots learn. Every 0.4 s a bot fighting an enemy in sight
+chooses among six moves: advance, strafe left, strafe right, back off, hold, or Quake III's own move. The
+state it chooses by has 432 values (`bot_rl_state`): its gun (gauntlet, machinegun/shotgun/lightning, railgun, a
+missile gun), the enemy's (gauntlet, hitscan, missile), the distance (under 150, 350, 700, beyond), its health
+(under 50, under 100, more) and the enemy below, level or above. `bot_q` holds, for each state and move, the
+return expected (Q) and the tries. The reward of a move is the health the bot took off others less what it
+lost while on it (`ents.rl_given`, `rl_taken`, counted in `t_damage`), 50 more for a frag and 50 less for
+dying; `bot_rl_learn` is tabular Q-learning, Q ← Q + 0.1 (r + 0.8 max Q(s′) − Q), with nothing to follow at a
+fight's end. `game.bot_rl` (the page's *Bot AI*) is 0 for Quake III's moves alone, 1 to play the table,
+2 to go on learning it (two moves in five at random, an untried one first; the table is kept in the browser's
+storage when a match ends), 3 for the network below. Playing the table, a bot leaves Quake III's move only for one tried 15 times or more in that
+state and rated 3 health points above it, so where the table knows little the bot is Quake III's; and a
+move in two (skill 1) to one in thirty (skill 5) is random.
+
+The shipped table (`src/botq.js`) comes from self-play: `scripts/rl-train.mjs` has six bots fight each other
+on q3dm1, q3tourney2 and q3dm17, set on one another every second and dealt random guns every twenty, about five
+learning steps a second a process. Three rounds of it (69,000 moves scored) gave the table, and the
+table does not play better than Quake III's moves: over four matches of twenty minutes on q3dm1 and q3dm17, two
+bots on the table against two on Quake III's moves and then the other way about (`--eval`, `SWAP=1`: which bots
+they are decides a match more than how they move), the table's bots made 432 frags to 506. A single move's
+reward is mostly chance (its spread is some 37 health points), and a table that averages the last twenty tries
+of each of 2,592 cells follows the noise.
+
+**The network.** The same choice by a network, `game.bot_rl` 3, the default. With `LOG=1` the self-play writes
+every move to `bot_rl_log`: twelve features of the fight (the two gun classes one-hot, the distance, the health
+and armour, the enemy's height, the quad), the move, its reward and the move that followed; 21,417 of them from
+the third round. `scripts/rl-deep.mjs` learns from that log alone, offline, with no library: a perceptron
+12 → 32 → 32 → 6 trained by Double DQN (the online network chooses the next move, a copy that follows it every
+500 steps rates it; van Hasselt et al. 2016) with the conservative penalty of CQL (Kumar et al. 2020), which
+pushes down the moves a state's log has little of, since a fixed log cannot correct a guess about an untried
+move; Huber loss, Adam, minibatches of 128 drawn again and again from the whole log. The weights ship as rows
+(`src/botnn.js` into `bot_nn(l, j, i, w)`, 1,670 of them), and `bot_nn_best` is the forward pass in SQL: the
+inputs go into the temporary table `nn_x`, and each layer is one `INSERT … SELECT j, SUM(w.w * x.v) … GROUP BY
+j` joining the layer's nonzero inputs to their weights, `MAXVALUE(0, …)` the ReLU; 3.3 ms a pass, once in
+0.4 s for a bot in a fight. The bot leaves Quake III's move only for one the network rates 3 health points
+above it. Over eight matches of the same kind the network's bots made 970 frags to 908 (485 to 425, then 485
+to 483) and were ahead in four: seven percent, about one and a half times what chance alone gives, so not
+worse than Quake III's moves and perhaps a little better; that is all the numbers say. The script can also
+train an ensemble (`ENSEMBLE=5`: bootstrapped DQN, Osband et al. 2016, each member on its own resample of the
+log) and distil into one network the lower confidence bound of each move's advantage over Quake III's, so that
+it leaves that move only where the members agree; that one kept Quake III's move in 79 percent of the logged
+states and made 951 frags to 933, no better, and is not what ships. `npm run test:rl` checks the Q-learning
+step's arithmetic, the table's rule, the SQL pass against the same pass in JavaScript on the shipped weights
+(to 1e-13), and that two bots fighting with the learning on fill the table and the log.
+
 ## 7. The waypoint graph: `waypoints.sql`
 
 Quake III's bots navigate an *area awareness system* (AAS) compiled offline from the map. This port
@@ -1249,6 +1329,8 @@ passes in Node is what runs in the browser.
 | `npm run test:dm7`, `test:dm17` | the smoke test on the other arenas (q3dm17 for the pads) |
 | `npm run test:bots` | `bots-test.mjs`: four bots join, see, fire, die, respawn, pick up a weapon, a bot hunts the player from the farthest spawn over the graph, a minute of play scores frags and strands nobody |
 | `npm run test:bots:dm17` | the same on q3dm17, plus: the bots take the jump pads |
+| `npm run test:chat` | `chat-test.mjs`: 25 lines embedded beforehand are understood by meaning, and in a team game the bots follow, camp, fetch, stand down and hunt as told |
+| `npm run test:rl` | `rl-test.mjs`: the Q-learning step, the table's rule, the network's pass in SQL against JavaScript's, two bots learning as they fight |
 | `npm run test:demo` | `demo-test.mjs`: a demo recorded on q3dm1 and played back gives every snapshot as it was painted, saved to JSON and loaded back too |
 | `npm run test:save` | `save-test.mjs`: a game saved in a fight, played on, loaded on a fresh arena is back as saved, row for row, and plays on |
 | `npm run test:bots:dm7` | the same on q3dm7, plus: a bot after an item under the floor plate presses the button that opens it |

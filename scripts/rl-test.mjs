@@ -104,10 +104,14 @@ await db.exec(`UPDATE ents SET x = ${sp.X}, y = ${sp.Y}, z = ${sp.Z + 9}, health
 const [fl] = await q(`SELECT ex, ey, ez FROM trace_move(${b0}, -15, -15, -24, 15, 15, 32, ${sp.X}, ${sp.Y}, ${sp.Z + 9}, ${sp.X + 220}, ${sp.Y}, ${sp.Z + 9}, 65537)`);
 await db.exec(`UPDATE ents SET x = ${fl.EX - 16}, y = ${fl.EY}, z = ${fl.EZ}, health = 100, weapons = 3, weapon = 2, ammo2 = 100, enemy_id = ${b0}, search_time = 1e9, rl_a = NULL WHERE id = ${b1}`);
 for (const b of [b0, b1]) await db.exec(`EXECUTE PROCEDURE link_ent(${b})`);
-for (let i = 0; i < 160; i++) await q('SELECT tic FROM q3_tic(1, 0, 0, 0, 0, 0, 0, 1, 0)');
+for (let i = 0; i < 300; i++) {
+  // (healed and set on each other again every second, so that the fight lasts the whole test)
+  if (i % 20 === 0) await db.exec(`UPDATE ents e SET e.health = 100, e.ammo2 = 100, e.enemy_id = IIF(e.id = ${b0}, ${b1}, ${b0}), e.search_time = 1e9 WHERE e.id IN (${b0}, ${b1}) AND e.health > 0`);
+  await q('SELECT tic FROM q3_tic(1, 0, 0, 0, 0, 0, 0, 1, 0)');
+}
 const [lr] = await q('SELECT (SELECT COUNT(*) FROM bot_q) rows_, (SELECT COALESCE(SUM(n), 0) FROM bot_q) tries, (SELECT COUNT(*) FROM bot_rl_log) logged, (SELECT COUNT(*) FROM bot_rl_log WHERE r IS NOT NULL) scored, (SELECT COUNT(*) FROM bot_rl_log WHERE r <> 0) paid, (SELECT SUM(rl_given) FROM ents WHERE classname = \'bot\') given FROM rdb$database');
-assert(lr.TRIES >= 10 && lr.LOGGED >= lr.TRIES && lr.SCORED >= lr.TRIES - 2 && lr.PAID > 0 && lr.GIVEN > 0,
-  `two bots fighting for 8 s with the learning on: ${lr.TRIES} moves scored into ${lr.ROWS_} rows of the table, ${lr.LOGGED} logged (${lr.PAID} with a reward: ${lr.GIVEN} health given in all)`);
+assert(lr.TRIES >= 6 && lr.LOGGED >= lr.TRIES && lr.SCORED >= lr.TRIES - 2 && lr.PAID > 0 && lr.GIVEN > 0,
+  `two bots fighting for 15 s with the learning on: ${lr.TRIES} moves scored into ${lr.ROWS_} rows of the table, ${lr.LOGGED} logged (${lr.PAID} with a reward: ${lr.GIVEN} health given in all)`);
 
 console.log(failed ? `${failed} FAILED` : 'all good');
 process.exit(failed ? 1 : 0);

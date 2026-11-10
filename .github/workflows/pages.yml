@@ -89,6 +89,14 @@ jobs:
       - name: Save games
         run: npm run test:save
 
+      # What the player says to the bots: understood by meaning (embeddings made beforehand), and done
+      - name: Talking to the bots
+        run: npm run test:chat
+
+      # The bots' learned fight moves: the Q-learning step, and the network's pass in SQL against JavaScript's
+      - name: Learned fight moves
+        run: npm run test:rl
+
       - name: Team deathmatch
         run: npm run test:team
 

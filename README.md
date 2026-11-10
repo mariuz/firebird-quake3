@@ -43,6 +43,8 @@ npm test               # SQL smoke test in Node against the real Firebird WASM e
 npm run test:dm7       # the same on the Temple of Retribution
 npm run test:bots      # the bots: they see, chase, shoot, pick things up, die and respawn; the score keeps up
 npm run test:demo      # a demo recorded and played back: every snapshot as it was painted
+npm run test:chat      # what you type to the bots, understood by meaning (EmbeddingGemma 2) and obeyed
+npm run test:rl        # the bots' learned fight moves: Q-learning in SQL, the network's forward pass in SQL
 npm run test:save      # a game saved in a fight and loaded back on a fresh arena (F5 and F9 on the page)
 npm run serve          # http://localhost:8080/
 npm run screenshots    # headless frames to docs/ (node scripts/screenshot.mjs q3dm1 --at=x,y,z,yaw --bright=4)
@@ -133,6 +135,18 @@ whether it leads its rockets; every bot runs a little slower than you at the two
 a few seconds, and frag each other as happily as they frag you; the scoreboard, the "fight!", the lead
 announcements and the frag limit are in `SCORE_FRAG`. Everything the simulation wants heard is a row
 in `sound_events`; temp entities are rows in `fx_events`; the console's lines are in `messages`.
+
+Two things about the bots are not Quake III's. You can talk to them: T opens a *Say* line, and with
+*Understand* ticked Google's EmbeddingGemma 2 runs in the browser (WebGPU, 175 MB once) and turns the
+line into 128 numbers; the cosine similarity to 94 phrases of botlib's intents is one join in SQL
+(`sql/chat.sql`), so "come with me", "stay here and guard" or "grab the rocket launcher" are understood
+by meaning, and in a team game your team does as told. And their moves in a fight are learned (*Bot AI*):
+every 0.4 s a bot chooses among advancing, strafing, backing off, holding and Quake III's own move, by a
+small network trained offline from self-play (Double DQN with a conservative penalty, in plain
+JavaScript) whose forward pass is three `INSERT … SELECT SUM(w * x) … GROUP BY` in SQL. Measured over
+eight twenty-minute matches against Quake III's moves it made 970 frags to 908: no worse, perhaps a
+little better. A Q table learned by tabular Q-learning in SQL is there too, and can go on learning as
+you play; it plays worse than either.
 
 The bots know their way around because the arena is a graph (`sql/waypoints.sql`, the part of Quake
 III's area awareness system a deathmatch bot needs). When a map loads, `BUILD_WAYPOINTS` puts a node

@@ -1779,10 +1779,13 @@ BEGIN
   INSERT INTO nn_x (l, i, v) VALUES (0, 11, :f11);
   WHILE (l <= last_) DO
   BEGIN
+    -- (the bias is input -1, always 1; an input at 0, as half are after the ReLU, has nothing to add: the join
+    -- goes from the inputs to their weights, a range of the index each)
+    INSERT INTO nn_x (l, i, v) VALUES (:l - 1, -1, 1);
     INSERT INTO nn_x (l, i, v)
-    SELECT :l, w.j, IIF(:l < :last_, MAXVALUE(0, SUM(w.w * IIF(w.i < 0, 1, x.v))), SUM(w.w * IIF(w.i < 0, 1, x.v)))
-      FROM bot_nn w LEFT JOIN nn_x x ON x.l = :l - 1 AND x.i = w.i
-     WHERE w.l = :l GROUP BY w.j;
+    SELECT :l, w.j, IIF(:l < :last_, MAXVALUE(0, SUM(w.w * x.v)), SUM(w.w * x.v))
+      FROM nn_x x LEFT JOIN bot_nn w ON w.l = :l AND w.i = x.i
+     WHERE x.l = :l - 1 AND x.v <> 0 GROUP BY w.j;
     l = l + 1;
   END
   SELECT x.v FROM nn_x x WHERE x.l = :last_ AND x.i = 5 INTO q5;

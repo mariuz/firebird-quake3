@@ -10,10 +10,10 @@
 //     rated by guesswork and chosen for it;
 //   Huber loss, Adam, minibatches drawn again and again from the whole log (experience replay).
 //
-//   an ensemble for the noise (bootstrapped DQN, Osband et al. 2016) and its lower confidence bound, distilled
-//     into the one network that ships: see below.
+//   and, with ENSEMBLE=5, an ensemble for the noise (bootstrapped DQN, Osband et al. 2016), its lower confidence
+//     bound distilled into one network: see below. It played no better than the single network, which ships.
 //
-// The network is a perceptron, 12 → 48 → 48 → 6, small enough to run in SQL (bot_nn_best in sql/bots.sql). No
+// The network is a perceptron, 12 → 32 → 32 → 6, small enough to run in SQL (bot_nn_best in sql/bots.sql). No
 // library: forward and backward passes below.
 //
 //   node scripts/rl-deep.mjs <out.json> a.log.json b.log.json …     (WRITE=1: also into src/botnn.js)
@@ -24,7 +24,7 @@ import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const [out, ...files] = process.argv.slice(2);
-const NF = 12, NA = 6, H = Number(process.env.HIDDEN) || 48, GAMMA = 0.8, RS = 25;   // (rewards in units of 25 health)
+const NF = 12, NA = 6, H = Number(process.env.HIDDEN) || 32, GAMMA = 0.8, RS = 25;   // (rewards in units of 25 health)
 const BATCH = 128, LR = 1e-3, SYNC = 500, CQL = Number(process.env.CQL ?? 0.5);
 
 // the transitions: [x, a, r, x′ or null]
@@ -114,13 +114,16 @@ const dqn = (set, steps, label) => {
 };
 
 // A single move's reward is mostly chance (the held-out error is some 37 health), so one network's ranking of
-// the moves is not to be trusted. An ensemble is: K networks, each on its own resample of the log (the bootstrap,
+// the moves is shaky. ENSEMBLE=1 (the default, and what ships) trains that one network all the same, on the
+// whole training set. An ensemble is steadier: K networks, each on its own resample of the log (the bootstrap,
 // as in bootstrapped DQN, Osband et al. 2016), disagree where the data does not decide. For each logged state
 // the advantage of a move over Quake III's is taken at its lower confidence bound, the members' mean less Z of
 // their standard deviations; and one network is taught those bounds (distillation), with Quake III's move at 0,
 // so that the one pass in SQL leaves it only where the whole ensemble agrees another is better
-const K = Number(process.env.ENSEMBLE) || 5, Z = Number(process.env.Z ?? 2), EACH = Number(process.env.STEPS) || 6000;
+const K = Number(process.env.ENSEMBLE) || 1, Z = Number(process.env.Z ?? 2), EACH = Number(process.env.STEPS) || (K > 1 ? 6000 : 40000);
 const members = [];
+if (K === 1) members.push(dqn(train, EACH, 'the network'));
+else
 for (let k = 0; k < K; k++) members.push(dqn(Array.from({ length: train.length }, () => train[Math.floor(rnd() * train.length)]), EACH, `member ${k + 1} of ${K}`));
 const bound = (x) => {
   const adv = members.map((m) => { const q = forward(m, x).at(-1); return Array.from(q, (v) => v - q[5]); });
@@ -130,11 +133,14 @@ const bound = (x) => {
     return mu - Z * sd;
   });
 };
-const labelled = data.map((tr) => [tr[0], bound(tr[0])]);
-const net = make();
-fit(net, labelled, Number(process.env.DISTILL) || 12000, (q, [, y]) => Float64Array.from(q, (v, a) => Math.max(-1, Math.min(1, v - y[a]))));
-const fitErr = labelled.reduce((s, [x, y]) => { const q = forward(net, x).at(-1); return s + y.reduce((e, v, a) => e + Math.abs(q[a] - v), 0) / NA; }, 0) / labelled.length;
-console.log(`distilled into one network: mean error ${(fitErr * RS).toFixed(2)} health on the bounds`);
+let net = members[0];
+if (K > 1) {
+  const labelled = data.map((tr) => [tr[0], bound(tr[0])]);
+  net = make();
+  fit(net, labelled, Number(process.env.DISTILL) || 12000, (q, [, y]) => Float64Array.from(q, (v, a) => Math.max(-1, Math.min(1, v - y[a]))));
+  const fitErr = labelled.reduce((s, [x, y]) => { const q = forward(net, x).at(-1); return s + y.reduce((e, v, a) => e + Math.abs(q[a] - v), 0) / NA; }, 0) / labelled.length;
+  console.log(`distilled into one network: mean error ${(fitErr * RS).toFixed(2)} health on the bounds`);
+}
 
 // what it would do in the logged states: Quake III's move unless another's bound is 3 health or more above it
 const picks = new Array(NA).fill(0);
