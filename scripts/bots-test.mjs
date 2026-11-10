@@ -401,7 +401,9 @@ if (item) {
   // choosing a goal avoids it for its respawn time too (BotChooseLTGItem's BotAddToAvoidGoals): a bot thinking
   // with no goal takes the quad, and would not choose it again
   await db.exec(`UPDATE ents SET solid = 1 WHERE id = ${quad}`);
-  await db.exec(`UPDATE ents SET x = ${me.X}, y = ${me.Y}, z = ${me.Z}, goal_id = NULL, nbg_id = NULL, nbg_check = 1e9, enemy_id = NULL WHERE id = ${b}`);
+  // (not camping: with the railgun picked up above a camper on q3dm7, which has info_camp spots, may be, and
+  // a camping bot chooses no item)
+  await db.exec(`UPDATE ents SET x = ${me.X}, y = ${me.Y}, z = ${me.Z}, goal_id = NULL, nbg_id = NULL, nbg_check = 1e9, enemy_id = NULL, camp_id = NULL, camp_until = NULL WHERE id = ${b}`);
   await db.exec(`EXECUTE PROCEDURE link_ent(${b})`);
   // (nobody to fight meanwhile: the others notarget)
   await db.exec(`UPDATE ents SET flags = BIN_OR(flags, 64) WHERE classname IN ('bot', 'player') AND id <> ${b}`);
