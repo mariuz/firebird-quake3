@@ -16,6 +16,7 @@ import waypointsSql from '../sql/waypoints.sql';
 import botsSql from '../sql/bots.sql';
 import renderSql from '../sql/render.sql';
 import saveSql from '../sql/save.sql';
+import chatSql from '../sql/chat.sql';
 import { Pk3, PakSet } from './pk3.js';
 import { createSchema, loadResources, loadMap, buildWaypoints, setView, setRotation } from './loader.js';
 import { loadShaders } from './shader.js';
@@ -26,6 +27,8 @@ import { FrameState, drawScene, firstPersonView, zoomedFov, fovY, ZOOM_FOV, unde
 import { Q3Audio, weaponLoop } from './audio.js';
 import { exportDemo, importDemo, listDemos } from './demo.js';
 import { exportSave, importSave, saveMap } from './save.js';
+import { loadEmbedder, embedderReady, embed } from './chat.js';
+import { loadBotQ } from './loader.js';
 
 const $ = (id) => document.getElementById(id);
 const canvas = $('screen');
@@ -63,7 +66,7 @@ let lastFxId = 0;
 let frameNo = 0;
 let scores = [];
 const state = new FrameState();
-const settings = { map: 'q3dm1', detail: 'medium', sfx: 70, music: 40, musicMode: 'tracks', skill: 2, bots: 3, fov: 90, renderer: 'fast', brightness: 4, predict: true, fraglimit: 20, timelimit: 10, rotate: true, name: 'Player', model: 'sarge/default', rail: 4, gametype: 'ffa', team: 'auto' };
+const settings = { map: 'q3dm1', detail: 'medium', sfx: 70, music: 40, musicMode: 'tracks', skill: 2, bots: 3, fov: 90, renderer: 'fast', brightness: 4, predict: true, fraglimit: 20, timelimit: 10, rotate: true, name: 'Player', model: 'sarge/default', rail: 4, gametype: 'ffa', team: 'auto', botai: 1, chatModel: false };
 try { Object.assign(settings, JSON.parse(localStorage.getItem('firebird-quake3:settings') || '{}')); } catch { /* defaults */ }
 const saveSettings = () => { try { localStorage.setItem('firebird-quake3:settings', JSON.stringify(settings)); } catch { /* ignore */ } };
 const viewWidth = () => (settings.detail === 'high' ? 640 : settings.detail === 'low' ? 160 : 320);
@@ -267,6 +270,7 @@ async function startMap(name) {
   fillModelMenu();
   await setPlayerModel();
   await setPlayerColor();
+  await db.exec(`UPDATE game SET bot_rl = ${settings.botai | 0}`);
   renderer.setResources(res);
   renderer.particles = [];
   renderer.meshCache?.clear();
@@ -411,6 +415,7 @@ async function frame() {
       // the match over (not a demo's): its frags go into the career once, and the postgame medals see the count before
       if (last.MATCH_OVER && !demoPlaying && !careerLogged) {
         careerLogged = true;
+        keepBotQ().catch((err) => console.error(err));
         const c = readCareer();
         if (c) {
           careerFrags = Number(c.frags) || 0;
@@ -559,7 +564,7 @@ async function openDatabase() {
   const v = await instance.query("SELECT rdb$get_context('SYSTEM', 'ENGINE_VERSION') AS v FROM rdb$database");
   $('engine').textContent = `Firebird ${v.rows[0].V}`;
   setStatus('Creating the Quake III schema (PSQL)…');
-  await createSchema(instance, { schema: schemaSql, physics: physicsSql, game: gameSql, waypoints: waypointsSql, player: playerSql, demo: demoSql, bots: botsSql, render: renderSql, save: saveSql });
+  await createSchema(instance, { schema: schemaSql, physics: physicsSql, game: gameSql, waypoints: waypointsSql, player: playerSql, demo: demoSql, bots: botsSql, chat: chatSql, render: renderSql, save: saveSql });
   return instance;
 }
 
@@ -589,6 +594,7 @@ async function usePak(buffer, label) {
   pak.inflateAll((n) => !/^(demos|video|vm|botfiles|menu|levelshots)\//.test(n) && !n.endsWith('.aas'));
   setStatus(`Copying ${label} models into Firebird…`);
   res = await loadResources(db, pak, { width: viewWidth(), height: viewHeight(), fov: settings.fov });
+  if (settings.botai === 2) await restoreBotQ();   // (what the bots learned here before)
   makeRenderer();
   audio.setPak(pak);
   fillMapMenu();
@@ -778,6 +784,50 @@ $('loadgame').addEventListener('change', async (e) => {
   if (!f || !db) return;
   try { await loadGame(JSON.parse(await f.text())); } catch (err) { console.error(err); setStatus(`Error: ${err.message}`, true); }
 });
+// talking to the bots (sql/chat.sql): T or Y opens the line, Enter says it. With EmbeddingGemma 2 loaded (the
+// box beside it; src/chat.js) the line is matched by what it means, else a phrase has to be in it word for word
+const chatEl = $('chat');
+window.addEventListener('keydown', (e) => {
+  if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement) return;
+  if ((e.code === 'KeyT' || e.code === 'KeyY') && running && !demoPlaying) { e.preventDefault(); keys.clear(); document.exitPointerLock?.(); chatEl.focus(); }
+});
+chatEl.addEventListener('keydown', async (e) => {
+  if (e.key === 'Escape') { chatEl.value = ''; chatEl.blur(); return; }
+  if (e.key !== 'Enter') return;
+  const text = chatEl.value.replace(/[^\x20-\x7e]/g, ' ').trim().slice(0, 150);
+  chatEl.value = '';
+  chatEl.blur();
+  if (!text || !db || !running || demoPlaying) return;
+  try {
+    const vec = embedderReady() ? await embed(text) : null;
+    const [r] = (await db.query('SELECT * FROM player_say(?, ?)', [text, vec])).rows;
+    $('chatinfo').textContent = r?.KIND ? `${r.KIND.trim()}${r.ARG ? ' ' + r.ARG.trim() : ''}${vec ? ` (${r.SCORE.toFixed(2)})` : ''}, ${r.HEARD} bot${r.HEARD === 1 ? '' : 's'}` : (vec ? 'small talk' : 'not understood (no model)');
+  } catch (err) { console.error(err); }
+});
+const chatStatus = (s) => { $('chatinfo').textContent = s; };
+function startEmbedder() {
+  loadEmbedder(chatStatus).catch((err) => { console.error(err); chatStatus(`model failed: ${err.message}`); $('chatmodel').checked = false; settings.chatModel = false; saveSettings(); });
+}
+$('chatmodel').checked = settings.chatModel;
+$('chatmodel').addEventListener('change', (e) => { settings.chatModel = e.target.checked; saveSettings(); if (e.target.checked) startEmbedder(); });
+if (settings.chatModel) startEmbedder();
+// the bots' fight moves: Quake III's, the learned ones (sql/bots.sql bot_rl_move, the table of src/botq.js), or
+// learned and learning on while we play (the table then kept in the browser's storage when a match ends)
+$('botai').value = String(settings.botai);
+$('botai').addEventListener('change', (e) => {
+  settings.botai = Number(e.target.value); saveSettings();
+  if (db && running) db.exec(`UPDATE game SET bot_rl = ${settings.botai | 0}`).catch((err) => console.error(err));
+});
+async function keepBotQ() {
+  if (settings.botai !== 2) return;
+  const rows = (await db.query('SELECT s, a, q, n FROM bot_q', [], arr)).rows;
+  try { localStorage.setItem('firebird-quake3:botq', JSON.stringify(rows)); } catch { /* storage blocked or full */ }
+}
+async function restoreBotQ() {
+  let rows = null;
+  try { rows = JSON.parse(localStorage.getItem('firebird-quake3:botq') ?? 'null'); } catch { /* none */ }
+  if (Array.isArray(rows) && rows.length) await loadBotQ(db, rows);
+}
 // spectating: out of the match and back (SetTeam)
 $('spectate').addEventListener('click', () => {
   if (!db || !running || !last) return;

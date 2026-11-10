@@ -88,6 +88,11 @@
           <option value="sql">Software: SQL projects every vertex</option>
           <option value="gl">WebGL: a port of Quake III's renderer</option>
         </select></label>
+        <label title="How the bots move in a fight: as Quake III's bots do, by what they learned in self-play (reinforcement learning: a Q table in the database), or learned and still learning while you play (kept in this browser)">Bot AI <select id="botai">
+          <option value="0">Quake III</option>
+          <option value="1">Learned</option>
+          <option value="2">Learning</option>
+        </select></label>
         <label title="Draw your own position predicted ahead of the last 20 Hz tic (cg_nopredict 0); off shows where the database last put you">Predict <input id="predict" type="checkbox"></label>
         <label title="Sound effects volume">Sound <input id="sfxvol" type="range" min="0" max="100" step="5"></label>
         <label title="The map's music from the pak when it has it (the demo has none), or a synthesised drone">Music <select id="music">
@@ -104,6 +109,9 @@
           <select id="demospeed" title="Playback speed (timescale)"><option value="0.25">¼×</option><option value="0.5">½×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option></select></span>
         <button id="savedemo" type="button" title="Save the newest demo to a file">Save demo</button>
         <label title="Play a demo file saved here">Load demo <input id="demofile" type="file" accept=".json,application/json"></label>
+        <label title="Say something to the bots (T or Y, Enter to send): in a team game your teammates take orders (follow me, camp here, get the railgun, kill Sarge, dismissed) and anyone answers where are you? or what are you doing?">Say <input id="chat" type="text" maxlength="150" size="22" spellcheck="false" autocomplete="off" placeholder="follow me…"></label>
+        <label title="Understand what you type by its meaning, in any wording or language: loads Google's EmbeddingGemma 2 into this browser (175 MB once, then cached). Without it a command has to be typed word for word">Understand <input id="chatmodel" type="checkbox"></label>
+        <span id="chatinfo" class="pill"></span>
         <button id="savegame" type="button" title="Save the game as it stands to a file (F5 saves it in the browser, F9 loads that)">Save game</button>
         <label title="Load a game saved here: its arena loads and the game goes on from where it was saved">Load game <input id="loadgame" type="file" accept=".json,application/json"></label>
         <span id="engine" class="pill">Firebird</span>

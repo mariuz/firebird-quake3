@@ -21,6 +21,8 @@ CREATE TABLE map_list (
 CREATE TABLE game (
   id             SMALLINT NOT NULL PRIMARY KEY,
   tic            INTEGER DEFAULT 0 NOT NULL,
+  bot_rl         SMALLINT DEFAULT 3 NOT NULL,           -- the bots' fight moves: 0 Quake III's, 1 the learned table's (bot_q), 2 the table's, learning on, 3 the network's (bot_nn)
+  rl_logging     SMALLINT DEFAULT 0 NOT NULL,           -- 1: every learned move is written to bot_rl_log (scripts/rl-train.mjs: the network's training data)
   demo_rec       INTEGER,                               -- the demo being recorded (demos.id), its next snapshot's number and
   demo_n         INTEGER DEFAULT 0 NOT NULL,            -- the last sound, effect and line it has (while playing: the snapshot shown)
   demo_snd       INTEGER DEFAULT 0 NOT NULL,
@@ -399,6 +401,19 @@ CREATE TABLE ents (
   acc_until  DOUBLE PRECISION DEFAULT 0 NOT NULL,
   acc_msg    DOUBLE PRECISION DEFAULT 0 NOT NULL,
   acc_arrived SMALLINT DEFAULT 0 NOT NULL,
+  get_id     INTEGER,                       -- a bot told to get an item (LTG_GETITEM, chat.sql): which, and until when
+  get_until  DOUBLE PRECISION,
+  -- a bot's learned fight moves (bot_rl_move in bots.sql): whether it uses them (NULL: as game.bot_rl says), the
+  -- state and the move it is on and until when, the damage it has given and taken in all and at that choice
+  rl         SMALLINT,
+  rl_s       INTEGER,
+  rl_a       SMALLINT,
+  rl_until   DOUBLE PRECISION,
+  rl_log     INTEGER,                       -- the row of bot_rl_log its move in progress is (while logging)
+  rl_given   INTEGER DEFAULT 0 NOT NULL,
+  rl_taken   INTEGER DEFAULT 0 NOT NULL,
+  rl_g0      INTEGER DEFAULT 0 NOT NULL,
+  rl_t0      INTEGER DEFAULT 0 NOT NULL,
   act_id     INTEGER,                       -- a bot's activate goal (BotGetActivateGoal): the button (or trigger) that opens the
   act_until  DOUBLE PRECISION,              -- shut door on its way, until when it tries; with no button, when it may try again
   acc_arrive_t DOUBLE PRECISION,             -- when it came to its companion (arrive_time): it looks at it 2 s, then about
@@ -800,6 +815,75 @@ CREATE TABLE demo_msgs (
   PRIMARY KEY (demo_id, n, k)
 );
 CREATE SEQUENCE demo_seq;
+
+-- What a player can say to the bots (chat.sql; src/intents.js): the intents (kind: accompany, camp, dismiss, kill,
+-- get with the item's class in arg, whereareyou, whatareyoudoing, hello, taunt, praise, chat for small talk), the
+-- ways of saying each, and each phrase's embedding (EmbeddingGemma 2, its leading 128 dimensions, normalized;
+-- src/intentvecs.js), a row a dimension so that a cosine similarity is a join and a sum
+CREATE TABLE bot_intents (
+  id   INTEGER NOT NULL PRIMARY KEY,
+  kind VARCHAR(20) NOT NULL,
+  arg  VARCHAR(40)
+);
+CREATE TABLE bot_phrases (
+  id     INTEGER NOT NULL PRIMARY KEY,
+  intent INTEGER NOT NULL,
+  phrase VARCHAR(120) NOT NULL
+);
+CREATE TABLE bot_phrase_dims (
+  phrase INTEGER NOT NULL,
+  i      SMALLINT NOT NULL,
+  v      DOUBLE PRECISION NOT NULL,
+  PRIMARY KEY (i, phrase)
+);
+-- the embedding of what the player just said (player_say)
+CREATE GLOBAL TEMPORARY TABLE say_dims (
+  i SMALLINT NOT NULL PRIMARY KEY,
+  v DOUBLE PRECISION NOT NULL
+) ON COMMIT DELETE ROWS;
+
+-- What the bots have learned of fighting (reinforcement learning, tabular Q-learning: bot_rl_move in bots.sql): for
+-- each state of a fight (the bot's gun, the enemy's, the distance, the bot's health, the enemy above or below) and
+-- each move (0 advance, 1 strafe left, 2 strafe right, 3 back off, 4 hold, 5 Quake III's own attack move), the return expected of it, in health
+-- points given less taken, and how often it was tried. Trained by self-play (scripts/rl-train.mjs) and shipped in
+-- src/botq.js; mode 2 goes on learning while playing
+CREATE TABLE bot_q (
+  s INTEGER NOT NULL,
+  a SMALLINT NOT NULL,
+  q DOUBLE PRECISION DEFAULT 0 NOT NULL,
+  n INTEGER DEFAULT 0 NOT NULL,
+  PRIMARY KEY (s, a)
+);
+
+-- The same learned by a network (deep Q-learning; scripts/rl-deep.mjs trains it from bot_rl_log, src/botnn.js ships
+-- it): the weights of a small multilayer perceptron, layer l's unit j from the layer before's unit i (i = -1:
+-- the bias). Twelve inputs (the bot's gun class one-hot, 4; the enemy's, 3; the distance / 1000; the health /
+-- 100; the armour / 100; the enemy's height over the bot / 200; the quad on), two hidden layers with ReLU, six
+-- outputs: the moves' values. bot_nn_best in bots.sql runs it: a layer is a join and a sum
+CREATE TABLE bot_nn (
+  l SMALLINT NOT NULL,
+  j SMALLINT NOT NULL,
+  i SMALLINT NOT NULL,
+  w DOUBLE PRECISION NOT NULL,
+  PRIMARY KEY (l, i, j)
+);
+CREATE GLOBAL TEMPORARY TABLE nn_x (
+  l SMALLINT NOT NULL,
+  i SMALLINT NOT NULL,
+  v DOUBLE PRECISION NOT NULL,
+  PRIMARY KEY (l, i)
+) ON COMMIT DELETE ROWS;
+-- the moves made while game.rl_logging is on, for the network's training: the features of the fight when the
+-- move was chosen, the move, what it brought (r, filled in when the next is chosen or the bot dies) and the row
+-- of the move that followed in the same fight (NULL: the fight ended there)
+CREATE SEQUENCE rl_log_seq;
+CREATE TABLE bot_rl_log (
+  id INTEGER NOT NULL PRIMARY KEY,
+  f0 DOUBLE PRECISION, f1 DOUBLE PRECISION, f2 DOUBLE PRECISION, f3 DOUBLE PRECISION, f4 DOUBLE PRECISION, f5 DOUBLE PRECISION, f6 DOUBLE PRECISION, f7 DOUBLE PRECISION, f8 DOUBLE PRECISION, f9 DOUBLE PRECISION, f10 DOUBLE PRECISION, f11 DOUBLE PRECISION,
+  a SMALLINT NOT NULL,
+  r DOUBLE PRECISION,
+  nxt INTEGER
+);
 
 -- The bots that can be spawned: a name, a model and a skin, a skill
 CREATE TABLE bot_defs (

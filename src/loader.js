@@ -7,6 +7,10 @@
 // generated LOAD_<table> procedure that takes a 30 KB chunk of '|'-separated
 // lines and parses it in PSQL. That is 2–3× faster than a block of INSERTs.
 
+import { BOT_Q } from './botq.js';
+import { BOT_NN } from './botnn.js';
+import { INTENTS } from './intents.js';
+import { INTENT_VECS } from './intentvecs.js';
 import { Bsp, parseVec, SURF, CONTENTS } from './bsp.js';
 import { Md3, parseAnimationCfg, parseSkin } from './md3.js';
 import { loadShaders, surfaceLook } from './shader.js';
@@ -28,6 +32,8 @@ const TABLES = {
   face_verts: 'face:i seq:i x:d y:d z:d s:d t:d u:d v:d',
   textures: 'id:i name:s flags:i contents:i',
   models: 'id:i name:s kind:s minx:d miny:d minz:d maxx:d maxy:d maxz:d headnode:i first_face:i num_faces:i nframes:i flags:i radius:d',
+  bot_phrase_dims: 'phrase:i i:i v:d',
+  bot_nn: 'l:i j:i i:i w:d',
   map_ents: 'id:i classname:s targetname:s target:s team:s model:s ox:d oy:d oz:d angle:d apitch:d ayaw:d aroll:d spawnflags:i message:s wait_:d delay:d random_:d speed:d lip:d height:d health:i light:i dmg:i count_:i noise:s phase:d gravity:d music:s notfree:i nobots:i notteam:i gametype:s',
 };
 
@@ -58,12 +64,12 @@ export function loaderSql() {
   return out + 'SET TERM ; ^\n';
 }
 
-const num = (v) => (v === null || v === undefined || Number.isNaN(v) ? '' : typeof v === 'number' ? (Number.isInteger(v) ? String(v) : v.toFixed(4)) : String(v));
+const num = (v, digits = 4) => (v === null || v === undefined || Number.isNaN(v) ? '' : typeof v === 'number' ? (Number.isInteger(v) ? String(v) : v.toFixed(digits)) : String(v));
 const str = (v) => (v === null || v === undefined ? '' : String(v).replace(/[|\n\r]/g, ' ').replace(/[^\x20-\x7e]/g, '?'));
 
 /** rows: arrays of values in column order. */
-export async function bulkLoad(db, table, rows) {
-  const lines = rows.map((r) => r.map((v) => (typeof v === 'string' ? str(v) : num(v))).join('|'));
+export async function bulkLoad(db, table, rows, digits = 4) {
+  const lines = rows.map((r) => r.map((v) => (typeof v === 'string' ? str(v) : num(v, digits))).join('|'));
   let chunk = '';
   const flush = async () => {
     if (chunk) await db.query(`EXECUTE PROCEDURE load_${table}(?)`, [chunk]);
@@ -76,6 +82,21 @@ export async function bulkLoad(db, table, rows) {
   await flush();
 }
 
+/** The bots' learned fight moves into bot_q (the shipped table of src/botq.js, or one learned in play): rows of [s, a, q, n] */
+export async function loadBotQ(db, rows) {
+  await db.exec('DELETE FROM bot_q');
+  for (let i = 0; i < rows.length; i += 200) {
+    const part = rows.slice(i, i + 200).map(([s, a, q, n]) => `INSERT INTO bot_q (s, a, q, n) VALUES (${s | 0}, ${a | 0}, ${Number(q) || 0}, ${n | 0});`).join('\n');
+    await db.exec(`SET TERM ^ ;\nEXECUTE BLOCK AS BEGIN\n${part}\nEND^\nSET TERM ; ^`);
+  }
+}
+
+/** The network of the bots' learned fight moves into bot_nn: rows of [layer, unit, input, weight] */
+export async function loadBotNN(db, rows) {
+  await db.exec('DELETE FROM bot_nn');
+  if (rows.length) await bulkLoad(db, 'bot_nn', rows, 6);
+}
+
 /** The arenas the match rotation goes through (map_list), in natural order (q3dm1, q3dm7, q3dm17, q3tourney2) */
 export async function setRotation(db, names) {
   const maps = names.slice().sort((a, b) => a.localeCompare(b, 'en', { numeric: true }));
@@ -84,7 +105,7 @@ export async function setRotation(db, names) {
   if (maps.length) await db.exec(`SET TERM ^ ;\nEXECUTE BLOCK AS BEGIN\n${maps.map((m, i) => `INSERT INTO map_list (ord, name) VALUES (${i}, ${lit(m)});`).join('\n')}\nEND^\nSET TERM ; ^`);
 }
 
-export const SQL_FILES = ['schema', 'physics', 'game', 'waypoints', 'player', 'demo', 'bots', 'render', 'save'];
+export const SQL_FILES = ['schema', 'physics', 'game', 'waypoints', 'player', 'demo', 'bots', 'chat', 'render', 'save'];
 
 export async function createSchema(db, sql) {
   await db.exec(sql.schema);
@@ -159,6 +180,18 @@ export async function loadResources(db, pak, { width = 320, height = 240, fov = 
   const bots = BOTS.filter((b) => res.players.has(b.model)).map((b) => `INSERT INTO bot_defs (name, model, skin, skill) VALUES (${lit(b.name)}, ${lit(b.model)}, ${lit(b.skin)}, ${b.skill});`).join('\n');
   await db.exec(`SET TERM ^ ;\nEXECUTE BLOCK AS BEGIN\n${items}\n${bots}\nEND^\nSET TERM ; ^`);
   await db.exec('INSERT INTO game (id) VALUES (1); INSERT INTO player (id) VALUES (1)');
+  await loadBotQ(db, BOT_Q);
+  await loadBotNN(db, BOT_NN);
+  // what the player can say to the bots (src/intents.js) and the phrases' embeddings (src/intentvecs.js)
+  await db.exec('DELETE FROM bot_intents; DELETE FROM bot_phrases; DELETE FROM bot_phrase_dims');
+  const say = [];
+  let ph = 0;
+  INTENTS.forEach((it, i) => {
+    say.push(`INSERT INTO bot_intents (id, kind, arg) VALUES (${i}, ${lit(it.kind)}, ${it.arg ? lit(it.arg) : 'NULL'});`);
+    for (const p of it.phrases) say.push(`INSERT INTO bot_phrases (id, intent, phrase) VALUES (${ph++}, ${i}, ${lit(p)});`);
+  });
+  for (let i = 0; i < say.length; i += 200) await db.exec(`SET TERM ^ ;\nEXECUTE BLOCK AS BEGIN\n${say.slice(i, i + 200).join('\n')}\nEND^\nSET TERM ; ^`);
+  if (INTENT_VECS.length === ph) await bulkLoad(db, 'bot_phrase_dims', INTENT_VECS.flatMap((v, p) => v.map((x, i) => [p, i, x])), 6);
   // the bots' chat files (src/botchat.js), in blocks of statements
   const chat = loadBotChat(pak, BOTS.filter((b) => res.players.has(b.model)));
   await db.exec('DELETE FROM bot_chat; DELETE FROM bot_rnd; DELETE FROM bot_chatchar; DELETE FROM bot_iw');

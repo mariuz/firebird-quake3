@@ -411,6 +411,9 @@ BEGIN
   sz = COALESCE(f + 25, cz);
 END^
 
+-- (declared here, defined with the learned fight moves before the bot's think)
+CREATE OR ALTER PROCEDURE bot_rl_end (eid INTEGER) AS BEGIN END^
+
 -- (declared here, defined with the bot's aim below: the way to a button shoots one that wants shooting)
 CREATE OR ALTER PROCEDURE bot_fire (eid INTEGER) AS BEGIN END^
 
@@ -1360,6 +1363,9 @@ BEGIN
   SELECT e.health, e.pmodel, e.pskin FROM ents e WHERE e.id = :eid INTO hp, pm, ps;
   EXECUTE PROCEDURE say(obituary(eid, attacker, mod_));
   EXECUTE PROCEDURE score_frag(attacker, eid, mod_);
+  -- (the learned fight moves: the fight's end for the dead, 50 for the frag to a bot that made it)
+  EXECUTE PROCEDURE bot_rl_end(eid);
+  UPDATE ents e SET e.rl_given = e.rl_given + 50 WHERE e.id = :attacker AND e.classname = 'bot' AND e.id <> :eid;
   EXECUTE PROCEDURE bot_chat_event(eid, 'death', attacker, mod_);   -- BotChat_Death
   UPDATE ents e SET e.solid = 0 WHERE e.id = :eid;
   EXECUTE PROCEDURE toss_client_items(eid);   -- the gun and the powerups fall (TossClientItems)
@@ -1389,7 +1395,7 @@ BEGIN
   UPDATE ents e SET e.x = :x, e.y = :y, e.z = :z + 9, e.yaw = COALESCE(:yaw, 0), e.ideal_yaw = COALESCE(:yaw, 0), e.pitch = 0, e.vx = 0, e.vy = 0, e.vz = 0,
          e.solid = 3, e.movetype = 4, e.takedamage = 2, e.alpha = 0, e.deadflag = 0, e.viewheight = 26, e.maxz = 32, e.attack_crouch = NULL, e.hold_item = 0, e.health = 125, e.armor = 0, e.weapons = 3, e.weapon = 2,
          e.ammo2 = IIF((SELECT g.gametype FROM game g WHERE g.id = 1) = 3, 50, 100), e.ammo3 = 0, e.ammo4 = 0, e.ammo5 = 0, e.ammo6 = 0, e.ammo7 = 0, e.ammo8 = 0, e.ammo9 = 0,
-         e.flags = 32, e.st = 'stand', e.legs_anim = 22, e.legs_time = :t, e.torso_anim = 11, e.torso_time = :t, e.enemy_id = NULL, e.goal_id = NULL, e.nbg_id = NULL, e.nbg_check = NULL, e.act_id = NULL, e.act_until = NULL, e.camp_id = NULL, e.camp_until = NULL,
+         e.flags = 32, e.st = 'stand', e.legs_anim = 22, e.legs_time = :t, e.torso_anim = 11, e.torso_time = :t, e.enemy_id = NULL, e.goal_id = NULL, e.nbg_id = NULL, e.nbg_check = NULL, e.act_id = NULL, e.act_until = NULL, e.camp_id = NULL, e.camp_until = NULL, e.rl_a = NULL, e.get_id = NULL,
          e.attack_finished = :t + 1, e.teleport_time = :t + 0.3e0, e.lx = NULL, e.nextthink = :t + 0.1e0, e.think = 'bot_think', e.respawn_time = 0,
          e.quad_finished = 0, e.haste_finished = 0, e.invis_finished = 0, e.regen_finished = 0, e.enviro_finished = 0, e.health_tick = :t + 1,
          e.yaw_speed = COALESCE(MAXVALUE(240, bot_cv(:eid, 'view_maxchange', NULL)) / 10, bot_char((SELECT b.skill FROM bot_defs b WHERE b.name = e.bot), 'turn')),
@@ -1705,8 +1711,175 @@ BEGIN
     UPDATE ents e SET e.camp_id = NULL, e.attack_crouch = NULL WHERE e.id = :eid;
 END^
 
+-- ── the learned fight moves (reinforcement learning) ─────────────────────
+-- The state of a fight as the Q table keys it: the bot's gun (0 gauntlet, 1 machinegun, shotgun or lightning, 2
+-- railgun, 3 a missile gun), the enemy's (0 gauntlet, 1 a hitscan gun, 2 a missile gun), the distance (under 150,
+-- 350, 700, beyond), the bot's health (under 50, under 100, more) and the enemy below, level or above (48 units)
+CREATE OR ALTER FUNCTION bot_rl_state (w INTEGER, ew INTEGER, d DOUBLE PRECISION, hp INTEGER, dz DOUBLE PRECISION) RETURNS INTEGER
+AS
+BEGIN
+  RETURN (((IIF(w = 1, 0, IIF(w IN (2, 4, 32), 1, IIF(w = 64, 2, 3))) * 3
+          + IIF(ew = 1, 0, IIF(ew IN (2, 4, 32, 64), 1, 2))) * 4
+          + IIF(d < 150, 0, IIF(d < 350, 1, IIF(d < 700, 2, 3)))) * 3
+          + IIF(hp < 50, 0, IIF(hp < 100, 1, 2))) * 3
+          + IIF(dz < -48, 0, IIF(dz > 48, 2, 1));
+END^
+
+-- the Q-learning step for the move a bot was on: Q(s, a) moves a tenth of the way to the reward (the health it
+-- gave less what it took since it chose, `bonus` added) plus 0.8 of the best the state it is in now promises
+-- (`s2`, NULL at the end of a fight: nothing more to come). While logging, the move's row gets its reward and
+-- the row that follows (`nxt`)
+CREATE OR ALTER PROCEDURE bot_rl_learn (eid INTEGER, s2 INTEGER, bonus DOUBLE PRECISION, nxt INTEGER DEFAULT NULL)
+AS
+DECLARE s INTEGER; DECLARE a SMALLINT; DECLARE r DOUBLE PRECISION; DECLARE best DOUBLE PRECISION = 0; DECLARE q0 DOUBLE PRECISION; DECLARE lg INTEGER;
+BEGIN
+  SELECT e.rl_s, e.rl_a, e.rl_given - e.rl_g0 - (e.rl_taken - e.rl_t0) + :bonus, e.rl_log FROM ents e WHERE e.id = :eid INTO s, a, r, lg;
+  IF (a IS NULL) THEN EXIT;
+  IF (lg IS NOT NULL) THEN
+  BEGIN
+    UPDATE bot_rl_log g SET g.r = :r, g.nxt = :nxt WHERE g.id = :lg;
+    UPDATE ents e SET e.rl_log = NULL WHERE e.id = :eid;
+  END
+  IF (s2 IS NOT NULL) THEN SELECT COALESCE(MAX(b.q), 0) FROM bot_q b WHERE b.s = :s2 INTO best;
+  SELECT b.q FROM bot_q b WHERE b.s = :s AND b.a = :a INTO q0;
+  IF (q0 IS NULL) THEN INSERT INTO bot_q (s, a, q, n) VALUES (:s, :a, 0.1e0 * (:r + 0.8e0 * :best), 1);
+  ELSE UPDATE bot_q b SET b.q = b.q + 0.1e0 * (:r + 0.8e0 * :best - b.q), b.n = b.n + 1 WHERE b.s = :s AND b.a = :a;
+END^
+
+-- a fight's end for a bot (its death): the last move learns from it, 50 off for dying
+CREATE OR ALTER PROCEDURE bot_rl_end (eid INTEGER)
+AS
+BEGIN
+  IF (COALESCE((SELECT e.rl FROM ents e WHERE e.id = :eid), (SELECT g.bot_rl FROM game g WHERE g.id = 1)) = 2) THEN
+    EXECUTE PROCEDURE bot_rl_learn(eid, NULL, -50);
+  UPDATE ents e SET e.rl_a = NULL, e.rl_log = NULL WHERE e.id = :eid;
+END^
+
+-- The network's choice (deep Q-learning: bot_nn): its forward pass over the twelve features, a layer a join of
+-- the weights with the layer before and a sum for each unit, ReLU on the hidden ones; then Quake III's move (5)
+-- unless another's value is 3 health points or more above it. NULL when there is no network
+CREATE OR ALTER FUNCTION bot_nn_best (f0 DOUBLE PRECISION, f1 DOUBLE PRECISION, f2 DOUBLE PRECISION, f3 DOUBLE PRECISION, f4 DOUBLE PRECISION, f5 DOUBLE PRECISION, f6 DOUBLE PRECISION, f7 DOUBLE PRECISION, f8 DOUBLE PRECISION, f9 DOUBLE PRECISION, f10 DOUBLE PRECISION, f11 DOUBLE PRECISION) RETURNS SMALLINT
+AS
+DECLARE l SMALLINT = 1; DECLARE last_ SMALLINT; DECLARE a SMALLINT; DECLARE q5 DOUBLE PRECISION;
+BEGIN
+  SELECT MAX(w.l) FROM bot_nn w INTO last_;
+  IF (last_ IS NULL) THEN RETURN NULL;
+  DELETE FROM nn_x;
+  INSERT INTO nn_x (l, i, v) VALUES (0, 0, :f0);
+  INSERT INTO nn_x (l, i, v) VALUES (0, 1, :f1);
+  INSERT INTO nn_x (l, i, v) VALUES (0, 2, :f2);
+  INSERT INTO nn_x (l, i, v) VALUES (0, 3, :f3);
+  INSERT INTO nn_x (l, i, v) VALUES (0, 4, :f4);
+  INSERT INTO nn_x (l, i, v) VALUES (0, 5, :f5);
+  INSERT INTO nn_x (l, i, v) VALUES (0, 6, :f6);
+  INSERT INTO nn_x (l, i, v) VALUES (0, 7, :f7);
+  INSERT INTO nn_x (l, i, v) VALUES (0, 8, :f8);
+  INSERT INTO nn_x (l, i, v) VALUES (0, 9, :f9);
+  INSERT INTO nn_x (l, i, v) VALUES (0, 10, :f10);
+  INSERT INTO nn_x (l, i, v) VALUES (0, 11, :f11);
+  WHILE (l <= last_) DO
+  BEGIN
+    INSERT INTO nn_x (l, i, v)
+    SELECT :l, w.j, IIF(:l < :last_, MAXVALUE(0, SUM(w.w * IIF(w.i < 0, 1, x.v))), SUM(w.w * IIF(w.i < 0, 1, x.v)))
+      FROM bot_nn w LEFT JOIN nn_x x ON x.l = :l - 1 AND x.i = w.i
+     WHERE w.l = :l GROUP BY w.j;
+    l = l + 1;
+  END
+  SELECT x.v FROM nn_x x WHERE x.l = :last_ AND x.i = 5 INTO q5;
+  SELECT FIRST 1 x.i FROM nn_x x WHERE x.l = :last_ AND x.i < 5 AND x.v >= :q5 + 3 ORDER BY x.v DESC, x.i INTO a;
+  RETURN COALESCE(a, 5);
+END^
+
+-- The move of a bot fighting an enemy in sight, learned: every 0.4 s it chooses among advance (0), strafe left (1),
+-- strafe right (2), back off (3), hold (4) and Quake III's own attack move (5: BotAttackMove as bot_think has it),
+-- and makes it each think until the next choice. `mode` 3 asks the network (bot_nn_best). `mode` 1 plays the
+-- table (bot_q): Quake III's move, unless another has been tried 15 times or more in this state and is rated 3
+-- health points or more above it. Both make a move at random now and then by the skill (one in two at skill 1
+-- down to one in thirty at 5). `mode` 2 learns the table as it plays: the move just finished is scored
+-- (bot_rl_learn), two moves in five are tried at random, an untried one first; and with game.rl_logging on every
+-- move is written to bot_rl_log. Returns 1 when it moved the bot, 0 for Quake III's move
+CREATE OR ALTER FUNCTION bot_rl_move (eid INTEGER, enemy INTEGER, vis SMALLINT, mode SMALLINT, d DOUBLE PRECISION, dz DOUBLE PRECISION,
+                                      w INTEGER, spd DOUBLE PRECISION) RETURNS SMALLINT
+AS
+DECLARE t DOUBLE PRECISION; DECLARE s INTEGER; DECLARE a SMALLINT; DECLARE until_ DOUBLE PRECISION; DECLARE hp INTEGER; DECLARE ew INTEGER;
+DECLARE skill SMALLINT; DECLARE eps DOUBLE PRECISION; DECLARE yaw DOUBLE PRECISION; DECLARE moved SMALLINT;
+DECLARE x DOUBLE PRECISION; DECLARE y DOUBLE PRECISION; DECLARE ex DOUBLE PRECISION; DECLARE ey DOUBLE PRECISION;
+DECLARE q5 DOUBLE PRECISION; DECLARE n5 INTEGER; DECLARE av INTEGER; DECLARE quad DOUBLE PRECISION; DECLARE lg INTEGER;
+DECLARE wc SMALLINT; DECLARE ec SMALLINT;
+BEGIN
+  IF (vis = 0 OR mode = 0 OR enemy IS NULL) THEN RETURN 0;
+  t = now_();
+  SELECT e.rl_a, e.rl_until, e.health, e.x, e.y, COALESCE(b.skill, 2), e.armor, e.quad_finished FROM ents e LEFT JOIN bot_defs b ON b.name = e.bot WHERE e.id = :eid
+    INTO a, until_, hp, x, y, skill, av, quad;
+  SELECT o.x, o.y, IIF(o.classname = 'player', (SELECT p.weapon FROM player p WHERE p.id = 1), o.weapon) FROM ents o WHERE o.id = :enemy INTO ex, ey, ew;
+  IF (ex IS NULL) THEN RETURN 0;
+  IF (a IS NULL OR until_ <= t) THEN
+  BEGIN
+    s = bot_rl_state(w, ew, d, hp, dz);
+    wc = IIF(w = 1, 0, IIF(w IN (2, 4, 32), 1, IIF(w = 64, 2, 3)));
+    ec = IIF(ew = 1, 0, IIF(ew IN (2, 4, 32, 64), 1, 2));
+    IF (mode = 2) THEN
+    BEGIN
+      -- (logging: this choice's row first, so that the move before can point to it)
+      IF ((SELECT g.rl_logging FROM game g WHERE g.id = 1) = 1) THEN lg = NEXT VALUE FOR rl_log_seq;
+      -- (a move left over from a fight that ended more than a second ago learns with nothing to follow)
+      IF (a IS NOT NULL) THEN EXECUTE PROCEDURE bot_rl_learn(eid, IIF(t - until_ > 1, NULL, s), 0, IIF(t - until_ > 1, NULL, lg));
+    END
+    eps = IIF(mode = 2, 0.4e0, CASE skill WHEN 1 THEN 0.5e0 WHEN 2 THEN 0.35e0 WHEN 3 THEN 0.2e0 WHEN 4 THEN 0.1e0 ELSE 0.03e0 END);
+    a = NULL;
+    IF (mode = 2) THEN
+    BEGIN
+      -- learning: a move never tried here first, else the best rated, else one at random
+      SELECT FIRST 1 m.a FROM (SELECT 0 a FROM rdb$database UNION ALL SELECT 1 FROM rdb$database UNION ALL SELECT 2 FROM rdb$database
+                               UNION ALL SELECT 3 FROM rdb$database UNION ALL SELECT 4 FROM rdb$database UNION ALL SELECT 5 FROM rdb$database) m
+       WHERE NOT EXISTS (SELECT 1 FROM bot_q b WHERE b.s = :s AND b.a = m.a) ORDER BY RAND() INTO a;
+      IF (a IS NULL AND RAND() >= eps) THEN SELECT FIRST 1 b.a FROM bot_q b WHERE b.s = :s ORDER BY b.q DESC, b.a INTO a;
+      IF (a IS NULL) THEN a = CAST(FLOOR(RAND() * 5.999e0) AS SMALLINT);
+    END
+    ELSE IF (RAND() < eps) THEN a = CAST(FLOOR(RAND() * 5.999e0) AS SMALLINT);
+    ELSE IF (mode = 3) THEN
+      a = COALESCE(bot_nn_best(IIF(wc = 0, 1, 0), IIF(wc = 1, 1, 0), IIF(wc = 2, 1, 0), IIF(wc = 3, 1, 0), IIF(ec = 0, 1, 0), IIF(ec = 1, 1, 0), IIF(ec = 2, 1, 0),
+            MINVALUE(d, 1500) / 1000, MINVALUE(MAXVALUE(hp, 0), 200) / 100e0, MINVALUE(av, 200) / 100e0, MAXVALUE(-300, MINVALUE(300, dz)) / 200, IIF(quad > t, 1, 0)), 5);
+    ELSE
+    BEGIN
+      a = 5;
+      SELECT b.q, b.n FROM bot_q b WHERE b.s = :s AND b.a = 5 INTO q5, n5;
+      IF (n5 >= 15) THEN
+        SELECT FIRST 1 b.a FROM bot_q b WHERE b.s = :s AND b.a < 5 AND b.n >= 15 AND b.q >= :q5 + 3 ORDER BY b.q DESC, b.a INTO a;
+      a = COALESCE(a, 5);
+    END
+    IF (lg IS NOT NULL) THEN
+      INSERT INTO bot_rl_log (id, f0, f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, a)
+      VALUES (:lg, IIF(:wc = 0, 1, 0), IIF(:wc = 1, 1, 0), IIF(:wc = 2, 1, 0), IIF(:wc = 3, 1, 0), IIF(:ec = 0, 1, 0), IIF(:ec = 1, 1, 0), IIF(:ec = 2, 1, 0),
+              MINVALUE(:d, 1500) / 1000, MINVALUE(MAXVALUE(:hp, 0), 200) / 100e0, MINVALUE(:av, 200) / 100e0, MAXVALUE(-300, MINVALUE(300, :dz)) / 200, IIF(:quad > :t, 1, 0), :a);
+    UPDATE ents e SET e.rl_s = :s, e.rl_a = :a, e.rl_until = :t + 0.4e0, e.rl_g0 = e.rl_given, e.rl_t0 = e.rl_taken, e.rl_log = :lg WHERE e.id = :eid;
+  END
+  IF (a = 5) THEN RETURN 0;
+  yaw = vectoyaw(ex - x, ey - y);
+  IF (a = 0) THEN
+  BEGIN
+    -- advance: straight at it, or along the waypoints when it is on another floor or far off
+    moved = 0;
+    IF (ABS(dz) > 48 OR d > 900) THEN EXECUTE PROCEDURE bot_follow_route(eid, enemy, spd) RETURNING_VALUES moved;
+    IF (moved <= 0) THEN EXECUTE PROCEDURE move_to_goal(eid, enemy, spd);
+  END
+  ELSE IF (a IN (1, 2)) THEN
+  BEGIN
+    -- strafe (the other way when blocked)
+    IF (step_direction(eid, anglemod(yaw + IIF(a = 1, 90, -90)), spd * 0.8e0) = 0) THEN
+      moved = step_direction(eid, anglemod(yaw + IIF(a = 1, -90, 90)), spd * 0.8e0);
+  END
+  ELSE IF (a = 3) THEN
+  BEGIN
+    -- back off (to a side when blocked)
+    IF (step_direction(eid, anglemod(yaw + 180), spd) = 0) THEN moved = step_direction(eid, anglemod(yaw + 135), spd);
+  END
+  RETURN 1;
+END^
+
 CREATE OR ALTER PROCEDURE bot_think (eid INTEGER)
 AS
+DECLARE rlm SMALLINT; DECLARE getid INTEGER; DECLARE getu DOUBLE PRECISION;
 DECLARE t DOUBLE PRECISION; DECLARE nt DOUBLE PRECISION; DECLARE st VARCHAR(12); DECLARE enemy INTEGER; DECLARE flags INTEGER; DECLARE goal INTEGER;
 DECLARE rt DOUBLE PRECISION; DECLARE srch DOUBLE PRECISION; DECLARE af DOUBLE PRECISION; DECLARE lefty SMALLINT; DECLARE legs INTEGER; DECLARE skill SMALLINT; DECLARE tt DOUBLE PRECISION;
 DECLARE x DOUBLE PRECISION; DECLARE y DOUBLE PRECISION; DECLARE z DOUBLE PRECISION; DECLARE ex DOUBLE PRECISION; DECLARE ey DOUBLE PRECISION; DECLARE ez DOUBLE PRECISION; DECLARE ehp INTEGER;
@@ -1810,7 +1983,7 @@ BEGIN
     -- BotWantsToRetreat (aggression under 50): run for an item and keep shooting (AINode_Battle_Retreat);
     -- a keen one fights, and goes after the enemy out of sight only when it wants to chase (over 50)
     aggr = bot_aggression(eid, enemy);
-    SELECT e.goal_id FROM ents e WHERE e.id = :eid INTO goal;
+    SELECT e.goal_id, COALESCE(e.rl, (SELECT g.bot_rl FROM game g WHERE g.id = 1)) FROM ents e WHERE e.id = :eid INTO goal, rlm;
     IF (goal IS NOT NULL AND NOT EXISTS (SELECT 1 FROM ents g WHERE g.id = :goal AND g.solid = 1)) THEN goal = NULL;
     IF (aggr >= 50) THEN goal = NULL;
     ELSE IF (goal IS NULL) THEN goal = bot_retreat_goal(eid);
@@ -1845,6 +2018,8 @@ BEGIN
       EXECUTE PROCEDURE bot_follow_route(eid, goal, spd) RETURNING_VALUES moved;
       IF (moved <= 0) THEN EXECUTE PROCEDURE move_to_goal(eid, goal, spd);
     END
+    -- the learned fight move (bot_rl_move), with the enemy in sight; where it knows nothing, Quake III's below
+    ELSE IF (bot_rl_move(eid, enemy, vis, rlm, d, ez - z, w, spd) = 1) THEN BEGIN END
     ELSE IF ((vis = 0 OR ABS(ez - z) > 48 OR d > 900) AND aggr > 50) THEN
     BEGIN
       -- out of sight, or on another floor: hunt it along the waypoints (and over the jump pads)
@@ -1922,11 +2097,34 @@ BEGIN
     IF (busy = 0 AND goal IS NOT NULL) THEN
     BEGIN
       reached = bot_goal_reached(eid, goal);
+      -- (an item it was told to get is reached when it has taken it, not 40 units from it: on until it is gone)
+      IF (reached = 2 AND EXISTS (SELECT 1 FROM ents e JOIN ents g ON g.id = e.get_id WHERE e.id = :eid AND e.get_id = :goal AND g.solid = 1)) THEN reached = 0;
       IF (reached > 0) THEN
       BEGIN
         IF (reached = 2 AND NOT EXISTS (SELECT 1 FROM ents g WHERE g.id = :goal AND g.think = 'remove')) THEN EXECUTE PROCEDURE bot_avoid_item(eid, goal);
+        -- (the item it was told to get: "I got the …", or it isn't there; the order is done)
+        IF (EXISTS (SELECT 1 FROM ents e WHERE e.id = :eid AND e.get_id = :goal)) THEN
+        BEGIN
+          EXECUTE PROCEDURE bot_say(eid, TRIM(IIF(reached = 2, 'getitem_gotit', 'getitem_notthere')),
+            (SELECT i.name FROM ents g JOIN item_defs i ON i.cls = g.item WHERE g.id = :goal), NULL, NULL, NULL, NULL, NULL, player_ent(), 0);
+          UPDATE ents e SET e.get_id = NULL WHERE e.id = :eid;
+        END
         goal = NULL;
         UPDATE ents e SET e.goal_id = NULL WHERE e.id = :eid;
+      END
+    END
+    -- an item it was told to get (LTG_GETITEM, chat.sql) is the goal until it has it or the 60 s are up
+    IF (busy = 0) THEN
+    BEGIN
+      SELECT e.get_id, e.get_until FROM ents e WHERE e.id = :eid INTO getid, getu;
+      IF (getid IS NOT NULL) THEN
+      BEGIN
+        IF (getu < t OR NOT EXISTS (SELECT 1 FROM ents g WHERE g.id = :getid)) THEN UPDATE ents e SET e.get_id = NULL WHERE e.id = :eid;
+        ELSE IF (goal IS DISTINCT FROM getid) THEN
+        BEGIN
+          goal = getid;
+          UPDATE ents e SET e.goal_id = :goal WHERE e.id = :eid;
+        END
       END
     END
     IF (busy = 0 AND goal IS NULL AND RAND() < 0.3e0) THEN
