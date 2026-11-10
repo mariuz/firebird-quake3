@@ -10,6 +10,9 @@
 //     rated by guesswork and chosen for it;
 //   Huber loss, Adam, minibatches drawn again and again from the whole log (experience replay).
 //
+//   an ensemble for the noise (bootstrapped DQN, Osband et al. 2016) and its lower confidence bound, distilled
+//     into the one network that ships: see below.
+//
 // The network is a perceptron, 12 → 48 → 48 → 6, small enough to run in SQL (bot_nn_best in sql/bots.sql). No
 // library: forward and backward passes below.
 //
@@ -22,7 +25,7 @@ import { fileURLToPath } from 'node:url';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const [out, ...files] = process.argv.slice(2);
 const NF = 12, NA = 6, H = Number(process.env.HIDDEN) || 48, GAMMA = 0.8, RS = 25;   // (rewards in units of 25 health)
-const STEPS = Number(process.env.STEPS) || 40000, BATCH = 128, LR = 1e-3, SYNC = 500, CQL = Number(process.env.CQL ?? 0.5);
+const BATCH = 128, LR = 1e-3, SYNC = 500, CQL = Number(process.env.CQL ?? 0.5);
 
 // the transitions: [x, a, r, x′ or null]
 const data = [];
@@ -56,59 +59,84 @@ const forward = (net, x) => {
   });
   return acts;
 };
-const net = make();
-let target = copy(net);
-const adam = net.map((L) => ({ mw: new Float64Array(L.w.length), vw: new Float64Array(L.w.length), mb: new Float64Array(L.n), vb: new Float64Array(L.n) }));
 const argmax = (v) => { let k = 0; for (let i = 1; i < v.length; i++) if (v[i] > v[k]) k = i; return k; };
-const tdTarget = ([, , r, x2]) => {
-  if (!x2) return r;
-  const on = forward(net, x2).at(-1), tg = forward(target, x2).at(-1);
-  return r + GAMMA * tg[argmax(on)];
+// minibatch training with Adam: grad(net, sample) returns the gradient of the loss at the output
+const fit = (net, set, steps, grad, each = null) => {
+  const adam = net.map((L) => ({ mw: new Float64Array(L.w.length), vw: new Float64Array(L.w.length), mb: new Float64Array(L.n), vb: new Float64Array(L.n) }));
+  for (let step = 0; step < steps; step++) {
+    const gw = net.map((L) => new Float64Array(L.w.length)), gb = net.map((L) => new Float64Array(L.n));
+    for (let k = 0; k < BATCH; k++) {
+      const tr = set[Math.floor(rnd() * set.length)];
+      const acts = forward(net, tr[0]);
+      let d = grad(acts.at(-1), tr);
+      for (let l = net.length - 1; l >= 0; l--) {
+        const L = net[l], inp = acts[l], prev = new Float64Array(L.m);
+        for (let j = 0; j < L.n; j++) {
+          const dj = d[j];
+          if (dj === 0) continue;
+          gb[l][j] += dj;
+          const row = j * L.m;
+          for (let i = 0; i < L.m; i++) { gw[l][row + i] += dj * inp[i]; prev[i] += dj * L.w[row + i]; }
+        }
+        if (l > 0) for (let i = 0; i < L.m; i++) if (inp[i] <= 0) prev[i] = 0;   // (ReLU)
+        d = prev;
+      }
+    }
+    const t = step + 1, c1 = 1 - 0.9 ** t, c2 = 1 - 0.999 ** t;
+    net.forEach((L, l) => {
+      const A = adam[l];
+      for (let i = 0; i < L.w.length; i++) { const gi = gw[l][i] / BATCH; A.mw[i] = 0.9 * A.mw[i] + 0.1 * gi; A.vw[i] = 0.999 * A.vw[i] + 0.001 * gi * gi; L.w[i] -= LR * (A.mw[i] / c1) / (Math.sqrt(A.vw[i] / c2) + 1e-8); }
+      for (let i = 0; i < L.n; i++) { const gi = gb[l][i] / BATCH; A.mb[i] = 0.9 * A.mb[i] + 0.1 * gi; A.vb[i] = 0.999 * A.vb[i] + 0.001 * gi * gi; L.b[i] -= LR * (A.mb[i] / c1) / (Math.sqrt(A.vb[i] / c2) + 1e-8); }
+    });
+    if (each) each(t);
+  }
+  return net;
 };
-let step = 0;
-for (; step < STEPS; step++) {
-  const gw = net.map((L) => new Float64Array(L.w.length)), gb = net.map((L) => new Float64Array(L.n));
-  for (let k = 0; k < BATCH; k++) {
-    const tr = train[Math.floor(rnd() * train.length)];
-    const acts = forward(net, tr[0]), q = acts.at(-1);
-    // the output's gradient: the Huber loss on the logged move, the conservative penalty on all
+// one Double DQN with the conservative penalty, on a set of transitions
+const dqn = (set, steps, label) => {
+  const net = make();
+  let target = copy(net);
+  const tdTarget = ([, , r, x2]) => (x2 ? r + GAMMA * forward(target, x2).at(-1)[argmax(forward(net, x2).at(-1))] : r);
+  fit(net, set, steps, (q, tr) => {
     const g = new Float64Array(NA);
-    const e = q[tr[1]] - tdTarget(tr);
-    g[tr[1]] = Math.max(-1, Math.min(1, e));
+    g[tr[1]] = Math.max(-1, Math.min(1, q[tr[1]] - tdTarget(tr)));
     if (CQL > 0) {
       const mx = Math.max(...q); let z = 0;
       for (let a = 0; a < NA; a++) z += Math.exp(q[a] - mx);
       for (let a = 0; a < NA; a++) g[a] += CQL * (Math.exp(q[a] - mx) / z - (a === tr[1] ? 1 : 0));
     }
-    // back through the layers
-    let d = g;
-    for (let l = net.length - 1; l >= 0; l--) {
-      const L = net[l], inp = acts[l], prev = new Float64Array(L.m);
-      for (let j = 0; j < L.n; j++) {
-        const dj = d[j];
-        if (dj === 0) continue;
-        gb[l][j] += dj;
-        const row = j * L.m;
-        for (let i = 0; i < L.m; i++) { gw[l][row + i] += dj * inp[i]; prev[i] += dj * L.w[row + i]; }
-      }
-      if (l > 0) for (let i = 0; i < L.m; i++) if (inp[i] <= 0) prev[i] = 0;   // (ReLU)
-      d = prev;
-    }
-  }
-  const t = step + 1, c1 = 1 - 0.9 ** t, c2 = 1 - 0.999 ** t;
-  net.forEach((L, l) => {
-    const A = adam[l];
-    for (let i = 0; i < L.w.length; i++) { const gi = gw[l][i] / BATCH; A.mw[i] = 0.9 * A.mw[i] + 0.1 * gi; A.vw[i] = 0.999 * A.vw[i] + 0.001 * gi * gi; L.w[i] -= LR * (A.mw[i] / c1) / (Math.sqrt(A.vw[i] / c2) + 1e-8); }
-    for (let i = 0; i < L.n; i++) { const gi = gb[l][i] / BATCH; A.mb[i] = 0.9 * A.mb[i] + 0.1 * gi; A.vb[i] = 0.999 * A.vb[i] + 0.001 * gi * gi; L.b[i] -= LR * (A.mb[i] / c1) / (Math.sqrt(A.vb[i] / c2) + 1e-8); }
+    return g;
+  }, (t) => {
+    if (t % SYNC === 0) target = copy(net);
+    if (t === steps) console.log(`${label}: held-out TD error ${(val.reduce((s, tr) => s + Math.abs(forward(net, tr[0]).at(-1)[tr[1]] - tdTarget(tr)), 0) / val.length * RS).toFixed(2)} health after ${t} steps`);
   });
-  if (t % SYNC === 0) target = copy(net);
-  if (t % 5000 === 0) {
-    const td = val.reduce((s, tr) => s + Math.abs(forward(net, tr[0]).at(-1)[tr[1]] - tdTarget(tr)), 0) / val.length;
-    console.log(`step ${t}: held-out TD error ${(td * RS).toFixed(2)} health`);
-  }
-}
+  return net;
+};
 
-// what it would do in the logged states: Quake III's move unless another is 3 health or more above it
+// A single move's reward is mostly chance (the held-out error is some 37 health), so one network's ranking of
+// the moves is not to be trusted. An ensemble is: K networks, each on its own resample of the log (the bootstrap,
+// as in bootstrapped DQN, Osband et al. 2016), disagree where the data does not decide. For each logged state
+// the advantage of a move over Quake III's is taken at its lower confidence bound, the members' mean less Z of
+// their standard deviations; and one network is taught those bounds (distillation), with Quake III's move at 0,
+// so that the one pass in SQL leaves it only where the whole ensemble agrees another is better
+const K = Number(process.env.ENSEMBLE) || 5, Z = Number(process.env.Z ?? 2), EACH = Number(process.env.STEPS) || 6000;
+const members = [];
+for (let k = 0; k < K; k++) members.push(dqn(Array.from({ length: train.length }, () => train[Math.floor(rnd() * train.length)]), EACH, `member ${k + 1} of ${K}`));
+const bound = (x) => {
+  const adv = members.map((m) => { const q = forward(m, x).at(-1); return Array.from(q, (v) => v - q[5]); });
+  return Array.from({ length: NA }, (_, a) => {
+    if (a === 5) return 0;
+    const mu = adv.reduce((s, v) => s + v[a], 0) / K, sd = Math.sqrt(adv.reduce((s, v) => s + (v[a] - mu) ** 2, 0) / (K - 1));
+    return mu - Z * sd;
+  });
+};
+const labelled = data.map((tr) => [tr[0], bound(tr[0])]);
+const net = make();
+fit(net, labelled, Number(process.env.DISTILL) || 12000, (q, [, y]) => Float64Array.from(q, (v, a) => Math.max(-1, Math.min(1, v - y[a]))));
+const fitErr = labelled.reduce((s, [x, y]) => { const q = forward(net, x).at(-1); return s + y.reduce((e, v, a) => e + Math.abs(q[a] - v), 0) / NA; }, 0) / labelled.length;
+console.log(`distilled into one network: mean error ${(fitErr * RS).toFixed(2)} health on the bounds`);
+
+// what it would do in the logged states: Quake III's move unless another's bound is 3 health or more above it
 const picks = new Array(NA).fill(0);
 for (const tr of data) {
   const q = forward(net, tr[0]).at(-1);

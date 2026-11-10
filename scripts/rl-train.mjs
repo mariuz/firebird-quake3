@@ -88,7 +88,7 @@ for (let i = 0; i < tics; i += 2) {
 }
 if (evalMode) {
   const rows = await q("SELECT e.bot, e.rl, e.frags, e.deaths, e.rl_given, e.rl_taken FROM ents e WHERE e.classname = 'bot' ORDER BY e.id");
-  const sum = (rl, k) => rows.filter((r) => r.RL === rl).reduce((a, r) => a + r[k], 0);
+  const sum = (rl, k) => rows.filter((r) => (r.RL !== 0) === (rl === 1)).reduce((a, r) => a + r[k], 0);   // (1: the learned ones, table or network)
   console.log(`EVAL ${mapName} ${tics} tics: learned ${sum(1, 'FRAGS')} frags / ${sum(1, 'DEATHS')} deaths, ${sum(1, 'RL_GIVEN')} given / ${sum(1, 'RL_TAKEN')} taken; Quake III's ${sum(0, 'FRAGS')} / ${sum(0, 'DEATHS')}, ${sum(0, 'RL_GIVEN')} / ${sum(0, 'RL_TAKEN')}`);
   console.log(JSON.stringify({ map: mapName, learned: { frags: sum(1, 'FRAGS'), deaths: sum(1, 'DEATHS'), given: sum(1, 'RL_GIVEN'), taken: sum(1, 'RL_TAKEN') }, classic: { frags: sum(0, 'FRAGS'), deaths: sum(0, 'DEATHS'), given: sum(0, 'RL_GIVEN'), taken: sum(0, 'RL_TAKEN') } }));
 } else {
