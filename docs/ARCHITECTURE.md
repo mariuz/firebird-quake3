@@ -614,7 +614,10 @@ builds the part a deathmatch bot needs at run time, in SQL, with the same traces
 its arc: Quake III's `AimAtTarget` makes the `target_position` the *apex* of the throw, so the flight
 continues past it with the pad's horizontal velocity, falling at 800 units/s², traced with the player
 box every 50 ms until it lands, and `wp_floor` settles that spot. Then `wp_build_chunk` scans a
-128-unit grid: down every column from the first open air (`point_leaf` says the cluster is not solid)
+128-unit grid: down every column from the first open air (the leaf's cluster is not −1; through the solid the
+scan jumps to the leaf's floor under the column, which `leaf_and_floor` finds on the way down the tree, the nearest
+of the leaf's planes the line crosses below the point, rather than stepping 48 at a time: the scan of q3dm7 went from
+13 to 6 s, q3tourney2's from 10 to 2, the graph the same but for two nodes of q3dm7's 532)
 a point trace finds the floor (`wp_drop`; on a slope the box is settled onto it so the node sits where
 a player's box would rest, on its uphill corner), `wp_stand` checks it is in the world, not lava,
 slime or a `trigger_hurt` (the void of q3dm17) and that the box fits, and the scan goes on from under

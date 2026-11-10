@@ -673,6 +673,7 @@ CREATE OR ALTER PROCEDURE wp_scan_column (gx DOUBLE PRECISION, gy DOUBLE PRECISI
 AS
 DECLARE x DOUBLE PRECISION; DECLARE y DOUBLE PRECISION; DECLARE gz DOUBLE PRECISION; DECLARE fl DOUBLE PRECISION; DECLARE bz DOUBLE PRECISION;
 DECLARE ax DOUBLE PRECISION; DECLARE ay DOUBLE PRECISION; DECLARE a INTEGER; DECLARE n INTEGER; DECLARE j INTEGER; DECLARE k INTEGER; DECLARE cl INTEGER; DECLARE w SMALLINT;
+DECLARE lf INTEGER; DECLARE lfz DOUBLE PRECISION;
 BEGIN
   n = 0; j = 0;
   WHILE (j < 5 AND (j = 0 OR n = 0)) DO
@@ -682,8 +683,10 @@ BEGIN
     gz = maxz - 8;
     WHILE (gz > minz) DO
     BEGIN
-      SELECT l.cluster FROM leaves l WHERE l.id = point_leaf(:x, :y, :gz) INTO cl;
-      IF (cl IS NULL OR cl < 0) THEN BEGIN gz = gz - 48; CONTINUE; END
+      -- (in the solid, straight on down past the leaf: its floor under the column, 48 at least)
+      EXECUTE PROCEDURE leaf_and_floor(x, y, gz) RETURNING_VALUES lf, lfz;
+      SELECT l.cluster FROM leaves l WHERE l.id = :lf INTO cl;
+      IF (cl IS NULL OR cl < 0) THEN BEGIN gz = MINVALUE(gz - 48, lfz - 1); CONTINUE; END
       fl = wp_drop(x, y, gz, gz - minz + 1);
       IF (fl IS NULL) THEN LEAVE;
       IF (fl <= -99999) THEN BEGIN gz = gz - 48; CONTINUE; END

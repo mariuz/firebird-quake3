@@ -39,6 +39,36 @@ BEGIN
   RETURN -n - 1;
 END^
 
+-- the world leaf of a point, and where the vertical line down from it leaves that leaf: a leaf is the meet of
+-- the half-spaces of the planes on its way down the tree, so the nearest of those the line crosses below the
+-- point is its floor there (-1e9 when none is: the leaf goes on down)
+CREATE OR ALTER PROCEDURE leaf_and_floor (px DOUBLE PRECISION, py DOUBLE PRECISION, pz DOUBLE PRECISION)
+RETURNS (leaf INTEGER, fz DOUBLE PRECISION)
+AS
+DECLARE n INTEGER; DECLARE s DOUBLE PRECISION; DECLARE t DOUBLE PRECISION; DECLARE best DOUBLE PRECISION = 1e9;
+DECLARE nx DOUBLE PRECISION; DECLARE ny DOUBLE PRECISION; DECLARE nz DOUBLE PRECISION; DECLARE d DOUBLE PRECISION;
+DECLARE c0 INTEGER; DECLARE c1 INTEGER;
+BEGIN
+  n = 0;
+  WHILE (n >= 0) DO
+  BEGIN
+    nx = NULL;
+    SELECT h.nx, h.ny, h.nz, h.dist, h.c0, h.c1 FROM nodes h WHERE h.id = :n INTO nx, ny, nz, d, c0, c1;
+    IF (nx IS NULL) THEN BEGIN leaf = 0; fz = -1e9; EXIT; END
+    s = nx * px + ny * py + nz * pz - d;
+    -- (going down by t the side is s − t·nz: it changes at t = s / nz, when that is ahead)
+    IF (ABS(nz) > 1e-9) THEN
+    BEGIN
+      t = s / nz;
+      -- (on the plane and in front of it, the point is behind it as soon as it goes down: at once)
+      IF ((t > 0 OR (s = 0 AND nz > 0)) AND t < best) THEN best = t;
+    END
+    n = IIF(s >= 0, c0, c1);
+  END
+  leaf = -n - 1;
+  fz = IIF(best >= 1e9, -1e9, pz - best);
+END^
+
 -- the world leaf of a point
 CREATE OR ALTER FUNCTION point_leaf (px DOUBLE PRECISION, py DOUBLE PRECISION, pz DOUBLE PRECISION)
 RETURNS INTEGER
