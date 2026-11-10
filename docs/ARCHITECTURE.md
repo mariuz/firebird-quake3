@@ -670,7 +670,7 @@ they are decides a match more than how they move), the table's bots made 432 fra
 reward is mostly chance (its spread is some 37 health points), and a table that averages the last twenty tries
 of each of 2,592 cells follows the noise.
 
-**The network.** The same choice by a network, `game.bot_rl` 3, the default. With `LOG=1` the self-play writes
+**The network.** The same choice by a network, `game.bot_rl` 3. With `LOG=1` the self-play writes
 every move to `bot_rl_log`: twelve features of the fight (the two gun classes one-hot, the distance, the health
 and armour, the enemy's height, the quad), the move, its reward and the move that followed; 21,417 of them from
 the third round. `scripts/rl-deep.mjs` learns from that log alone, offline, with no library: a perceptron
@@ -682,13 +682,19 @@ move; Huber loss, Adam, minibatches of 128 drawn again and again from the whole 
 inputs go into the temporary table `nn_x`, and each layer is one `INSERT … SELECT j, SUM(w.w * x.v) … GROUP BY
 j` joining the layer's nonzero inputs to their weights, `MAXVALUE(0, …)` the ReLU; 3.3 ms a pass, once in
 0.4 s for a bot in a fight. The bot leaves Quake III's move only for one the network rates 3 health points
-above it. Over eight matches of the same kind the network's bots made 970 frags to 908 (485 to 425, then 485
-to 483) and were ahead in four: seven percent, about one and a half times what chance alone gives, so not
-worse than Quake III's moves and perhaps a little better; that is all the numbers say. The script can also
+above it, and only an enemy in sight within 900 units on its own floor: farther or higher, the hunt along
+the waypoints comes first (on q3dm17 the network's move at 2,000 units kept a bot from its route). Over four
+matches of the same kind the network's bots made 464 frags to 476 and were ahead in two: the same as Quake
+III's moves, as far as four matches tell (a difference under 40 frags is chance). Before the hunt was put
+first, eight matches gave 970 to 908, no more than one and a half times chance. So the network matches Quake
+III's bots where the table falls short of them, and does not beat them; `game.bot_rl` is 0 unless the page's
+*Bot AI* says otherwise. What would be needed for more is in the numbers: the reward of one move is too noisy
+for 21,000 of them to rank six moves in a fight, and the bot's aim and gun, which decide a fight, are not
+the network's to choose. The script can also
 train an ensemble (`ENSEMBLE=5`: bootstrapped DQN, Osband et al. 2016, each member on its own resample of the
 log) and distil into one network the lower confidence bound of each move's advantage over Quake III's, so that
 it leaves that move only where the members agree; that one kept Quake III's move in 79 percent of the logged
-states and made 951 frags to 933, no better, and is not what ships. `npm run test:rl` checks the Q-learning
+states and made 951 frags to 933 in the eight earlier matches, no better, and is not what ships. `npm run test:rl` checks the Q-learning
 step's arithmetic, the table's rule, the SQL pass against the same pass in JavaScript on the shipped weights
 (to 1e-13), and that two bots fighting with the learning on fill the table and the log.
 

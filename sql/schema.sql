@@ -21,7 +21,7 @@ CREATE TABLE map_list (
 CREATE TABLE game (
   id             SMALLINT NOT NULL PRIMARY KEY,
   tic            INTEGER DEFAULT 0 NOT NULL,
-  bot_rl         SMALLINT DEFAULT 3 NOT NULL,           -- the bots' fight moves: 0 Quake III's, 1 the learned table's (bot_q), 2 the table's, learning on, 3 the network's (bot_nn)
+  bot_rl         SMALLINT DEFAULT 0 NOT NULL,           -- the bots' fight moves: 0 Quake III's, 1 the learned table's (bot_q), 2 the table's, learning on, 3 the network's (bot_nn)
   rl_logging     SMALLINT DEFAULT 0 NOT NULL,           -- 1: every learned move is written to bot_rl_log (scripts/rl-train.mjs: the network's training data)
   demo_rec       INTEGER,                               -- the demo being recorded (demos.id), its next snapshot's number and
   demo_n         INTEGER DEFAULT 0 NOT NULL,            -- the last sound, effect and line it has (while playing: the snapshot shown)

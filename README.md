@@ -140,13 +140,13 @@ Two things about the bots are not Quake III's. You can talk to them: T opens a *
 *Understand* ticked Google's EmbeddingGemma 2 runs in the browser (WebGPU, 175 MB once) and turns the
 line into 128 numbers; the cosine similarity to 94 phrases of botlib's intents is one join in SQL
 (`sql/chat.sql`), so "come with me", "stay here and guard" or "grab the rocket launcher" are understood
-by meaning, and in a team game your team does as told. And their moves in a fight are learned (*Bot AI*):
+by meaning, and in a team game your team does as told. And their moves in a fight can be learned ones (*Bot AI*):
 every 0.4 s a bot chooses among advancing, strafing, backing off, holding and Quake III's own move, by a
 small network trained offline from self-play (Double DQN with a conservative penalty, in plain
 JavaScript) whose forward pass is three `INSERT … SELECT SUM(w * x) … GROUP BY` in SQL. Measured over
-eight twenty-minute matches against Quake III's moves it made 970 frags to 908: no worse, perhaps a
-little better. A Q table learned by tabular Q-learning in SQL is there too, and can go on learning as
-you play; it plays worse than either.
+four twenty-minute matches against Quake III's moves it made 464 frags to 476: as good, not better, so
+Quake III's moves stay the default and the network is a choice in the menu. A Q table learned by
+tabular Q-learning in SQL is there too, and can go on learning as you play; it plays worse than either.
 
 The bots know their way around because the arena is a graph (`sql/waypoints.sql`, the part of Quake
 III's area awareness system a deathmatch bot needs). When a map loads, `BUILD_WAYPOINTS` puts a node
