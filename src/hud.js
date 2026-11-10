@@ -227,13 +227,19 @@ export class Hud {
 /**
  * UI_SPPostgameMenu's awards for the player: the accuracy (hits over shots, the gauntlet's swings not
  * counted, as G_Damage's callers count them), impressive, excellent and gauntlet when earned, the frags,
- * and perfect (medal_victory) for a win without dying. [medal, text] pairs.
+ * and perfect (medal_victory) for a win without dying. [medal, text] pairs. The frags medal is for every
+ * hundred frags of a career (UI_LogAwardData keeps the count): with the career's frags before this match
+ * (hud.CAREER_FRAGS) it comes when they pass a hundred and shows the hundreds reached; without them (no
+ * storage, a demo) it shows the match's frags.
  */
 export function postgameMedals(hud) {
   const out = [];
   if (hud.ACC_SHOTS > 0) out.push(['accuracy', `${Math.min(100, Math.floor((hud.ACC_HITS * 100) / hud.ACC_SHOTS))}%`]);
   for (const [kind, n] of [['impressive', hud.N_IMPRESSIVE], ['excellent', hud.N_EXCELLENT], ['gauntlet', hud.N_GAUNTLET]]) if (n > 0) out.push([kind, `${n}`]);
-  if (hud.FRAGS > 0) out.push(['frags', `${hud.FRAGS}`]);
+  if (typeof hud.CAREER_FRAGS === 'number') {
+    const before = Math.floor(hud.CAREER_FRAGS / 100), after = Math.floor((hud.CAREER_FRAGS + Math.max(0, hud.FRAGS)) / 100);
+    if (after > before) out.push(['frags', `${after * 100}`]);
+  } else if (hud.FRAGS > 0) out.push(['frags', `${hud.FRAGS}`]);
   if (hud.WINNER === 'You' && hud.DEATHS === 0) out.push(['victory', 'Perfect']);
   return out;
 }

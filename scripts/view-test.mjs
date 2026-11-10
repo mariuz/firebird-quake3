@@ -723,6 +723,11 @@ assert(colorFromString(4).join() === '1,0,0' && colorFromString('6').join() === 
   assert(m.map((x) => x.join(' ')).join(', ') === 'accuracy 36%, impressive 2, gauntlet 1, frags 20, victory Perfect', `the postgame medals (${m.map((x) => x.join(' ')).join(', ')})`);
   const lost = postgameMedals({ ACC_SHOTS: 0, ACC_HITS: 0, N_IMPRESSIVE: 0, N_EXCELLENT: 0, N_GAUNTLET: 0, FRAGS: 3, WINNER: 'Sarge', DEATHS: 0 });
   assert(lost.length === 1 && lost[0][0] === 'frags', 'no shots, no accuracy; no win, no perfect');
+  // the frags medal, with a career kept: for every hundred frags of it
+  const base = { ACC_SHOTS: 0, ACC_HITS: 0, N_IMPRESSIVE: 0, N_EXCELLENT: 0, N_GAUNTLET: 0, WINNER: 'Sarge', DEATHS: 1 };
+  const frags = (career, n) => postgameMedals({ ...base, FRAGS: n, CAREER_FRAGS: career }).find((x) => x[0] === 'frags')?.[1] ?? null;
+  assert(frags(90, 20) === '100' && frags(10, 20) === null && frags(180, 25) === '200' && frags(0, 250) === '200',
+    `the frags medal for each hundred of a career: 90 + 20 → ${frags(90, 20)}, 10 + 20 → ${frags(10, 20)}, 180 + 25 → ${frags(180, 25)}, 0 + 250 → ${frags(0, 250)}`);
 }
 
 // the bots' item weights (be_ai_weight.c's switches, botfiles/fw_items.c): the first case the inventory is

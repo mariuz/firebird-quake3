@@ -51,7 +51,12 @@ let recording = false;     // a demo being recorded (sql/demo.sql: q3_tic keeps 
 let demoPlaying = false;   // a demo playing: demo_play gives the tic rows, the game does not run
 let saving = false;
 let demoSpeed = 1;         // a demo's playback speed (timescale): the tics come that much faster or slower
-let demoInfo = null;       // the demo playing: { id, start: its first snapshot's time, seconds }        // a save game being written or read: the game waits (its tables are read or replaced)
+let demoInfo = null;
+// the career (UI_LogAwardData's counts, kept in the browser's storage): the frags before this match, logged
+// once when it ends
+const CAREER = 'firebird-quake3:career';
+let careerFrags = null, careerLogged = false;
+function readCareer() { try { return JSON.parse(localStorage.getItem(CAREER) ?? '{}') ?? {}; } catch { return null; } }       // the demo playing: { id, start: its first snapshot's time, seconds }        // a save game being written or read: the game waits (its tables are read or replaced)
 let lastTic = 0;
 let lastSoundId = 0;
 let lastFxId = 0;
@@ -249,6 +254,7 @@ async function ensureMap(name) {
 async function startMap(name) {
   running = false;
   demoPlaying = false;
+  careerLogged = false; careerFrags = null;
   $('demobar').hidden = true;
   if (recording) { recording = false; $('record').textContent = 'Record'; }
   await ensureMap(name);
@@ -402,6 +408,16 @@ async function frame() {
         : (await db.query('SELECT * FROM q3_tic(?, ?, ?, ?, ?, ?, ?, ?, ?)', input, { rowMode: 'object' })).rows[0];
       perf.tic = performance.now() - t;
       ticked = tics;
+      // the match over (not a demo's): its frags go into the career once, and the postgame medals see the count before
+      if (last.MATCH_OVER && !demoPlaying && !careerLogged) {
+        careerLogged = true;
+        const c = readCareer();
+        if (c) {
+          careerFrags = Number(c.frags) || 0;
+          try { localStorage.setItem(CAREER, JSON.stringify({ ...c, frags: careerFrags + Math.max(0, last.FRAGS | 0), matches: (Number(c.matches) || 0) + 1 })); } catch { careerFrags = null; }
+        }
+      }
+      if (last.MATCH_OVER && careerFrags !== null && !demoPlaying) last.CAREER_FRAGS = careerFrags;
       lastTics = tics;
       if (prev && !last.DEAD && !prev.DEAD && last.DUCKED !== prev.DUCKED) {
         // the eye drops 14 units or rises 14: spread it over 100 ms, carrying what is left of the last one

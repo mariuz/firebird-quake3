@@ -335,8 +335,11 @@ sound, the lead state. Each tic:
    however many it goes through, one for a lightning tic or a gauntlet blow, and one for a missile,
    its direct hit and its splash together (the missile's own `acc_hits` marks it). The intermission
    draws `UI_SPPostgameMenu`'s medals in a row under the scores (`postgameMedals` in `src/hud.js`):
-   the accuracy in percent, impressive, excellent and gauntlet when earned, the frags, and perfect
-   for a win without dying. A tournament's warmup end clears them with the scores. Then `score_frag` keeps the
+   the accuracy in percent, impressive, excellent and gauntlet when earned, the frags medal for every
+   hundred frags of a career, and perfect for a win without dying. The career is the page's: when a
+   match ends (not a demo's) its frags go into `firebird-quake3:career` in the browser's storage, as
+   `UI_LogAwardData` logs them to the config, and the medal comes when the count passes a hundred,
+   showing the hundreds reached (without the storage, the match's frags). A tournament's warmup end clears them with the scores. Then `score_frag` keeps the
    scoreboard (through `add_score`, Quake III's `AddScore`), announces the lead changes and the frags left, and
    ends the match at the frag limit. *Team deathmatch* (`game.gametype` 3, `GT_TEAM`, from the page's
    Game setting through `init_map`) puts everyone on a team (`ents.pteam` 1 red, 2 blue): the player on

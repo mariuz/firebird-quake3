@@ -32,7 +32,7 @@ has no ladders.
 | **Holdables** | medkit and the personal teleporter are picked up and used; the teleporter's destination is a random spawn, as in the game |
 | **Powerups** | quad, haste, invisibility, regeneration, battle suit, flight are here, for the bots too but flight (they would float off); the powerups' sounds are the regeneration's pulse, the flight's loop, the quad's fire, the battle suit's hit and the last five seconds' ticks (the flight is the only powerup with a loop: `CG_PlayerPowerups`). The dead drop the gun in hand and their powerups (`toss_client_items`) |
 | **Corpses** | the body is a separate entity from the moment of death (Quake III keeps the dead player itself until the respawn copies it into the queue); the dead player's eye follows it every tic, so the two differ only within a tic. Gibs leave blood on the walls; a bleeding player does not (`CG_Bleed` leaves no mark either); the gibs trail blood puffs in the air (`CG_BloodTrail`) |
-| **Persistent stats** | the match's stats are kept and shown at the intermission (see §8); across matches nothing is kept (Quake III's single player logs its awards to the config, `UI_LogAwardData`, and the frags medal is for each hundred frags of a career); kills per weapon are a later games' screen, not Quake III's |
+| **Persistent stats** | the match's stats are shown at the intermission, and the career's frags are kept in the browser's storage for the frags medal, every hundred (see §8); the other awards' career counts (`UI_LogAwardData` logs them all) and the menu that shows them are not; kills per weapon are a later games' screen, not Quake III's |
 
 ## 4. The renderer
 
@@ -88,7 +88,7 @@ fuzzy logic from the botfiles. What that leaves out:
 | Gap | Notes |
 | --- | --- |
 | Frame rate | the painter runs at the display's rate since the interpolation; a frame is the frame query (3 to 8 ms) plus the paint, and the tic (6 ms) lands on every third frame. Batching `q3_tic` and `frame_all` into one procedure would save a round trip on those; the software painter at 640×480 is paint-bound |
-| Bigger maps | OpenArena's and the Community Map-Pack's arenas (up to 11 000 faces, oa_thor; the hosted 41 up to 10 000) load in 1 to 13 s and play; their waypoint graphs take longer to build, and the hunt over them is tested on the demo's arenas only |
+| Bigger maps | OpenArena's and the Community Map-Pack's arenas (up to 11 000 faces, oa_thor; the hosted 41 up to 10 000) load in 1 to 13 s and play; their waypoint graphs take longer to build, and the hunt over them is tested on the demo's arenas only. The build's linking is most of it now (q3dm7: 6 s of scan, 27 of links): 6 000 walk tests, 2 800 of them stepped walks of up to 14 steps, three in four failing (mostly at the end, the target on another level), each step two box traces or more at 0.35 ms |
 | Load time | 1.3 s for q3dm1, the pak's inflate and the JPEGs dominate in the browser; the waypoint graph is already spread over frames |
 | Memory | the engine is `memory://`; nothing persists between page loads but the settings and a quick save (F5) |
 
