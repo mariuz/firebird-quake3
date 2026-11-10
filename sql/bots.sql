@@ -996,9 +996,25 @@ DECLARE x DOUBLE PRECISION; DECLARE y DOUBLE PRECISION; DECLARE z DOUBLE PRECISI
 DECLARE gid INTEGER; DECLARE cls VARCHAR(40); DECLARE gx DOUBLE PRECISION; DECLARE gy DOUBLE PRECISION; DECLARE gz DOUBLE PRECISION;
 DECLARE sol SMALLINT; DECLARE av DOUBLE PRECISION; DECLARE w DOUBLE PRECISION; DECLARE tt DOUBLE PRECISION;
 DECLARE best INTEGER; DECLARE bestw DOUBLE PRECISION = 0;
+DECLARE graph SMALLINT = 0; DECLARE rj SMALLINT; DECLARE src INTEGER; DECLARE d0 DOUBLE PRECISION; DECLARE rd DOUBLE PRECISION; DECLARE gn INTEGER;
 BEGIN
   t = now_();
   SELECT e.x, e.y, e.z FROM ents e WHERE e.id = :eid INTO x, y, z;
+  -- the travel time along the graph once it is built (the AAS's travel time to the goal's area): the way to the
+  -- bot's node, then the graph's way to the item's; an item the graph does not reach is no goal
+  -- (BotChooseLTGItem skips a goal with no travel time). Before the graph is done, and for an item with no
+  -- node of its own (one dropped), the straight line
+  IF (EXISTS (SELECT 1 FROM wp_build b WHERE b.id = 1 AND b.phase = 2)) THEN
+  BEGIN
+    src = wp_nearest(x, y, z, 1);
+    IF (src IS NOT NULL) THEN
+    BEGIN
+      rj = bot_can_rj(eid);
+      EXECUTE PROCEDURE wp_travel_cached(src, rj);
+      SELECT vlen(w.x - :x, w.y - :y, w.z - :z) FROM waypoints w WHERE w.id = :src INTO d0;
+      graph = 1;
+    END
+  END
   FOR SELECT g.id, g.item, g.x, g.y, g.z, g.item_seen, (SELECT a.avoid_until FROM bot_avoid a WHERE a.ent_id = :eid AND a.item_id = g.id)
         FROM ents g JOIN item_defs i ON i.cls = g.item
        WHERE g.classname = 'item' AND i.kind IN ('H', 'A', 'W', 'P', 'M', 'O') AND NOT (i.kind = 'P' AND i.bit = 32)
@@ -1007,6 +1023,13 @@ BEGIN
   BEGIN
     IF (sol = 0) THEN CONTINUE;
     tt = vlen(gx - x, gy - y, (gz - z) * 2) / 320 + 0.1e0;
+    IF (graph = 1) THEN
+    BEGIN
+      gn = NULL; rd = NULL;
+      SELECT FIRST 1 w.id, c.dist FROM waypoints w LEFT JOIN wp_tcache c ON c.src = :src AND c.rj = :rj AND c.node = w.id WHERE w.ent_id = :gid AND w.kind = 2 INTO gn, rd;
+      IF (gn IS NOT NULL AND rd IS NULL) THEN CONTINUE;
+      IF (gn IS NOT NULL) THEN tt = (d0 + rd) / 320 + 0.1e0;
+    END
     IF (av IS NOT NULL AND av - t - tt * 0.9e0 > 0) THEN CONTINUE;
     w = bot_item_weight(eid, cls);
     IF (w > 0 AND w / tt > bestw) THEN BEGIN bestw = w / tt; best = gid; END

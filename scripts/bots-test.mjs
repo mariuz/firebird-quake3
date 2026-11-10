@@ -426,6 +426,44 @@ if (item) {
   if (seen.length) await db.exec(`UPDATE ents SET item_seen = 1 WHERE id IN (${seen.join(',')})`);
   await set('health = 100, armor = 0, weapons = 3, quad_finished = 0');
 
+  // the travel time is the graph's (the AAS's travel time to the goal's area, AAS_AreaTravelTimeToGoalArea): an
+  // item the graph does not reach is no goal however near it is (BotChooseLTGItem skips one with no travel
+  // time). The bot a node away from an item it wants, every other item avoided: chosen; the edges into the
+  // item's node cut: not; back: chosen again
+  {
+    const items = await q(`SELECT e.id, TRIM(e.item) item, w.id node FROM ents e JOIN waypoints w ON w.ent_id = e.id AND w.kind = 2
+                            WHERE e.classname = 'item' AND e.solid = 1 AND e.item_seen = 1 ORDER BY e.id`);
+    let it = null, from = null;
+    for (const i of items) {
+      if ((await w(i.ITEM)) <= 0) continue;
+      [from] = await q(`SELECT FIRST 1 w.id, w.x, w.y, w.z FROM wp_edges e JOIN waypoints w ON w.id = e.a WHERE e.b = ${i.NODE} AND w.kind = 0 AND e.door_id IS NULL ORDER BY w.id`);
+      if (from) { it = i; break; }
+    }
+    if (it) {
+      await db.exec(`UPDATE ents SET x = ${from.X}, y = ${from.Y}, z = ${from.Z}, vx = 0, vy = 0, vz = 0 WHERE id = ${b}`);
+      await db.exec(`EXECUTE PROCEDURE link_ent(${b})`);
+      await db.exec(`DELETE FROM bot_avoid WHERE ent_id = ${b}`);
+      await db.exec(`INSERT INTO bot_avoid (ent_id, item_id, avoid_until) SELECT ${b}, e.id, 1e9 FROM ents e WHERE e.classname = 'item' AND e.id <> ${it.ID}`);
+      const near = await ltg();
+      const cut = await q(`SELECT a, b, len, kind, door_id, act_id FROM wp_edges WHERE b = ${it.NODE}`);
+      await db.exec(`DELETE FROM wp_edges WHERE b = ${it.NODE}`);
+      await db.exec('DELETE FROM wp_tcache');
+      const unreached = await ltg();
+      for (const e of cut) await db.query('INSERT INTO wp_edges (a, b, len, kind, door_id, act_id) VALUES (?, ?, ?, ?, ?, ?)', [e.A, e.B, e.LEN, e.KIND, e.DOOR_ID, e.ACT_ID]);
+      await db.exec('DELETE FROM wp_tcache');
+      const back = await ltg();
+      // (and the graph's way is what is weighed: from here, the item the graph puts farthest past its straight line)
+      const [far] = (await db.query(`EXECUTE BLOCK RETURNS (item VARCHAR(40), straight DOUBLE PRECISION, route DOUBLE PRECISION) AS DECLARE src INTEGER; BEGIN
+        src = ${from.ID}; EXECUTE PROCEDURE wp_travel_cached(src, 0);
+        FOR SELECT TRIM(e.item), vlen(e.x - ${from.X}, e.y - ${from.Y}, e.z - ${from.Z}), c.dist FROM waypoints w JOIN ents e ON e.id = w.ent_id
+             JOIN wp_tcache c ON c.src = :src AND c.rj = 0 AND c.node = w.id WHERE w.kind = 2 ORDER BY c.dist / MAXVALUE(vlen(e.x - ${from.X}, e.y - ${from.Y}, e.z - ${from.Z}), 1) DESC ROWS 1
+          INTO item, straight, route DO SUSPEND; END`)).rows;
+      await db.exec(`DELETE FROM bot_avoid WHERE ent_id = ${b}`);
+      assert(near === it.ID && unreached === null && back === it.ID,
+        `the travel time is the graph's: the ${it.ITEM} a node away chosen (${near === it.ID}), its node cut off not (${unreached}), back again (${back === it.ID}); from there the ${far?.ITEM} is ${far?.STRAIGHT.toFixed(0)} away in a straight line, ${far?.ROUTE.toFixed(0)} by the graph`);
+    }
+  }
+
   // BotChooseBestFightWeapon: with every gun, the one its character weighs the most (bots/NAME_w.c); the
   // lightning gun weighs a tenth past 768 across
   await set(`weapons = 511, ammo2 = 100, ammo3 = 50, ammo4 = 50, ammo5 = 50, ammo6 = 100, ammo7 = 50, ammo8 = 100, ammo9 = 50, enemy_id = ${pe}`);

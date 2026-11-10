@@ -501,8 +501,14 @@ A think:
    bot counts as the player does: `ents.ammo2` … `ammo9`, 100 bullets at the spawn and 50 in team play, a
    shot using one, an empty gun not firing and weighing nothing, `Pickup_Ammo` and `Pickup_Weapon`'s rules
    in `bot_item_touch`: a gun of the map's gives what is short of its quantity, or one shot). Sarge with no armour weighs the red armour 180 and 40 at 150, a rocket launcher 120 and 1
-   once held. The weight over the travel time (a straight line at run speed, height twice) picks the
-   goal. An item the bot chose or took is in `bot_avoid` for botlib's respawn time
+   once held. The weight over the travel time picks the goal: the way along the graph at run speed once the
+   graph is built (the AAS's travel time to the goal's area), the straight line to the bot's node and then
+   `wp_travel`'s distance to the item's node, the route search's breadth-first way with each node's distance the
+   shortest of its parents' plus the edge (over the rocket jumps for a bot that can and wants to rocket-jump);
+   measured once from each node and kept in `wp_tcache` until the next map. An item the graph does not reach is
+   no goal (`BotChooseLTGItem` skips a goal with no travel time). On q3dm7 the graph's way is a median 1.6 times
+   the straight line and up to 5 times; a choice costs 6 ms, 17 the first time from a node. Before the graph is
+   built, and for an item with no node of its own (one dropped), the straight line at run speed, height twice. An item the bot chose or took is in `bot_avoid` for botlib's respawn time
    (`BotChooseLTGItem`'s `BotAddToAvoidGoals`, `BotSetAvoidGoalTime`, `bot_avoid_item`: the respawntime of
    the pak's `botfiles/items.c`, `item_defs.bot_respawn`, 20 s for armour, 30 for health, guns and ammunition,
    60 for the powerups; 30 without one, 10 at least, 10 for a dropped item): it is a goal again only when the

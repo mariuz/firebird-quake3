@@ -32,6 +32,7 @@ CREATE TABLE wp_edges (
   PRIMARY KEY (a, b)
 );
 CREATE INDEX wp_edges_a ON wp_edges (a);
+CREATE INDEX waypoints_ent ON waypoints (ent_id);   -- (an item's node: the bots' travel times)
 
 -- each bot's current route: to which entity, through which nodes (',n1,n2,...,' the next first)
 CREATE TABLE bot_routes (
@@ -64,6 +65,24 @@ CREATE GLOBAL TEMPORARY TABLE wp_visit (
   prev INTEGER,
   depth INTEGER NOT NULL
 ) ON COMMIT DELETE ROWS;
+
+-- the travel from one node to all the others (wp_travel): the length of the way there, the route search's way,
+-- for the bots' choice of an item (the AAS's travel times, AAS_AreaTravelTimeToGoalArea)
+CREATE GLOBAL TEMPORARY TABLE wp_dist (
+  node  INTEGER NOT NULL PRIMARY KEY,
+  dist  DOUBLE PRECISION NOT NULL,
+  depth INTEGER NOT NULL
+) ON COMMIT DELETE ROWS;
+
+-- wp_travel's distances kept for each node they were measured from (and with or without the rocket jumps): the
+-- graph is done when they are asked for and changes no more until the next map
+CREATE TABLE wp_tcache (
+  src  INTEGER NOT NULL,
+  rj   SMALLINT NOT NULL,
+  node INTEGER NOT NULL,
+  dist DOUBLE PRECISION NOT NULL,
+  PRIMARY KEY (src, rj, node)
+);
 
 SET TERM ^ ;
 
@@ -239,6 +258,7 @@ DECLARE t0z DOUBLE PRECISION; DECLARE t1z DOUBLE PRECISION;
 BEGIN
   DELETE FROM wp_edges;
   DELETE FROM waypoints;
+  DELETE FROM wp_tcache;
   SELECT m.minx, m.miny, m.minz, m.maxx, m.maxy, m.maxz FROM models m JOIN game g ON g.world_model = m.id WHERE g.id = 1 INTO minx, miny, minz, maxx, maxy, maxz;
   IF (minx IS NULL) THEN EXIT;
 
@@ -776,6 +796,40 @@ BEGIN
     IF (n >= 4) THEN LEAVE;
   END
   RETURN best;
+END^
+
+-- how far every node is from `src` along the graph (into wp_dist): breadth-first as wp_route goes, so the way
+-- measured is the way a route takes, each node's distance the shortest of its parents' one level nearer plus the
+-- edge (over the rocket jumps only with `rj` 1); a node not reached has no row
+CREATE OR ALTER PROCEDURE wp_travel (src INTEGER, rj SMALLINT)
+AS
+DECLARE level INTEGER = 0;
+BEGIN
+  DELETE FROM wp_dist;
+  IF (src IS NULL) THEN EXIT;
+  INSERT INTO wp_dist (node, dist, depth) VALUES (:src, 0, 0);
+  WHILE (level < 60) DO
+  BEGIN
+    INSERT INTO wp_dist (node, dist, depth)
+    SELECT e.b, MIN(d.dist + e.len), :level + 1
+      FROM wp_dist d JOIN wp_edges e ON e.a = d.node
+     WHERE d.depth = :level AND (e.kind <> 4 OR :rj = 1) AND NOT EXISTS (SELECT 1 FROM wp_dist w WHERE w.node = e.b)
+     GROUP BY e.b;
+    IF (ROW_COUNT = 0) THEN LEAVE;
+    level = level + 1;
+  END
+END^
+
+-- wp_travel's distances from `src` in the cache (wp_tcache), measured the first time they are asked for
+CREATE OR ALTER PROCEDURE wp_travel_cached (src INTEGER, rj SMALLINT)
+AS
+BEGIN
+  IF (src IS NULL) THEN EXIT;
+  IF (NOT EXISTS (SELECT 1 FROM wp_tcache c WHERE c.src = :src AND c.rj = :rj AND c.node = :src)) THEN
+  BEGIN
+    EXECUTE PROCEDURE wp_travel(src, rj);
+    INSERT INTO wp_tcache (src, rj, node, dist) SELECT :src, :rj, d.node, d.dist FROM wp_dist d;
+  END
 END^
 
 -- the route from node `src` to node `dst` as ',n1,n2,…,dst,' (without src), NULL when there is none; over
