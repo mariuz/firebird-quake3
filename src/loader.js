@@ -9,6 +9,7 @@
 
 import { BOT_Q } from './botq.js';
 import { BOT_NN } from './botnn.js';
+import { BOT_W } from './botw.js';
 import { INTENTS } from './intents.js';
 import { INTENT_VECS } from './intentvecs.js';
 import { Bsp, parseVec, SURF, CONTENTS } from './bsp.js';
@@ -190,6 +191,7 @@ export async function loadResources(db, pak, { width = 320, height = 240, fov = 
   await db.exec('INSERT INTO game (id) VALUES (1); INSERT INTO player (id) VALUES (1)');
   await loadBotQ(db, BOT_Q);
   await loadBotNN(db, BOT_NN);
+  await loadBotW(db, BOT_W);
   // what the player can say to the bots (src/intents.js) and the phrases' embeddings (src/intentvecs.js)
   await db.exec('DELETE FROM bot_intents; DELETE FROM bot_phrases; DELETE FROM bot_phrase_dims');
   const say = [];

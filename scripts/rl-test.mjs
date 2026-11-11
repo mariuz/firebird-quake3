@@ -10,7 +10,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { FirebirdBrowser, DirectTransport } from 'firebird-wasm/browser';
 import { Pk3 } from '../src/pk3.js';
-import { createSchema, loadResources, loadMap, loadBotQ, loadBotNN, SQL_FILES } from '../src/loader.js';
+import { createSchema, loadResources, loadMap, loadBotQ, loadBotNN, loadBotW, SQL_FILES } from '../src/loader.js';
+import { BOT_W } from '../src/botw.js';
 import { BOT_Q } from '../src/botq.js';
 import { BOT_NN } from '../src/botnn.js';
 
@@ -96,6 +97,43 @@ for (let k = 0; k < 36; k++) {
 assert(worst < 1e-6 && same === 36, `the network's forward pass in SQL is the one written out in JavaScript: the six values within ${worst.toExponential(1)} on 36 inputs, the same move chosen on ${same} (${(ms / 36).toFixed(1)} ms a pass); it leaves Quake III's move on ${36 - picks[5]} of them`);
 const net3 = await choose(3, 10);
 assert(net3.reduce((a, n) => a + n, 0) === 10, `a bot asks the network in a fight (mode 3): moves ${net3.join(' ')}`);
+
+// the gun for the distance, by what was measured (bot_pick_weapon, bot_wdps): the shipped table, the choice by it,
+// and the measuring
+const wPick = async (dist) => (await q(`SELECT bot_pick_weapon(${b0}, ${dist}) w FROM rdb$database`))[0].W;
+const wArm = (guns, extra = '') => db.exec(`UPDATE ents SET weapons = ${guns}, weapon = 2, ammo2 = 100, ammo3 = 20, ammo5 = 20, ammo6 = 100, ammo7 = 20, ammo8 = 100, w_pick = NULL${extra} WHERE id = ${b0}`);
+const wCells = (await q('SELECT COUNT(*) n, SUM(secs) secs FROM bot_wdps'))[0];
+await wArm(1 + 2 + 4 + 16 + 32 + 64);
+await db.exec(`UPDATE ents SET wsel = 0 WHERE id = ${b0}`);
+const wOwn = [await wPick(100), await wPick(1000)];
+await loadBotW(db, [[2, 0, 100, 3000], [4, 0, 100, 6000], [32, 0, 100, 9000], [64, 0, 100, 2000], [16, 0, 10, 5000], [2, 4, 100, 400], [64, 4, 100, 1700], [4, 4, 100, 900]]);
+await db.exec(`UPDATE ents SET wsel = 1 WHERE id = ${b0}`);
+const wNear = await wPick(100), wFar = await wPick(1000), wUnknown = await wPick(2000);
+await db.exec(`UPDATE ents SET ammo6 = 0 WHERE id = ${b0}`);
+const wDry = await wPick(100);
+await wArm(1 + 2 + 16);
+const wFew = await wPick(100);   // (the rocket launcher fired 10 s there: not known; of the known it holds the machinegun alone)
+assert(BOT_W.length >= 40 && wCells.N === BOT_W.length && wCells.SECS > 3600 && wOwn[0] === wOwn[1] && wNear === 32 && wFar === 64 && wUnknown === wOwn[1] && wDry === 4 && wFew === 2,
+  `the gun for the distance: ${BOT_W.length} cells measured over ${(wCells.SECS / 3600).toFixed(1)} hours of fire ship; by a table a bot takes the lightning gun at 100 units (${wNear}), the railgun at 1000 (${wFar}), the shotgun when the lightning gun is dry (${wDry}), no gun fired under 30 s there (${wFew}), and its character's favourite where nothing is known (${wUnknown}, as without the table: ${wOwn[0]} at any distance)`);
+await loadBotW(db, []);
+await db.exec(`UPDATE ents SET wsel = 2, enemy_id = ${b1} WHERE id = ${b0}`);
+await wArm(1 + 2 + 4 + 16 + 32 + 64);
+const wDealt = new Set();
+for (let i = 0; i < 40; i++) { wDealt.add(await wPick(300)); await db.exec(`UPDATE ents SET w_until = 0 WHERE id = ${b0}`); }
+const wKept = [await wPick(300), await wPick(300), await wPick(300)];
+await db.exec(`UPDATE ents SET x = ${sp.X}, y = ${sp.Y}, z = ${sp.Z + 9}, weapon = 16 WHERE id = ${b0}`);
+await db.exec(`UPDATE ents SET x = ${sp.X + 400}, y = ${sp.Y}, z = ${sp.Z + 9}, health = 100 WHERE id = ${b1}`);
+await db.exec(`EXECUTE PROCEDURE bot_w_shot(${b0})`);
+await db.exec(`EXECUTE PROCEDURE bot_w_shot(${b0})`);
+await db.exec(`EXECUTE PROCEDURE bot_w_damage(${b0}, ${b1}, 7, 45)`);    // (a rocket's splash: the launcher's)
+await db.exec(`EXECUTE PROCEDURE bot_w_damage(${b0}, ${b1}, 13, 30)`);   // (a fall: no gun's)
+await db.exec(`EXECUTE PROCEDURE bot_w_damage(${b1}, ${b0}, 2, 30)`);    // (the other is not measuring)
+const wMeas = await q('SELECT w, band, secs, dmg FROM bot_wdps ORDER BY w, band');
+assert(wDealt.size >= 5 && [...wDealt].every((w) => [1, 2, 4, 16, 32, 64].includes(w)) && wKept[0] === wKept[1] && wKept[1] === wKept[2]
+  && wMeas.length === 1 && wMeas[0].W === 16 && wMeas[0].BAND === 2 && Math.abs(wMeas[0].SECS - 1.6) < 1e-9 && wMeas[0].DMG === 45,
+  `measuring: a gun at random of those held (${[...wDealt].sort((a, b) => a - b).join(' ')}), kept for 3 s; two rockets at 400 units are ${wMeas[0]?.SECS} s of fire in band ${wMeas[0]?.BAND}, their 45 of splash the launcher's; a fall and another bot's shots are not counted`);
+await db.exec(`UPDATE ents SET wsel = NULL, enemy_id = NULL WHERE id = ${b0}`);
+await loadBotW(db, BOT_W);
 
 // learning for real: the two set on each other, face to face, with the learning and the logging on
 await loadBotQ(db, []);

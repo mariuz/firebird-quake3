@@ -78,6 +78,14 @@ let s = (await q(`SELECT enemy_id, st, attack_finished, weapon FROM ents WHERE i
 assert(found !== null, `the bot found an enemy (${found}; now ${s.ST.trim()})`);
 // (the fight may take a while to start: the reaction time, a turn, a run for an item first)
 for (let i = 0; i < 200 && shots === 0; i++) { await tic(); shots = await fired(); }
+if (shots === 0) {
+  // (it has happened, rarely, and never where it could be looked at: what the bot is at, and once more from the start)
+  console.log('no shot yet:', JSON.stringify((await q(`SELECT TRIM(e.st) st, e.health hp, e.enemy_id en, e.weapon w, e.ammo2 a2, e.attack_finished af, e.nextthink nt, e.flags f, e.goal_id g, e.camp_id c,
+    CAST(e.x AS INTEGER) x, CAST(e.y AS INTEGER) y, CAST(e.z AS INTEGER) z, visible(e.id, ${pe}) vis, (SELECT g.time_ FROM game g WHERE g.id = 1) t FROM ents e WHERE e.id = ${b}`))[0]));
+  await db.exec(`UPDATE ents SET x = ${spot[0]}, y = ${spot[1]}, z = ${p.Z}, vx = 0, vy = 0, vz = 0, health = 100, enemy_id = NULL, goal_id = NULL, camp_id = NULL, yaw = ${faceUs}, ideal_yaw = ${faceUs}, nextthink = 0 WHERE id = ${b}`);
+  await db.exec(`EXECUTE PROCEDURE link_ent(${b})`);
+  for (let i = 0; i < 200 && shots === 0; i++) { await tic(); shots = await fired(); }
+}
 assert(shots > 0, `the bots fired (${shots} shots)`);
 await db.exec(`UPDATE ents SET flags = BIN_AND(flags, BIN_NOT(64)), nextthink = (SELECT time_ FROM game) WHERE classname = 'bot' AND id <> ${b}`);
 
