@@ -160,6 +160,11 @@ assert(sr1.url === '/v1/chat/completions' && sr1.body.model === 'llama3.1:8b' &&
 await db.exec(`UPDATE ents SET health = 30, armor = 0, weapons = 3, weapon = 2, ammo2 = 50 WHERE id = ${b} AND health > 0`);
 for (let i = 0; i < 80 && (await q(`SELECT health h FROM ents WHERE id = ${b}`))[0].H <= 0; i++) await tic();
 await db.exec(`UPDATE ents SET health = 30, armor = 0, weapons = 3, weapon = 2, ammo2 = 50 WHERE id = ${b}`);
+// (every item back in its place first: the others have been taking them)
+await db.exec("UPDATE ents e SET e.nextthink = (SELECT g.time_ FROM game g WHERE g.id = 1) WHERE e.think = 'item_respawn'");
+await db.exec("UPDATE ents SET nextthink = nextthink + 5 WHERE classname = 'bot'");
+for (let i = 0; i < 3; i++) await tic();
+await db.exec(`UPDATE ents SET health = 30, armor = 0, weapons = 3, weapon = 2, ammo2 = 50 WHERE id = ${b}`);
 const [of] = await q('SELECT eid, bot, txt, words FROM bot_llm_offer');
 console.log(of.TXT.split('\n').map((l) => `     | ${l}`).join('\n'));
 const BRIEF = /^Health \d+, armor \d+\. Guns: [^\n]+\.( Nearest enemy: \d+ units away(, in sight)?, holding the [A-Za-z0-9 ]+\.)?(\nheal: the [^\n]+, \d+ units away)?(\narm: the [^\n]+, \d+ units away)?(\nhunt: \w+)?\nwait: in ambush here$/;
