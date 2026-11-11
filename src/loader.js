@@ -91,6 +91,14 @@ export async function loadBotQ(db, rows) {
   }
 }
 
+/** What each gun does at each distance into bot_wdps (scripts/wsel-train.mjs): rows of [gun, band, seconds of fire, damage] */
+export async function loadBotW(db, rows) {
+  await db.exec('DELETE FROM bot_wdps');
+  if (!rows.length) return;
+  const part = rows.map(([w, b, secs, dmg]) => `INSERT INTO bot_wdps (w, band, secs, dmg) VALUES (${w | 0}, ${b | 0}, ${Number(secs) || 0}, ${Number(dmg) || 0});`).join('\n');
+  await db.exec(`SET TERM ^ ;\nEXECUTE BLOCK AS BEGIN\n${part}\nEND^\nSET TERM ; ^`);
+}
+
 /** The network of the bots' learned fight moves into bot_nn: rows of [layer, unit, input, weight] */
 export async function loadBotNN(db, rows) {
   await db.exec('DELETE FROM bot_nn');

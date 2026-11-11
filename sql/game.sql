@@ -11,6 +11,7 @@ SET TERM ^ ;
 CREATE OR ALTER PROCEDURE t_damage (targ INTEGER, inflictor INTEGER, attacker INTEGER, damage INTEGER, knockback INTEGER, dflags INTEGER, mod_ SMALLINT) AS BEGIN END^
 CREATE OR ALTER PROCEDURE use_targets (eid INTEGER, activator INTEGER) AS BEGIN END^
 CREATE OR ALTER PROCEDURE bot_die (eid INTEGER, attacker INTEGER, mod_ SMALLINT) AS BEGIN END^
+CREATE OR ALTER PROCEDURE bot_w_damage (attacker INTEGER, targ INTEGER, mod_ SMALLINT, take INTEGER) AS BEGIN END^
 CREATE OR ALTER PROCEDURE bot_pain (eid INTEGER, attacker INTEGER, damage INTEGER, mod_ SMALLINT) AS BEGIN END^
 CREATE OR ALTER PROCEDURE bot_chat_event (eid INTEGER, ev VARCHAR(16), other INTEGER, mod_ SMALLINT) AS BEGIN END^
 CREATE OR ALTER PROCEDURE player_die (attacker INTEGER, mod_ SMALLINT) AS BEGIN END^
@@ -1290,7 +1291,10 @@ BEGIN
   BEGIN
     UPDATE ents e SET e.rl_taken = e.rl_taken + MINVALUE(:take, :hp) WHERE e.id = :targ AND e.classname = 'bot';
     IF (attacker IS DISTINCT FROM targ) THEN
+    BEGIN
       UPDATE ents e SET e.rl_given = e.rl_given + MINVALUE(:take, :hp) WHERE e.id = :attacker AND e.classname = 'bot';
+      EXECUTE PROCEDURE bot_w_damage(attacker, targ, mod_, MINVALUE(take, hp));
+    END
   END
   UPDATE ents e SET e.health = e.health - :take WHERE e.id = :targ RETURNING e.health INTO hp;
   IF (hp <= 0) THEN

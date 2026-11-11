@@ -415,6 +415,7 @@ END^
 CREATE OR ALTER PROCEDURE bot_rl_end (eid INTEGER) AS BEGIN END^
 
 -- (declared here, defined with the bot's aim below: the way to a button shoots one that wants shooting)
+CREATE OR ALTER PROCEDURE bot_w_shot (eid INTEGER) AS BEGIN END^
 CREATE OR ALTER PROCEDURE bot_fire (eid INTEGER) AS BEGIN END^
 
 -- (declared here: it calls itself, for the way to a button)
@@ -1120,6 +1121,108 @@ BEGIN
   RETURN 1;
 END^
 
+-- ── the gun for the distance, by what was measured ─────────────────────────────────────────────────────────────
+-- botlib's bots fight with their character's favourite of the guns they hold, whatever the distance (but for the
+-- lightning gun's reach). Which gun does the most at which distance can be measured: in self-play with
+-- game.bot_wsel 2 every bot fights with a gun at random of those it holds, changed every 3 s, and bot_wdps counts
+-- for each gun and distance band the seconds of fire (bot_w_shot: a shot is the gun's time between two) and the
+-- health taken off (bot_w_damage, from t_damage, by the means of death). With game.bot_wsel 1 (or ents.wsel) a
+-- bot takes the gun with the most damage a second of fire at its enemy's distance, of those it holds with
+-- ammunition and that were fired for 30 s or more there; where nothing is known, its character's favourite.
+
+-- The distance band: 0 under 150 units, 1 under 300, 2 under 500, 3 under 800, 4 under 1200, 5 beyond
+CREATE OR ALTER FUNCTION bot_wband (d DOUBLE PRECISION) RETURNS SMALLINT
+AS
+BEGIN
+  RETURN CASE WHEN d < 150 THEN 0 WHEN d < 300 THEN 1 WHEN d < 500 THEN 2 WHEN d < 800 THEN 3 WHEN d < 1200 THEN 4 ELSE 5 END;
+END^
+
+-- The gun of a means of death (the WP bit), NULL for those that are no gun's
+CREATE OR ALTER FUNCTION mod_weapon (mod_ SMALLINT) RETURNS INTEGER
+AS
+BEGIN
+  RETURN CASE WHEN mod_ = 1 THEN 1 WHEN mod_ = 2 THEN 2 WHEN mod_ = 3 THEN 4 WHEN mod_ IN (4, 5) THEN 8 WHEN mod_ IN (6, 7) THEN 16
+              WHEN mod_ = 16 THEN 32 WHEN mod_ = 17 THEN 64 WHEN mod_ IN (8, 9) THEN 128 WHEN mod_ IN (18, 19) THEN 256 END;
+END^
+
+-- How a bot chooses its gun: its own setting, else the game's
+CREATE OR ALTER FUNCTION bot_wsel_mode (eid INTEGER) RETURNS SMALLINT
+AS
+BEGIN
+  RETURN COALESCE((SELECT e.wsel FROM ents e WHERE e.id = :eid), (SELECT g.bot_wsel FROM game g WHERE g.id = 1), 0);
+END^
+
+-- A shot of a bot that is measuring: the gun's time between two shots, at the enemy's distance
+CREATE OR ALTER PROCEDURE bot_w_shot (eid INTEGER)
+AS
+DECLARE w INTEGER; DECLARE d DOUBLE PRECISION; DECLARE b SMALLINT; DECLARE s DOUBLE PRECISION;
+BEGIN
+  IF (bot_wsel_mode(eid) <> 2) THEN EXIT;
+  SELECT e.weapon, vlen(o.x - e.x, o.y - e.y, o.z - e.z) FROM ents e JOIN ents o ON o.id = e.enemy_id WHERE e.id = :eid INTO w, d;
+  IF (d IS NULL) THEN EXIT;
+  b = bot_wband(d);
+  s = fire_time(w);
+  UPDATE bot_wdps p SET p.secs = p.secs + :s WHERE p.w = :w AND p.band = :b;
+  IF (ROW_COUNT = 0) THEN INSERT INTO bot_wdps (w, band, secs, dmg) VALUES (:w, :b, :s, 0);
+END^
+
+-- The health a measuring bot's shot took off another player, to its gun at that distance
+CREATE OR ALTER PROCEDURE bot_w_damage (attacker INTEGER, targ INTEGER, mod_ SMALLINT, take INTEGER)
+AS
+DECLARE w INTEGER; DECLARE d DOUBLE PRECISION; DECLARE b SMALLINT;
+BEGIN
+  IF (take <= 0 OR attacker IS NULL) THEN EXIT;
+  IF ((SELECT e.classname FROM ents e WHERE e.id = :attacker) IS DISTINCT FROM 'bot') THEN EXIT;
+  IF (bot_wsel_mode(attacker) <> 2) THEN EXIT;
+  w = mod_weapon(mod_);
+  IF (w IS NULL) THEN EXIT;
+  SELECT vlen(o.x - e.x, o.y - e.y, o.z - e.z) FROM ents e JOIN ents o ON o.id = :targ WHERE e.id = :attacker INTO d;
+  IF (d IS NULL) THEN EXIT;
+  b = bot_wband(d);
+  UPDATE bot_wdps p SET p.dmg = p.dmg + :take WHERE p.w = :w AND p.band = :b;
+  IF (ROW_COUNT = 0) THEN INSERT INTO bot_wdps (w, band, secs, dmg) VALUES (:w, :b, 0, :take);
+END^
+
+-- The gun a bot fights with at this distance (see above)
+CREATE OR ALTER FUNCTION bot_pick_weapon (eid INTEGER, dist DOUBLE PRECISION) RETURNS INTEGER
+AS
+DECLARE mode SMALLINT; DECLARE held INTEGER; DECLARE t DOUBLE PRECISION; DECLARE w INTEGER; DECLARE until_ DOUBLE PRECISION;
+DECLARE n INTEGER; DECLARE k INTEGER; DECLARE bit_ INTEGER; DECLARE b SMALLINT;
+BEGIN
+  mode = bot_wsel_mode(eid);
+  IF (mode = 0) THEN RETURN bot_best_weapon(eid, dist);
+  -- the guns held that have ammunition (the gauntlet needs none)
+  SELECT BIN_AND(e.weapons, 1 + IIF(e.ammo2 > 0, 2, 0) + IIF(e.ammo3 > 0, 4, 0) + IIF(e.ammo4 > 0, 8, 0) + IIF(e.ammo5 > 0, 16, 0)
+                 + IIF(e.ammo6 > 0, 32, 0) + IIF(e.ammo7 > 0, 64, 0) + IIF(e.ammo8 > 0, 128, 0) + IIF(e.ammo9 > 0, 256, 0)), e.w_pick, e.w_until
+    FROM ents e WHERE e.id = :eid INTO held, w, until_;
+  IF (mode = 2) THEN
+  BEGIN
+    -- measuring: one of them at random, kept for 3 s
+    t = now_();
+    IF (w IS NOT NULL AND until_ > t AND BIN_AND(held, w) <> 0) THEN RETURN w;
+    n = 0; bit_ = 1;
+    WHILE (bit_ <= 256) DO BEGIN IF (BIN_AND(held, bit_) <> 0) THEN n = n + 1; bit_ = bit_ * 2; END
+    k = CAST(FLOOR(RAND() * n) AS INTEGER); bit_ = 1; w = 1;
+    WHILE (bit_ <= 256) DO
+    BEGIN
+      IF (BIN_AND(held, bit_) <> 0) THEN
+      BEGIN
+        IF (k = 0) THEN BEGIN w = bit_; LEAVE; END
+        k = k - 1;
+      END
+      bit_ = bit_ * 2;
+    END
+    UPDATE ents e SET e.w_pick = :w, e.w_until = :t + 3 WHERE e.id = :eid;
+    RETURN w;
+  END
+  -- by what was measured: the most damage a second of fire at this distance
+  b = bot_wband(dist);
+  w = NULL;
+  SELECT FIRST 1 p.w FROM bot_wdps p WHERE p.band = :b AND p.secs >= 30 AND BIN_AND(:held, p.w) <> 0 ORDER BY p.dmg / p.secs DESC, p.w DESC INTO w;
+  IF (w IS NOT NULL) THEN RETURN w;
+  RETURN bot_best_weapon(eid, dist);
+END^
+
 -- aim at the enemy (leading projectiles when skilled enough), scattered by the aim accuracy, and fire
 -- BotAggression (ai_dmq3.c): how keen on a fight the bot is, 0 to 100. With the quad 70 (unless it holds the
 -- gauntlet far from the enemy); none with the enemy 200 above, under 60 health, or under 80 without 40 armour;
@@ -1198,6 +1301,7 @@ DECLARE tsf INTEGER; DECLARE tct INTEGER; DECLARE tas SMALLINT; DECLARE tss SMAL
 DECLARE acc DOUBLE PRECISION; DECLARE askill DOUBLE PRECISION;
 DECLARE vyaw DOUBLE PRECISION; DECLARE vpitch DOUBLE PRECISION; DECLARE ay DOUBLE PRECISION; DECLARE ap DOUBLE PRECISION;
 BEGIN
+  EXECUTE PROCEDURE bot_w_shot(eid);   -- (counted, when the guns are being measured)
   SELECT e.enemy_id, e.weapon, COALESCE(b.skill, 2) FROM ents e LEFT JOIN bot_defs b ON b.name = e.bot WHERE e.id = :eid INTO enemy, w, skill;
   IF (enemy IS NULL) THEN EXIT;
   EXECUTE PROCEDURE eye_of(eid) RETURNING_VALUES ex, ey, ez, fx, fy, fz;
@@ -1981,7 +2085,7 @@ BEGIN
       UPDATE ents e SET e.nextthink = :nt, e.attack_finished = IIF(:vis = 1 AND :af <= :t, :t + fire_time(e.weapon) / IIF(:haste > :t, 1.3e0, 1), e.attack_finished) WHERE e.id = :eid;
       EXIT;
     END
-    w = bot_best_weapon(eid, d);
+    w = bot_pick_weapon(eid, d);
     IF (EXISTS (SELECT 1 FROM ents e WHERE e.id = :eid AND e.weapon <> :w)) THEN
     BEGIN
       UPDATE ents e SET e.weapon = :w WHERE e.id = :eid;

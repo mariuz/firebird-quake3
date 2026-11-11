@@ -22,6 +22,7 @@ CREATE TABLE game (
   id             SMALLINT NOT NULL PRIMARY KEY,
   tic            INTEGER DEFAULT 0 NOT NULL,
   bot_rl         SMALLINT DEFAULT 0 NOT NULL,           -- the bots' fight moves: 0 Quake III's, 1 the learned table's (bot_q), 2 the table's, learning on, 3 the network's (bot_nn)
+  bot_wsel       SMALLINT DEFAULT 0 NOT NULL,           -- the gun a bot fights with: 0 its character's favourite (botlib), 1 the one that does the most at this distance by what was measured (bot_wdps), 2 measuring: a gun at random every 3 s, the shots and their damage counted
   rl_logging     SMALLINT DEFAULT 0 NOT NULL,           -- 1: every learned move is written to bot_rl_log (scripts/rl-train.mjs: the network's training data)
   demo_rec       INTEGER,                               -- the demo being recorded (demos.id), its next snapshot's number and
   demo_n         INTEGER DEFAULT 0 NOT NULL,            -- the last sound, effect and line it has (while playing: the snapshot shown)
@@ -414,6 +415,11 @@ CREATE TABLE ents (
   llm        SMALLINT DEFAULT 0 NOT NULL,
   llm_plan   VARCHAR(60),
   llm_time   DOUBLE PRECISION,
+  -- the gun by what was measured (bot_pick_weapon in bots.sql): whether this bot uses it (NULL: as game.bot_wsel
+  -- says), and while measuring the gun it was dealt at random and until when
+  wsel       SMALLINT,
+  w_pick     INTEGER,
+  w_until    DOUBLE PRECISION,
   -- a bot's learned fight moves (bot_rl_move in bots.sql): whether it uses them (NULL: as game.bot_rl says), the
   -- state and the move it is on and until when, the damage it has given and taken in all and at that choice
   rl         SMALLINT,
@@ -925,6 +931,18 @@ CREATE TABLE bot_llm_choices (
   action VARCHAR(20) NOT NULL,
   arg    VARCHAR(40) NOT NULL,
   PRIMARY KEY (eid, word)
+);
+
+-- What each gun does in a bot's hands at each distance, measured in self-play (scripts/wsel-train.mjs; shipped in
+-- src/botw.js): the seconds of fire with gun `w` (its WP bit) at an enemy in band `band` (bot_wband: under 150
+-- units, 300, 500, 800, 1200, beyond), a shot counting for the gun's time between two, and the health those
+-- shots took off (by the means of death, so a rocket that lands after the bot changed guns is the launcher's)
+CREATE TABLE bot_wdps (
+  w    SMALLINT NOT NULL,
+  band SMALLINT NOT NULL,
+  secs DOUBLE PRECISION DEFAULT 0 NOT NULL,
+  dmg  DOUBLE PRECISION DEFAULT 0 NOT NULL,
+  PRIMARY KEY (w, band)
 );
 
 CREATE TABLE bot_rl_log (
