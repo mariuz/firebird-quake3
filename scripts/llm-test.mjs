@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { FirebirdBrowser, DirectTransport } from 'firebird-wasm/browser';
 import { Pk3 } from '../src/pk3.js';
 import { createSchema, loadResources, loadMap, buildWaypoints, SQL_FILES } from '../src/loader.js';
-import { Strategist, LLM_MODELS, exportMemory, importMemory } from '../src/llm.js';
+import { Strategist, LocalStrategist, LLM_MODELS, LOCAL_MODELS, smallMessages, smallWord, exportMemory, importMemory } from '../src/llm.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const sql = Object.fromEntries(SQL_FILES.map((n) => [n, fs.readFileSync(path.join(root, `sql/${n}.sql`), 'utf8')]));
@@ -133,6 +133,35 @@ const m2 = await memOf();
 assert(kept.log.length === n1 && back === n1 + 12 && n2.N === n1 && n2.PAST === n1 && n2.NOTES === 12 && !/your last decisions/.test(m2)
   && /what your decisions have brought on this arena/.test(m2) && /\n  roam: 1[45] times/.test(m2) && /\n  lesson 12/.test(m2) && (await importMemory(db, { version: 2 })) === 0,
   `the memory out to storage and back (${kept.log.length} decisions, ${kept.notes.length} notes): they count for the arena's totals, not as this match's last decisions`);
+
+// a small model in the browser, in Claude's place: SQL finds the best move of each kind, the model answers a word.
+// (No model here either: the answers are given)
+await db.exec(`UPDATE ents SET health = 30, armor = 0, weapons = 3, weapon = 2, ammo2 = 50 WHERE id = ${b} AND health > 0`);
+for (let i = 0; i < 80 && (await q(`SELECT health h FROM ents WHERE id = ${b}`))[0].H <= 0; i++) await tic();
+await db.exec(`UPDATE ents SET health = 30, armor = 0, weapons = 3, weapon = 2, ammo2 = 50 WHERE id = ${b}`);
+const [of] = await q('SELECT eid, bot, txt, words FROM bot_llm_offer');
+console.log(of.TXT.split('\n').map((l) => `     | ${l}`).join('\n'));
+const BRIEF = /^Health \d+, armor \d+\. Guns: [^\n]+\.( Nearest enemy: \d+ units away(, in sight)?, holding the [A-Za-z0-9 ]+\.)?(\nheal: the [^\n]+, \d+ units away)?(\narm: the [^\n]+, \d+ units away)?(\nhunt: \w+)?\nwait: in ambush here$/;
+const msgs = smallMessages(of.TXT, of.WORDS);
+const examples = msgs.filter((m, i) => m.role === 'user' && i < msgs.length - 1).map((m) => m.content.replace(/\nOne word \([^\n]*\):$/, ''));
+const offered = Object.fromEntries((await q(`SELECT TRIM(word) w, TRIM(action) a, TRIM(arg) g FROM bot_llm_choices WHERE eid = ${b}`)).map((r) => [r.W, `${r.A} ${r.G}`.trim()]));
+assert(BRIEF.test(of.TXT) && of.WORDS.trim() === 'heal arm hunt wait' && /^Health 30, armor 0\. Guns: Gauntlet, Machinegun \(50\)\./.test(of.TXT)
+  && /^get item_(health|armor)/.test(offered.heal) && /^get (weapon|item)_/.test(offered.arm) && /^hunt \w+/.test(offered.hunt) && offered.wait === 'ambush'
+  && examples.length >= 4 && examples.every((e) => BRIEF.test(e)) && msgs[0].role === 'system' && msgs.at(-1).content.endsWith('One word (heal, arm, hunt or wait):')
+  && smallWord(' Heal.', of.WORDS) === 'heal' && smallWord('I would arm', of.WORDS) === 'arm' && smallWord('7', of.WORDS) === '' && smallWord('arm', 'heal hunt wait') === '',
+  `what a small model is offered: one line about the bot and the best move of each kind under a word (${Object.entries(offered).map(([w, m]) => `${w}: ${m}`).join('; ')}); the worked examples are in the same form`);
+const words3 = ['heal', 'Hunt!', 'banana'], asked = [];
+const small = new LocalStrategist({ every: 0, generate: async (m) => { asked.push(m); return words3.shift(); } });
+await small.tick(db);
+const p1 = await state();
+await small.tick(db);
+const p2 = await state();
+await small.tick(db);
+const p3 = await state();
+const [lg] = await q(`SELECT COUNT(*) n FROM bot_llm_log WHERE past = 0 AND TRIM(action) || ' ' || TRIM(arg) = '${offered.heal}'`);
+assert(p1.LASTD === offered.heal && /^item_(health|armor)/.test(p1.ITEM) && p2.LASTD === offered.hunt && p2.ENEMY_ID !== null && p3.LASTD === 'roam' && p3.GET_ID === null
+  && asked.length === 3 && asked[0].at(-1).content.startsWith('Health 30, armor 0.') && small.decisions === 3 && lg.N === 1 && LOCAL_MODELS.length >= 1,
+  `its word carried out: "heal" is ${offered.heal}, "Hunt!" is ${offered.hunt}, a word that was not offered lets the bot roam; the decisions are in the same memory`);
 
 // what can go wrong: a refusal is skipped, a limit waits, a wrong key ends it
 answers.push({ stop: 'refusal' });

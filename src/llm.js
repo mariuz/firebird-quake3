@@ -169,3 +169,106 @@ export async function importMemory(db, mem) {
   }
   return mem.notes.length + mem.log.length;
 }
+
+// ── a small open model in the browser, in Claude's place ───────────────────────────────────────────────────────
+// No key and no bill: the model is downloaded once into the browser and runs on the player's GPU (Transformers.js
+// on WebGPU, as the embedding model of chat.js does). It is a far weaker strategist. Models under a billion
+// parameters answered the same whatever the bot's situation when asked to choose from a list, so the question is
+// made as small as it can be: SQL finds the best move of each kind (bot_llm_offer) and the model answers one
+// word, heal, arm, hunt or wait, after a few worked examples; SQL carries out the move kept under the word
+// (bot_llm_pick). It writes no chat lines and no notes; its decisions go into the same memory.
+
+/** The models offered: [id, label, dtype], the first the default */
+export const LOCAL_MODELS = [
+  ['onnx-community/gemma-3-1b-it-ONNX', 'Gemma 3 1B (0.9 GB)', 'q4'],
+  ['onnx-community/Phi-4-mini-instruct-ONNX', 'Phi-4 mini (2.8 GB)', 'q4'],
+];
+const TRANSFORMERS = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.3.2';
+
+const SMALL_SYSTEM = 'You advise a fighter in an arena deathmatch. Answer with one word: "heal" when the fighter is badly hurt, "arm" when it has no gun better than the Machinegun, "hunt" when it is healthy and well armed, "wait" otherwise.';
+// (worked examples in the form bot_llm_offer writes; scripts/llm-test.mjs holds the two to each other)
+const EXAMPLES = [
+  ['Health 18, armor 0. Guns: Gauntlet, Machinegun (30), Railgun (8). Nearest enemy: 600 units away, in sight, holding the Shotgun.\nheal: the 25 Health, 300 units away\narm: the Rocket Launcher, 700 units away\nhunt: Sarge\nwait: in ambush here', 'heal arm hunt wait', 'heal'],
+  ['Health 110, armor 25. Guns: Gauntlet, Machinegun (90). Nearest enemy: 900 units away, holding the Machinegun.\nheal: the Armor, 800 units away\narm: the Shotgun, 350 units away\nhunt: Visor\nwait: in ambush here', 'heal arm hunt wait', 'arm'],
+  ['Health 140, armor 100. Guns: Gauntlet, Machinegun (50), Rocket Launcher (20), Plasma Gun (60). Nearest enemy: 500 units away, in sight, holding the Machinegun.\nheal: the Mega Health, 1200 units away\narm: the Railgun, 1500 units away\nhunt: Major\nwait: in ambush here', 'heal arm hunt wait', 'hunt'],
+  ['Health 35, armor 5. Guns: Gauntlet, Machinegun (80). Nearest enemy: 400 units away, holding the Rocket Launcher.\nheal: the 50 Health, 250 units away\narm: the Plasma Gun, 900 units away\nhunt: Grunt\nwait: in ambush here', 'heal arm hunt wait', 'heal'],
+  ['Health 125, armor 0. Guns: Gauntlet, Machinegun (100). Nearest enemy: 1300 units away, holding the Machinegun.\narm: the Rocket Launcher, 600 units away\nhunt: Daemia\nwait: in ambush here', 'arm hunt wait', 'arm'],
+];
+const question = (txt, words) => `${txt}\nOne word (${words.trim().split(/\s+/).join(', ').replace(/, ([^,]*)$/, ' or $1')}):`;
+
+/** The chat a small model is given: the instruction, the worked examples, then the bot's brief and its words */
+export function smallMessages(txt, words) {
+  return [{ role: 'system', content: SMALL_SYSTEM },
+    ...EXAMPLES.flatMap(([t, w, a]) => [{ role: 'user', content: question(t, w) }, { role: 'assistant', content: a }]),
+    { role: 'user', content: question(txt, words) }];
+}
+
+/** The word of an answer: the first of those offered that it has, or '' (which lets the bot roam) */
+export function smallWord(answer, words) {
+  const offered = words.trim().split(/\s+/);
+  return (String(answer).toLowerCase().match(/[a-z]+/g) ?? []).find((w) => offered.includes(w)) ?? '';
+}
+
+export class LocalStrategist {
+  /**
+   * @param {object} o
+   * @param {string} [o.model]     one of LOCAL_MODELS
+   * @param {number} [o.every]     seconds between two questions for one bot
+   * @param {(messages: object[]) => Promise<string>} [o.generate]  the model, for a test that has none
+   * @param {(s: string) => void} [o.onStatus]
+   */
+  constructor({ model = LOCAL_MODELS[0][0], every = 5, generate = null, onStatus = () => {} } = {}) {
+    this.model = model; this.every = every; this.onStatus = onStatus;
+    this.generate = generate;
+    this.loading = null;
+    this.due = new Map(); this.look = 0; this.busy = false; this.stopped = null;
+    this.decisions = 0; this.ms = 0;
+  }
+
+  /** Fetch the library and the model (once; the browser keeps them) */
+  connect() {
+    if (this.generate) return Promise.resolve();
+    this.loading ??= (async () => {
+      const adapter = typeof navigator !== 'undefined' && navigator.gpu ? await navigator.gpu.requestAdapter().catch(() => null) : null;
+      if (!adapter) throw new Error('this browser has no WebGPU, which the model needs');
+      this.onStatus('loading Transformers.js…');
+      const url = TRANSFORMERS;   // (a URL the bundler leaves alone)
+      const { pipeline } = await import(url);
+      const [, label, dtype] = LOCAL_MODELS.find(([id]) => id === this.model) ?? [null, this.model, 'q4'];
+      const seen = new Map();
+      const progress_callback = (p) => {
+        if (p.status !== 'progress' || !p.total) return;
+        seen.set(p.file, [p.loaded, p.total]);
+        let l = 0, t = 0;
+        for (const [a, b] of seen.values()) { l += a; t += b; }
+        this.onStatus(`${label.replace(/ \(.*/, '')}: ${(l / 1e6).toFixed(0)} of ${(t / 1e6).toFixed(0)} MB`);
+      };
+      const pipe = await pipeline('text-generation', this.model, { device: 'webgpu', dtype, progress_callback });
+      this.generate = async (messages) => (await pipe(messages, { max_new_tokens: 4, do_sample: false }))[0].generated_text.at(-1).content;
+      this.onStatus(`${label.replace(/ \(.*/, '')} ready`);
+    })().catch((err) => { this.stopped = err?.message ?? String(err); this.onStatus(`stopped: ${this.stopped}`); });
+    return this.loading;
+  }
+
+  /** As Strategist.tick: every led bot that is due is offered its moves, the model's word goes back to SQL */
+  async tick(db, now = performance.now()) {
+    if (this.busy || this.stopped || now < this.look) return;
+    this.look = now + Math.min(1000, this.every * 1000);
+    this.busy = true;
+    try {
+      await this.connect();
+      if (this.stopped) return;
+      const { rows } = await db.query('SELECT eid, bot, txt, words FROM bot_llm_offer');
+      for (const r of rows) {
+        if ((this.due.get(r.EID) ?? 0) > now) continue;
+        this.due.set(r.EID, now + this.every * 1000);
+        const t = performance.now();
+        const answer = await this.generate(smallMessages(r.TXT, r.WORDS));
+        this.ms += performance.now() - t;
+        const [a] = (await db.query('SELECT done FROM bot_llm_pick(?, ?)', [r.EID, smallWord(answer, r.WORDS)])).rows;
+        this.decisions++;
+        this.onStatus(`${r.BOT.trim()}: ${a?.DONE?.trim() ?? '?'} · ${this.decisions} decision${this.decisions === 1 ? '' : 's'}, ${(this.ms / this.decisions).toFixed(0)} ms each`);
+      }
+    } finally { this.busy = false; }
+  }
+}

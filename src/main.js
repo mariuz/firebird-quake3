@@ -29,7 +29,7 @@ import { exportDemo, importDemo, listDemos } from './demo.js';
 import { exportSave, importSave, saveMap } from './save.js';
 import { loadEmbedder, embedderReady, embed } from './chat.js';
 import { loadBotQ } from './loader.js';
-import { Strategist, LLM_MODELS, exportMemory, importMemory } from './llm.js';
+import { Strategist, LocalStrategist, LLM_MODELS, LOCAL_MODELS, exportMemory, importMemory } from './llm.js';
 
 const $ = (id) => document.getElementById(id);
 const canvas = $('screen');
@@ -856,13 +856,22 @@ async function restoreLlmMemory() {
   if (mem) await importMemory(db, mem);
 }
 async function leadBots() {
-  const key = llmKey();
-  strategist = settings.llm && key ? new Strategist({ apiKey: key, model: settings.llmModel, onStatus: llmStatus }) : null;
-  llmStatus(settings.llm && !key ? 'needs an API key' : '');
+  const key = llmKey(), local = LOCAL_MODELS.some(([id]) => id === settings.llmModel);
+  $('llmkey').hidden = local;
+  strategist = !settings.llm ? null
+    : local ? new LocalStrategist({ model: settings.llmModel, onStatus: llmStatus })
+      : key ? new Strategist({ apiKey: key, model: settings.llmModel, onStatus: llmStatus }) : null;
+  llmStatus(settings.llm && !strategist ? 'needs an API key' : '');
   if (db && map) await db.exec(`EXECUTE PROCEDURE bot_llm_lead(${strategist ? settings.llm | 0 : 0})`);
 }
-for (const [id, label] of LLM_MODELS) $('llmmodel').add(new Option(label, id));
-if (!LLM_MODELS.some(([id]) => id === settings.llmModel)) settings.llmModel = LLM_MODELS[0][0];
+for (const [title, list] of [['Claude (your API key)', LLM_MODELS], ['In this browser (WebGPU)', LOCAL_MODELS]]) {
+  const group = document.createElement('optgroup');
+  group.label = title;
+  for (const [id, label] of list) group.append(new Option(label, id));
+  $('llmmodel').append(group);
+}
+if (![...LLM_MODELS, ...LOCAL_MODELS].some(([id]) => id === settings.llmModel)) settings.llmModel = LLM_MODELS[0][0];
+$('llmkey').hidden = LOCAL_MODELS.some(([id]) => id === settings.llmModel);
 $('llmmodel').value = settings.llmModel;
 $('llmbots').value = String(settings.llm);
 $('llmkey').value = llmKey();

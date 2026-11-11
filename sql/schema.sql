@@ -911,13 +911,14 @@ CREATE TABLE bot_llm_notes (
 CREATE INDEX bot_llm_notes_map ON bot_llm_notes (map_name, id);
 
 -- What a small model was last offered (chat.sql: bot_llm_offer writes it, bot_llm_pick reads it): a small model
--- cannot be trusted with an item's class or a name, so SQL numbers what can be done and the model answers a number
+-- cannot be trusted with an item's class or a name, so SQL finds the best move of each kind and the model answers
+-- with the kind, one word
 CREATE TABLE bot_llm_choices (
   eid    INTEGER NOT NULL,
-  n      SMALLINT NOT NULL,
+  word   VARCHAR(8) NOT NULL,
   action VARCHAR(20) NOT NULL,
   arg    VARCHAR(40) NOT NULL,
-  PRIMARY KEY (eid, n)
+  PRIMARY KEY (eid, word)
 );
 
 CREATE TABLE bot_rl_log (
