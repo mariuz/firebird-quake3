@@ -153,7 +153,10 @@ And a language model can lead a bot (*Claude leads*, with your own Anthropic API
 every five seconds SQL writes what the bot knows as a dozen lines of text, Claude answers which item to go
 for, whom to hunt or where to wait, and now and then a line to say, and SQL carries it out. The bot's aim and
 its legs stay its own: a model that answers in a second cannot steer a game that ticks twenty times in one.
-Each decision is a paid API call.
+The model remembers nothing between two questions, so the database does: every decision and what followed
+it is a row, a `GROUP BY` totals what each kind of decision has brought on the arena, the model can ask to
+have a note kept, and all of it is written back into the next question and kept in your browser between
+visits. Each decision is a paid API call.
 
 The bots know their way around because the arena is a graph (`sql/waypoints.sql`, the part of Quake
 III's area awareness system a deathmatch bot needs). When a map loads, `BUILD_WAYPOINTS` puts a node

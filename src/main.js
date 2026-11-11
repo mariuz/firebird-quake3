@@ -29,7 +29,7 @@ import { exportDemo, importDemo, listDemos } from './demo.js';
 import { exportSave, importSave, saveMap } from './save.js';
 import { loadEmbedder, embedderReady, embed } from './chat.js';
 import { loadBotQ } from './loader.js';
-import { Strategist, LLM_MODELS } from './llm.js';
+import { Strategist, LLM_MODELS, exportMemory, importMemory } from './llm.js';
 
 const $ = (id) => document.getElementById(id);
 const canvas = $('screen');
@@ -418,6 +418,7 @@ async function frame() {
       if (last.MATCH_OVER && !demoPlaying && !careerLogged) {
         careerLogged = true;
         keepBotQ().catch((err) => console.error(err));
+        keepLlmMemory().catch((err) => console.error(err));
         const c = readCareer();
         if (c) {
           careerFrags = Number(c.frags) || 0;
@@ -599,6 +600,7 @@ async function usePak(buffer, label) {
   setStatus(`Copying ${label} models into Firebird…`);
   res = await loadResources(db, pak, { width: viewWidth(), height: viewHeight(), fov: settings.fov });
   if (settings.botai === 2) await restoreBotQ();   // (what the bots learned here before)
+  await restoreLlmMemory();                        // (and what the bots a language model leads remember)
   makeRenderer();
   audio.setPak(pak);
   fillMapMenu();
@@ -838,7 +840,21 @@ async function restoreBotQ() {
 const LLM_KEY = 'firebird-quake3:anthropic-key';
 let strategist = null;
 const llmKey = () => { try { return localStorage.getItem(LLM_KEY) ?? ''; } catch { return ''; } };
-const llmStatus = (s) => { $('llminfo').textContent = s; };
+const LLM_MEMORY = 'firebird-quake3:llm-memory';
+let llmKept = -1e9;
+// (the memory is kept in the browser as decisions are made, every ten seconds at most, and at a match's end)
+const llmStatus = (s) => { $('llminfo').textContent = s; if (performance.now() - llmKept > 10_000) keepLlmMemory().catch((err) => console.error(err)); };
+async function keepLlmMemory() {
+  if (!db || !strategist?.decisions) return;
+  llmKept = performance.now();
+  const mem = await exportMemory(db);
+  try { localStorage.setItem(LLM_MEMORY, JSON.stringify(mem)); } catch { /* storage blocked or full */ }
+}
+async function restoreLlmMemory() {
+  let mem = null;
+  try { mem = JSON.parse(localStorage.getItem(LLM_MEMORY) ?? 'null'); } catch { /* none */ }
+  if (mem) await importMemory(db, mem);
+}
 async function leadBots() {
   const key = llmKey();
   strategist = settings.llm && key ? new Strategist({ apiKey: key, model: settings.llmModel, onStatus: llmStatus }) : null;

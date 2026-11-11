@@ -882,6 +882,34 @@ CREATE GLOBAL TEMPORARY TABLE nn_x (
 -- move was chosen, the move, what it brought (r, filled in when the next is chosen or the bot dies) and the row
 -- of the move that followed in the same fight (NULL: the fight ended there)
 CREATE SEQUENCE rl_log_seq;
+-- The memory of a bot a language model leads (chat.sql: bot_llm_apply writes it, bot_llm_state reads it back to
+-- the model, which has none of its own from one question to the next). bot_llm_log is every decision and what
+-- followed it: the bot as it was when the decision was made and as it was at the next one (NULL until then).
+-- bot_llm_notes is what the model asked to have remembered of an arena. A bot's last decisions are its own, by
+-- its name; the totals and the notes are the arena's. The page keeps both in the browser's storage between visits.
+CREATE SEQUENCE llm_seq;
+CREATE TABLE bot_llm_log (
+  id       INTEGER NOT NULL PRIMARY KEY,
+  bot      VARCHAR(16) NOT NULL,
+  map_name VARCHAR(32) NOT NULL,
+  time_    DOUBLE PRECISION NOT NULL,     -- the match's clock at the decision
+  action   VARCHAR(20) NOT NULL,
+  arg      VARCHAR(40) NOT NULL,
+  ok       SMALLINT NOT NULL,             -- 0: it could not be done (no such item there, nobody by that name)
+  hp0 INTEGER NOT NULL, armor0 INTEGER NOT NULL, frags0 INTEGER NOT NULL, deaths0 INTEGER NOT NULL, weapons0 INTEGER NOT NULL,
+  hp1 INTEGER, armor1 INTEGER, frags1 INTEGER, deaths1 INTEGER, weapons1 INTEGER,
+  secs     DOUBLE PRECISION,              -- how long until the next decision closed it
+  past     SMALLINT DEFAULT 0 NOT NULL    -- 1: of an earlier match (its clock is not this one's)
+);
+CREATE INDEX bot_llm_log_map ON bot_llm_log (map_name, bot, id);
+CREATE TABLE bot_llm_notes (
+  id       INTEGER NOT NULL PRIMARY KEY,
+  bot      VARCHAR(16) NOT NULL,
+  map_name VARCHAR(32) NOT NULL,
+  note     VARCHAR(160) NOT NULL
+);
+CREATE INDEX bot_llm_notes_map ON bot_llm_notes (map_name, id);
+
 CREATE TABLE bot_rl_log (
   id INTEGER NOT NULL PRIMARY KEY,
   f0 DOUBLE PRECISION, f1 DOUBLE PRECISION, f2 DOUBLE PRECISION, f3 DOUBLE PRECISION, f4 DOUBLE PRECISION, f5 DOUBLE PRECISION, f6 DOUBLE PRECISION, f7 DOUBLE PRECISION, f8 DOUBLE PRECISION, f9 DOUBLE PRECISION, f10 DOUBLE PRECISION, f11 DOUBLE PRECISION,

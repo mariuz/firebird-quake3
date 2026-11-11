@@ -663,7 +663,22 @@ a name nobody bears changes nothing, and what was done or why not is kept in `en
 situation carries, so the model reads its own mistake. A line, if the answer has one, goes to the console under
 the bot's name.
 
-JavaScript passes the text one way and four fields the other (`src/llm.js`, `Strategist`): Anthropic's SDK, a
+**Its memory is the database's.** The model keeps nothing from one question to the next, and each question is
+a request of its own, so what it should remember is rows. `bot_llm_apply` writes every decision into
+`bot_llm_log` with the bot as it was (health, armor, frags, deaths, guns) and, at the next decision, as it has
+become; an answer that could not be carried out is a row too. `llm_outcome` puts the difference into words
+("frags +1", "died", "health 35 to 80", "picked up the Rocket Launcher"). `bot_llm_memory` writes three things
+after the situation (`bot_llm_ask` is the two together, what the model is sent): the bot's last six decisions
+of this match with what followed each; what every kind of decision has brought on this arena in all matches, a
+`GROUP BY` action and target over the log (how often, how often it could not be done, the frags and deaths
+that followed); and the notes. A note is the fifth field of the answer, a lesson of at most twenty words the
+model asks to have kept; `bot_llm_notes` holds the newest twelve of an arena, each once. The last decisions
+are a bot's own, by its name; the totals and the notes are the arena's, since the model is the same one and
+the next match's bots may not be. `exportMemory` and `importMemory` (`src/llm.js`) move the rows to the
+browser's storage as decisions are made and back when the page loads, as decisions of earlier matches
+(`past`), so what was learned of q3dm1 today is in the question next week.
+
+JavaScript passes the text one way and five fields the other (`src/llm.js`, `Strategist`): Anthropic's SDK, a
 file of its own in `dist/` fetched only when this is turned on, called from the browser with the player's own
 key, which the page keeps in `localStorage` and sends to api.anthropic.com alone. One request a decision, no
 history: the system prompt explains the game and the four actions, the situation is the one user message, the
@@ -675,7 +690,9 @@ not accept ends the asking, and the page's pill shows the last decision and the 
 
 `npm run test:llm` asks no model: a local server stands in for the API. It checks the situation's text, the
 request as the SDK sends it, each action carried out (the bot told to get the rocket launcher has it within 700
-tics or finds it gone), the two that cannot be, and the refusal, the limit and the wrong key. Against the real API
+tics or finds it gone), the two that cannot be, the memory (the last decisions with what followed, the arena's
+totals, a note kept once and twelve at most, the rows out to storage and back), and the refusal, the limit and
+the wrong key. Against the real API
 it has not been run here, there being no key: how well a led bot plays is not measured.
 
 ### The learned fight moves: `bot_rl_move`, a Q table and a network
@@ -1370,7 +1387,7 @@ passes in Node is what runs in the browser.
 | `npm run test:bots` | `bots-test.mjs`: four bots join, see, fire, die, respawn, pick up a weapon, a bot hunts the player from the farthest spawn over the graph, a minute of play scores frags and strands nobody |
 | `npm run test:bots:dm17` | the same on q3dm17, plus: the bots take the jump pads |
 | `npm run test:chat` | `chat-test.mjs`: 25 lines embedded beforehand are understood by meaning, and in a team game the bots follow, camp, fetch, stand down and hunt as told |
-| `npm run test:llm` | `llm-test.mjs`: a bot led by a language model, a local server standing in for the API: the situation SQL writes, the request sent, each answer carried out, a refusal, a limit, a wrong key |
+| `npm run test:llm` | `llm-test.mjs`: a bot led by a language model, a local server standing in for the API: the situation SQL writes, the request sent, each answer carried out, its memory in the database (decisions and what followed, the arena's totals, notes) out to storage and back, a refusal, a limit, a wrong key |
 | `npm run test:rl` | `rl-test.mjs`: the Q-learning step, the table's rule, the network's pass in SQL against JavaScript's, two bots learning as they fight |
 | `npm run test:demo` | `demo-test.mjs`: a demo recorded on q3dm1 and played back gives every snapshot as it was painted, saved to JSON and loaded back too |
 | `npm run test:save` | `save-test.mjs`: a game saved in a fight, played on, loaded on a fresh arena is back as saved, row for row, and plays on |

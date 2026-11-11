@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { FirebirdBrowser, DirectTransport } from 'firebird-wasm/browser';
 import { Pk3 } from '../src/pk3.js';
 import { createSchema, loadResources, loadMap, buildWaypoints, SQL_FILES } from '../src/loader.js';
-import { Strategist, LLM_MODELS } from '../src/llm.js';
+import { Strategist, LLM_MODELS, exportMemory, importMemory } from '../src/llm.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const sql = Object.fromEntries(SQL_FILES.map((n) => [n, fs.readFileSync(path.join(root, `sql/${n}.sql`), 'utf8')]));
@@ -40,7 +40,7 @@ const server = http.createServer((req, rsp) => {
     if (a?.status) { rsp.writeHead(a.status, { 'content-type': 'application/json' }); rsp.end(JSON.stringify({ type: 'error', error: { type: a.type, message: a.type } })); return; }
     rsp.writeHead(200, { 'content-type': 'application/json' });
     rsp.end(JSON.stringify({ id: 'msg_test', type: 'message', role: 'assistant', model: requests.at(-1).body.model, stop_reason: a?.stop ?? 'end_turn', stop_sequence: null,
-      content: a?.stop === 'refusal' ? [] : [{ type: 'text', text: JSON.stringify(a ?? { action: 'roam', target: '', say: '' }) }], usage: { input_tokens: 700, output_tokens: 40 } }));
+      content: a?.stop === 'refusal' ? [] : [{ type: 'text', text: JSON.stringify({ note: '', ...(a ?? { action: 'roam', target: '', say: '' }) }) }], usage: { input_tokens: 700, output_tokens: 40 } }));
   });
 });
 await new Promise((r) => server.listen(0, '127.0.0.1', r));
@@ -67,7 +67,7 @@ assert(st.EID === b && /^you: \w+, health 35, armor 0, frags 0/.test(st.TXT) && 
 // the answers carried out
 const ask = new Strategist({ apiKey: 'test-key', baseURL, every: 0 });
 const state = async () => (await q(`SELECT e.get_id, e.goal_id, e.enemy_id, e.camp_id, TRIM(e.llm_plan) lastd, (SELECT TRIM(g.item) FROM ents g WHERE g.id = e.get_id) item FROM ents e WHERE e.id = ${b}`))[0];
-answers.push({ action: 'get', target: 'weapon_rocketlauncher', say: 'That launcher is mine.' });
+answers.push({ action: 'get', target: 'weapon_rocketlauncher', say: 'That launcher is mine.', note: 'The rocket launcher is a short run from where I start.' });
 await ask.tick(db);
 const s1 = await state();
 const said = await q("SELECT COUNT(*) n FROM messages WHERE msg LIKE '%: That launcher is mine.'");
@@ -110,6 +110,29 @@ assert(s2.ENEMY_ID === other.ID && s2.LASTD === `hunt ${other.BOT.toLowerCase()}
   && s4.CAMP_ID !== null && s4.LASTD === 'get weapon_bfg: none there now' && s5.LASTD === 'hunt Nobody: nobody alive by that name'
   && s6.CAMP_ID === null && s6.GET_ID === null && s6.LASTD === 'roam' && /your last decision: roam/.test(st2.TXT),
   `"hunt ${other.BOT}" sets it on ${other.BOT}, "ambush" has it wait there, an item the arena lacks and a name nobody bears change nothing and say why, "roam" lets it go`);
+
+// the memory, which the database keeps for the model: each decision with what followed, the arena's totals, the notes
+const memOf = async () => { const t = (await q('SELECT txt FROM bot_llm_ask'))[0].TXT; return t.slice(Math.max(0, t.indexOf('your last decisions'))); };
+const m1 = await memOf();
+console.log(m1.split('\n').map((l) => `     | ${l}`).join('\n'));
+assert(/^your last decisions, the latest last, and what followed each:\n  \d+ s ago, get weapon_rocketlauncher: /.test(m1) && (got < 0 || /get weapon_rocketlauncher: [^\n]*picked up the Rocket Launcher/.test(m1))
+  && /s ago, get weapon_bfg: could not be done/.test(m1) && /s ago, roam: under way/.test(m1) && /\nwhat your decisions have brought on this arena, in all your matches here:/.test(m1)
+  && /\n  get weapon_bfg: 1 time \(1 could not be done\), frags \+0, deaths 0/.test(m1) && /\n  ambush: 1 time, frags [+-]\d+, deaths \d+/.test(m1)
+  && /\nyour notes about this arena, which you wrote to remember:\n  The rocket launcher is a short run from where I start\./.test(m1),
+  `what the model is sent after the situation: its last decisions with what followed each${got >= 0 ? ' (the rocket launcher picked up)' : ''}, the arena's totals by decision, its note`);
+for (let i = 0; i < 13; i++) await q('SELECT done FROM bot_llm_apply(?, ?, ?, ?, ?)', [b, 'roam', '', '', `lesson ${i}`]);
+await q('SELECT done FROM bot_llm_apply(?, ?, ?, ?, ?)', [b, 'roam', '', '', 'LESSON 12']);
+const notes = (await q('SELECT TRIM(note) n FROM bot_llm_notes ORDER BY id')).map((r) => r.N);
+assert(notes.length === 12 && notes[0] === 'lesson 1' && notes[11] === 'lesson 12', `a note is kept once, and the newest twelve of them (${notes.length}: ${notes[0]} … ${notes[11]})`);
+// kept in the browser between visits: the rows out and back in, as decisions of earlier matches
+const kept = JSON.parse(JSON.stringify(await exportMemory(db)));
+const n1 = (await q('SELECT COUNT(*) n FROM bot_llm_log WHERE hp1 IS NOT NULL OR ok = 0'))[0].N;
+const back = await importMemory(db, kept);
+const [n2] = await q('SELECT COUNT(*) n, SUM(past) past, (SELECT COUNT(*) FROM bot_llm_notes) notes FROM bot_llm_log');
+const m2 = await memOf();
+assert(kept.log.length === n1 && back === n1 + 12 && n2.N === n1 && n2.PAST === n1 && n2.NOTES === 12 && !/your last decisions/.test(m2)
+  && /what your decisions have brought on this arena/.test(m2) && /\n  roam: 1[45] times/.test(m2) && /\n  lesson 12/.test(m2) && (await importMemory(db, { version: 2 })) === 0,
+  `the memory out to storage and back (${kept.log.length} decisions, ${kept.notes.length} notes): they count for the arena's totals, not as this match's last decisions`);
 
 // what can go wrong: a refusal is skipped, a limit waits, a wrong key ends it
 answers.push({ stop: 'refusal' });

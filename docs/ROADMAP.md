@@ -114,7 +114,8 @@ joining and leaving mid-game (`addbot` at a skill and `kick` from the page's men
 `ClientDisconnect`, the goodbye of `BotChat_ExitGame`), talking to the bots (a *Say* line: orders to the team and
 questions, matched to botlib's intents by meaning with EmbeddingGemma 2's embeddings, the cosine similarity a join
 in SQL: `sql/chat.sql`, `npm run test:chat`) a bot led by a language model (Claude with the player's API key decides every five seconds
-what the bot goes after, SQL writes the situation and carries out the answer: `bot_llm_state`, `bot_llm_apply`,
+what the bot goes after, SQL writes the situation, carries out the answer and keeps the model's memory, its
+decisions with what followed and its notes, as rows: `bot_llm_state`, `bot_llm_apply`,
 `src/llm.js`, `npm run test:llm`) and their learned fight moves (not Quake III's: six moves chosen by a
 network trained offline from self-play with Double DQN and CQL, its forward pass in SQL, or by a Q table learned in
 SQL: `bot_rl_move`, `bot_nn_best`, the page's *Bot AI*, `npm run test:rl`), demos (`record`, `demo`: every snapshot kept as rows, the

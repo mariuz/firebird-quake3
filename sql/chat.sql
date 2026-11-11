@@ -185,6 +185,10 @@ AS
 DECLARE b INTEGER;
 BEGIN
   UPDATE ents e SET e.llm = 0, e.llm_plan = NULL, e.llm_time = NULL WHERE e.classname = 'bot';
+  -- (decisions left open by a match that ended: nothing is known of what followed; and the clock of a new match
+  -- starts again, so those of earlier matches count for the arena's totals alone)
+  DELETE FROM bot_llm_log l WHERE l.hp1 IS NULL AND l.ok = 1;
+  UPDATE bot_llm_log l SET l.past = 1 WHERE l.past = 0;
   IF (n = 0) THEN EXIT;
   FOR SELECT e.id FROM ents e WHERE e.classname = 'bot' AND e.queued = 0 ORDER BY e.id ROWS (IIF(:n = 1, 1, 64)) INTO b DO
   BEGIN
@@ -283,15 +287,102 @@ BEGIN
   END
 END^
 
+-- What followed a decision, in words: "frags +1, died, health 35 to 80, armor +50, picked up the Rocket Launcher"
+CREATE OR ALTER FUNCTION llm_outcome (id INTEGER) RETURNS VARCHAR(200)
+AS
+DECLARE ok SMALLINT; DECLARE hp0 INTEGER; DECLARE ar0 INTEGER; DECLARE fr0 INTEGER; DECLARE de0 INTEGER; DECLARE ws0 INTEGER;
+DECLARE hp1 INTEGER; DECLARE ar1 INTEGER; DECLARE fr1 INTEGER; DECLARE de1 INTEGER; DECLARE ws1 INTEGER;
+DECLARE r VARCHAR(200) = ''; DECLARE nm VARCHAR(40);
+BEGIN
+  SELECT l.ok, l.hp0, l.armor0, l.frags0, l.deaths0, l.weapons0, l.hp1, l.armor1, l.frags1, l.deaths1, l.weapons1 FROM bot_llm_log l WHERE l.id = :id
+    INTO ok, hp0, ar0, fr0, de0, ws0, hp1, ar1, fr1, de1, ws1;
+  IF (ok = 0) THEN RETURN 'could not be done';
+  IF (hp1 IS NULL) THEN RETURN 'under way';
+  IF (fr1 > fr0) THEN r = r || ', frags +' || (fr1 - fr0);
+  IF (fr1 < fr0) THEN r = r || ', frags ' || (fr1 - fr0);
+  IF (de1 > de0) THEN r = r || ', died';
+  ELSE
+  BEGIN
+    IF (hp1 <> hp0) THEN r = r || ', health ' || hp0 || ' to ' || hp1;
+    IF (ar1 <> ar0) THEN r = r || ', armor ' || ar0 || ' to ' || ar1;
+    FOR SELECT TRIM(i.name) FROM item_defs i WHERE i.kind = 'W' AND BIN_AND(:ws1, i.bit) <> 0 AND BIN_AND(:ws0, i.bit) = 0 ORDER BY i.bit INTO nm DO
+      r = r || ', picked up the ' || nm;
+  END
+  IF (r = '') THEN RETURN 'nothing changed';
+  RETURN SUBSTRING(r FROM 3);
+END^
+
+-- The memory of a led bot, as text after its situation: its last six decisions of this match with what followed
+-- each, what every kind of decision has brought on this arena so far (a GROUP BY over all of them: how often, how
+-- often it could not be done, the frags and the deaths that followed), and the notes the model asked to have kept.
+-- The totals and the notes are the arena's, whichever bot was led: the model is the same one, the bots of the
+-- next match may not be
+CREATE OR ALTER FUNCTION bot_llm_memory (eid INTEGER) RETURNS VARCHAR(3000)
+AS
+DECLARE bot VARCHAR(16); DECLARE mapn VARCHAR(32); DECLARE t DOUBLE PRECISION; DECLARE r VARCHAR(3000) = '';
+DECLARE id INTEGER; DECLARE at_ DOUBLE PRECISION; DECLARE act VARCHAR(20); DECLARE arg VARCHAR(40); DECLARE n INTEGER; DECLARE bad INTEGER;
+DECLARE fr INTEGER; DECLARE de INTEGER; DECLARE note VARCHAR(160); DECLARE line VARCHAR(300); DECLARE k INTEGER = 0;
+BEGIN
+  t = now_();
+  SELECT e.bot, g.map_name FROM ents e CROSS JOIN game g WHERE e.id = :eid AND g.id = 1 INTO bot, mapn;
+  FOR SELECT s.id, s.time_, TRIM(s.action), TRIM(s.arg)
+        FROM (SELECT FIRST 6 l.id, l.time_, l.action, l.arg FROM bot_llm_log l WHERE l.bot = :bot AND l.map_name = :mapn AND l.past = 0 ORDER BY l.id DESC) s
+       ORDER BY s.id INTO id, at_, act, arg DO
+  BEGIN
+    IF (k = 0) THEN r = r || ASCII_CHAR(10) || 'your last decisions, the latest last, and what followed each:';
+    k = k + 1;
+    line = '  ' || CAST(t - at_ AS INTEGER) || ' s ago, ' || act;
+    IF (arg <> '') THEN line = line || ' ' || arg;
+    r = r || ASCII_CHAR(10) || line || ': ' || llm_outcome(id);
+  END
+  k = 0;
+  FOR SELECT TRIM(l.action), TRIM(l.arg), COUNT(*), SUM(1 - l.ok), SUM(IIF(l.ok = 1, l.frags1 - l.frags0, 0)), SUM(IIF(l.ok = 1, l.deaths1 - l.deaths0, 0))
+        FROM bot_llm_log l WHERE l.map_name = :mapn AND (l.hp1 IS NOT NULL OR l.ok = 0)
+       GROUP BY 1, 2 ORDER BY 3 DESC, 1, 2 ROWS 8 INTO act, arg, n, bad, fr, de DO
+  BEGIN
+    IF (k = 0) THEN r = r || ASCII_CHAR(10) || 'what your decisions have brought on this arena, in all your matches here:';
+    k = k + 1;
+    line = '  ' || act;
+    IF (arg <> '') THEN line = line || ' ' || arg;
+    line = line || ': ' || n || ' time';
+    IF (n <> 1) THEN line = line || 's';
+    IF (bad > 0) THEN line = line || ' (' || bad || ' could not be done)';
+    r = r || ASCII_CHAR(10) || line || ', frags ' || IIF(fr >= 0, '+', '') || fr || ', deaths ' || de;
+  END
+  k = 0;
+  FOR SELECT TRIM(c.note) FROM bot_llm_notes c WHERE c.map_name = :mapn ORDER BY c.id INTO note DO
+  BEGIN
+    IF (k = 0) THEN r = r || ASCII_CHAR(10) || 'your notes about this arena, which you wrote to remember:';
+    k = k + 1;
+    IF (CHAR_LENGTH(r) < 2700) THEN r = r || ASCII_CHAR(10) || '  ' || note;
+  END
+  RETURN r;
+END^
+
+-- The situation with the memory after it: what the model is sent
+CREATE OR ALTER PROCEDURE bot_llm_ask
+RETURNS (eid INTEGER, bot VARCHAR(16), txt VARCHAR(7000))
+AS
+DECLARE s VARCHAR(4000);
+BEGIN
+  FOR SELECT a.eid, a.bot, a.txt FROM bot_llm_state a INTO eid, bot, s DO
+  BEGIN
+    txt = s || bot_llm_memory(eid);
+    SUSPEND;
+  END
+END^
+
 -- The model's answer carried out. `action` is get (an item's class in `arg`: the nearest one, for 40 s), hunt (a
 -- player's name: after it for 40 s), ambush (wait where it stands, 25 s) or roam (as the bot's own goals say);
 -- `line`, if any, is said in the console. Anything else, an item the arena does not have, a name nobody bears:
 -- nothing is done and `done` says why, which the next question to the model carries as its last decision.
-CREATE OR ALTER PROCEDURE bot_llm_apply (eid INTEGER, action VARCHAR(20), arg VARCHAR(40), line VARCHAR(160))
+CREATE OR ALTER PROCEDURE bot_llm_apply (eid INTEGER, action VARCHAR(20), arg VARCHAR(40), line VARCHAR(160), note VARCHAR(160) DEFAULT '')
 RETURNS (done VARCHAR(60))
 AS
 DECLARE t DOUBLE PRECISION; DECLARE g INTEGER; DECLARE c INTEGER; DECLARE o INTEGER;
 DECLARE x DOUBLE PRECISION; DECLARE y DOUBLE PRECISION; DECLARE z DOUBLE PRECISION;
+DECLARE bot VARCHAR(16); DECLARE mapn VARCHAR(32); DECLARE ok SMALLINT = 0;
+DECLARE hp INTEGER; DECLARE ar INTEGER; DECLARE fr INTEGER; DECLARE de INTEGER; DECLARE ws INTEGER;
 BEGIN
   t = now_();
   action = LOWER(TRIM(COALESCE(action, '')));
@@ -329,8 +420,27 @@ BEGIN
       UPDATE ents q SET q.owner_id = :eid WHERE q.id = :c;
       UPDATE ents e SET e.camp_id = :c, e.camp_until = :t + 25, e.camp_time = :t WHERE e.id = :eid;
     END
+    ok = 1;
   END
   UPDATE ents e SET e.llm_plan = SUBSTRING(:done FROM 1 FOR 60), e.llm_time = :t WHERE e.id = :eid;
+  -- the memory (bot_llm_memory reads it back): the decision before this one is closed with the bot as it is now,
+  -- this one is opened, and a note is kept, the newest twelve of this arena
+  SELECT e.bot, gm.map_name FROM ents e CROSS JOIN game gm WHERE e.id = :eid AND gm.id = 1 INTO bot, mapn;
+  mapn = COALESCE(mapn, '');
+  SELECT e.health, e.armor, e.frags, e.deaths, e.weapons FROM ents e WHERE e.id = :eid INTO hp, ar, fr, de, ws;
+  UPDATE bot_llm_log l SET l.hp1 = :hp, l.armor1 = :ar, l.frags1 = :fr, l.deaths1 = :de, l.weapons1 = :ws, l.secs = :t - l.time_
+   WHERE l.bot = :bot AND l.map_name = :mapn AND l.hp1 IS NULL AND l.ok = 1;
+  IF (action IN ('get', 'hunt', 'ambush', 'roam')) THEN
+    INSERT INTO bot_llm_log (id, bot, map_name, time_, action, arg, ok, hp0, armor0, frags0, deaths0, weapons0)
+    SELECT NEXT VALUE FOR llm_seq, :bot, :mapn, :t, :action, SUBSTRING(LOWER(:arg) FROM 1 FOR 40), :ok, e.health, e.armor, e.frags, e.deaths, e.weapons
+      FROM ents e WHERE e.id = :eid;
+  note = TRIM(COALESCE(note, ''));
+  IF (note <> '' AND NOT EXISTS (SELECT 1 FROM bot_llm_notes c WHERE c.map_name = :mapn AND LOWER(c.note) = LOWER(:note))) THEN
+  BEGIN
+    INSERT INTO bot_llm_notes (id, bot, map_name, note) VALUES (NEXT VALUE FOR llm_seq, :bot, :mapn, :note);
+    DELETE FROM bot_llm_notes c WHERE c.map_name = :mapn
+       AND c.id NOT IN (SELECT FIRST 12 k.id FROM bot_llm_notes k WHERE k.map_name = :mapn ORDER BY k.id DESC);
+  END
   line = TRIM(COALESCE(line, ''));
   IF (line <> '') THEN EXECUTE PROCEDURE say(SUBSTRING(chat_name(eid) || ': ' || line FROM 1 FOR 200));
   SUSPEND;
