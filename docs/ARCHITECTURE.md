@@ -457,8 +457,10 @@ them), `shooter_rocket`/`_grenade`/`_plasma` (`shooter_use`: a missile toward th
 origin or along the movedir, spread by `random` degrees on two axes square to it; the shooter owns
 it, so `killed` makes a kill by it, as by any entity that is not a player, the world's: "died", a frag
 lost, the bot's suicide chat), the
-items, `info_player_deathmatch` (`select_spawn` picks one not within 128 units of anyone, as
-`SelectRandomDeathmatchSpawnPoint` does); `use_targets` and `trigger_fire` are `G_UseTargets` with
+items, `info_player_deathmatch` (`select_spawn` picks at random among those not within 128 units of anyone, as
+`SelectRandomDeathmatchSpawnPoint` leaves out the spots that would telefrag, and any when someone is at every
+one; who spawns then telefrags whoever its box touches, `kill_box`, `ClientSpawn`'s `G_KillBox`: without the
+two, two bots given one spot stood in each other for good); `use_targets` and `trigger_fire` are `G_UseTargets` with
 delays and the `wait`/`random` timing.
 
 ---
@@ -642,12 +644,23 @@ obeyed in Quake III; in a free-for-all the console says so. `bot_take_order` the
 the player stands and sets it as the bot's camp spot for 600 s (`TEAM_CAMP_TIME`); *get* sets `ents.get_id` to
 the nearest item of the class for 60 s, which `bot_think` keeps as the goal until the bot has taken it (not
 merely come within 40 units) or sees it gone, saying `getitem_gotit` or `getitem_notthere`; *kill* sets the
-enemy, named or the nearest, for 180 s; *dismiss* clears them all. A question is answered by the bots named, the
+enemy, named or the nearest, for 180 s; *defend* is `BotMatch_DefendKeyArea`: the nearest item of the class is
+`ents.def_id` for 600 s (`TEAM_DEFENDKEYAREA_TIME`), and `bot_think` does `LTG_DEFENDKEYAREA` with it: the item's
+place is the goal until the bot is within 70 units, then it is off about its own goals for 3 to 6 s
+(`def_away`, `defendaway_time`), sooner back if they take it past 1120 units (`defendaway_range`'s 3.5 s at a
+run), and after the 600 s it says `defend_stop`; *dismiss* clears them all. An order outlives the bot's death, as
+`AIEnter_Respawn` resets the goals and not `bs->ltgtype`: `bot_respawn` keeps the item to get, the place to
+defend and a camp spot a teammate gave, and drops a camp of the bot's own choosing. The leadership is the
+player's to say: it leads its team until it says it will not (`game.not_leader`, botlib's `notleader`), after
+which the bots find a leader among themselves as `bot_team_ai` has them do; "who is the leader?" is answered
+by the bot that leads ("I'm the team leader"), and "I am the leader" takes it back. A question is answered by the bots named, the
 team, or the nearest bot, from the bots' chat files: `location` with the nearest item's name, and `accompanying`,
-`camping`, `gettingitem`, `killing` or `roaming` by what it is doing. `npm run test:chat` runs without the model
-on 25 lines embedded beforehand (`scripts/say-fixtures.json`): none of them is a phrase of the list, one is
-French, three are small talk, and all are understood; then in a team game the team follows, one bot named camps
-where we stand, fetches the rocket launcher and says it has it, the team stands down and goes after an enemy.
+`camping`, `gettingitem`, `defending`, `killing` or `roaming` by what it is doing. `npm run test:chat` runs
+without the model on 31 lines embedded beforehand (`scripts/say-fixtures.json`): none of them is a phrase of the
+list, one is French, three are small talk, and all are understood; then in a team game the team follows, one bot
+named camps where we stand, fetches the rocket launcher and says it has it, the team stands down and goes after
+an enemy, the bot named guards the rocket launcher (there, off, and back), is fragged and still guards it, and
+the leadership passes to a bot and back.
 
 ### A language model as a bot's strategist: `bot_llm_state`, `bot_llm_apply`, `src/llm.js`
 

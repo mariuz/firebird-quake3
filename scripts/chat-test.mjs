@@ -37,7 +37,7 @@ const wrong = [];
 let t = performance.now();
 for (const f of fixtures) {
   const r = await say(f.text);
-  if ((r.KIND?.trim() ?? null) === f.kind && (r.ARG?.trim() ?? null) === (f.kind === 'get' ? f.arg : null)) right++;
+  if ((r.KIND?.trim() ?? null) === f.kind && (r.ARG?.trim() ?? null) === (f.arg ?? null)) right++;
   else wrong.push(`"${f.text}" → ${r.KIND?.trim()} ${r.ARG?.trim() ?? ''} (${r.SCORE?.toFixed(3)})`);
 }
 const ms = (performance.now() - t) / fixtures.length;
@@ -93,8 +93,9 @@ st = await state();
 const c0 = st.find((r) => r.ID === m0.ID), c1 = m1 && st.find((r) => r.ID === m1.ID);
 const [spot] = await q(`SELECT classname, x, y, z FROM ents WHERE id = ${c0.CAMP_ID ?? -1}`);
 let near = 1e9;
+// (the spot is where we stand, with the mate that accompanies us beside us: the bot may be kept a step or two off)
 for (let i = 0; i < 500 && near > 70; i++) { await tic(); const [b] = await q(`SELECT x, y, z FROM ents WHERE id = ${m0.ID}`); near = Math.hypot(b.X - me.X, b.Y - me.Y, b.Z - me.Z); }
-assert(camp[0].KIND.trim() === 'camp' && camp[0].HEARD === 1 && spot?.CLASSNAME.trim() === 'camp_order' && Math.hypot(spot.X - me.X, spot.Y - me.Y) < 1 && c0.ACC_ID === null && (!c1 || c1.ACC_ID === pe) && near <= 70,
+assert(camp[0].KIND.trim() === 'camp' && camp[0].HEARD === 1 && spot?.CLASSNAME.trim() === 'camp_order' && Math.hypot(spot.X - me.X, spot.Y - me.Y) < 1 && c0.ACC_ID === null && (!c1 || c1.ACC_ID === pe) && near <= 250,
   `"${m0.BOT} camp right here": ${m0.BOT} alone camps where we stand and comes there (${near.toFixed(0)} away)${c1 ? `, ${m1.BOT} still accompanies us` : ''}`);
 
 // "fetch the rocket launcher": off for the nearest one, and it says when it has it
@@ -132,6 +133,76 @@ const foe = (await q(`SELECT id, TRIM(bot) bot FROM ents WHERE id = ${others[0]}
 const kill = await q('SELECT * FROM player_say(?, ?)', [`kill ${foe.BOT}`, vecOf('kill Daemia')]);
 st = await state();
 assert(kill[0].KIND.trim() === 'kill' && mine(st).every((r) => r.ENEMY_ID === foe.ID), `"kill ${foe.BOT}": the team is after ${foe.BOT}`);
+
+// "guard the rocket launcher": the bot named makes for the launcher's place, and once there is off about its own
+// goals for a few seconds, then back (LTG_DEFENDKEYAREA); it says so, and says what it is doing when asked
+await say('stop');
+await db.exec("UPDATE ents SET enemy_id = NULL WHERE classname = 'bot'");
+// (a bot says its line within two seconds; the console's lines are told apart by their ids)
+const since = async (id) => (await q(`SELECT msg FROM messages WHERE id > ${id} ORDER BY id`)).map((r) => r.MSG);
+const lastId = async () => (await q('SELECT COALESCE(MAX(id), 0) m FROM messages'))[0].M;
+const id0 = await lastId();
+const def = await q('SELECT * FROM player_say(?, ?)', [`${m0.BOT} guard the rocket launcher`, vecOf('Major guard the rocket launcher')]);
+const dstate = async () => (await q(`SELECT e.def_id, e.def_until, e.def_away, e.goal_id, e.health, (SELECT g.time_ FROM game g WHERE g.id = 1) t,
+  (SELECT TRIM(i.item) FROM ents i WHERE i.id = e.def_id) item,
+  (SELECT SQRT((i.x - e.x) * (i.x - e.x) + (i.y - e.y) * (i.y - e.y) + (i.z - e.z) * (i.z - e.z)) FROM ents i WHERE i.id = e.def_id) d FROM ents e WHERE e.id = ${m0.ID}`))[0];
+const d0 = await dstate();
+let dsaid = [];
+for (let i = 0; i < 60 && !dsaid.length; i++) { await tic(); dsaid = (await since(id0)).filter((l) => l.includes(m0.BOT + ')') && /Rocket Launcher/.test(l)); }
+const other = (await state()).find((r) => m1 && r.ID === m1.ID);
+let arrived = -1, away = -1, back = -1, farthest = 0;
+for (let i = 0; i < 1500 && back < 0; i++) {
+  await tic();
+  const d = await dstate();
+  if (arrived < 0 && d.D < 70) arrived = i;
+  if (arrived >= 0 && away < 0 && d.DEF_AWAY > d.T) away = i;
+  if (away >= 0) farthest = Math.max(farthest, d.D);
+  if (away >= 0 && d.DEF_AWAY < d.T && d.GOAL_ID === d.DEF_ID) back = i;
+}
+const id1 = await lastId();
+const doing = await say(`${m0.BOT} what are you doing?`, null);
+let dsaid2 = [];
+for (let i = 0; i < 60 && !dsaid2.length; i++) { await tic(); dsaid2 = (await since(id1)).filter((l) => l.includes(m0.BOT + ']') && /Rocket Launcher/.test(l)); }
+assert(def[0].KIND.trim() === 'defend' && def[0].ARG.trim() === 'weapon_rocketlauncher' && def[0].HEARD === 1 && d0.ITEM === 'weapon_rocketlauncher' && Math.abs(d0.DEF_UNTIL - d0.T - 600) < 1
+  && (!other || other.GOAL_ID !== d0.DEF_ID) && arrived >= 0 && away >= 0 && back > away && farthest < 1200 && dsaid.length >= 1 && doing.KIND?.trim() === 'whatareyoudoing' && dsaid2.length >= 1,
+  `"${m0.BOT} guard the rocket launcher": ${m0.BOT} alone defends it for 600 s, is there after ${arrived} tics, off about its own goals (${farthest.toFixed(0)} units at the farthest) and back for it ${back - away} tics later; ${dsaid[0]}; asked: ${dsaid2.at(-1)}`);
+
+// an order outlives the bot's death (AIEnter_Respawn resets the goals, not the order): fragged, the bot still
+// defends; a camp it was told and an item it was told to get stay too, a camp of its own choosing does not
+await db.exec(`UPDATE ents SET health = -10 WHERE id = ${m0.ID}`);
+await db.exec(`EXECUTE PROCEDURE bot_die(${m0.ID}, ${m0.ID}, 0)`);
+for (let i = 0; i < 200 && (await dstate()).HEALTH <= 0; i++) await tic();
+const d1 = await dstate();
+const [ownSpot] = await q(`EXECUTE BLOCK RETURNS (id INTEGER) AS BEGIN EXECUTE PROCEDURE spawn_ent('info_camp', ${me.X}, ${me.Y}, ${me.Z}) RETURNING_VALUES id; SUSPEND; END`);
+await db.exec(`UPDATE ents SET camp_id = ${ownSpot.ID}, camp_until = 1e9 WHERE id = ${m1.ID}`);
+await db.exec(`EXECUTE PROCEDURE bot_respawn(${m1.ID})`);
+await db.exec(`UPDATE ents SET flags = BIN_OR(flags, 64) WHERE classname = 'bot'`);
+const [own] = await q(`SELECT camp_id FROM ents WHERE id = ${m1.ID}`);
+await q('SELECT * FROM player_say(?, ?)', [`${m1.BOT} camp right here`, vecOf('Major camp right here')]);
+await db.exec(`EXECUTE PROCEDURE bot_respawn(${m1.ID})`);
+await db.exec(`UPDATE ents SET flags = BIN_OR(flags, 64) WHERE classname = 'bot'`);
+const [kept] = await q(`SELECT e.camp_id, (SELECT TRIM(c.classname) FROM ents c WHERE c.id = e.camp_id) cls FROM ents e WHERE e.id = ${m1.ID}`);
+assert(d1.HEALTH > 0 && d1.DEF_ID === d0.DEF_ID && d1.DEF_AWAY === 0 && own.CAMP_ID === null && kept.CLS === 'camp_order',
+  `an order outlives the bot: fragged and back, ${m0.BOT} still defends the rocket launcher; ${m1.BOT} respawned keeps the camp it was told, not one of its own choosing`);
+
+// the leadership: we lead our team until we say we will not; then the bots find a leader among themselves, who
+// answers "who is the leader?"; "I am the leader" takes it back
+const leaderOf = async () => (await q(`SELECT IIF(o.pteam = 1, g.red_leader, g.blue_leader) l, g.not_leader n FROM game g, ents o WHERE g.id = 1 AND o.id = ${pe}`))[0];
+const who0 = await say('who is our leader');
+const quit = await say('i dont want to be leader anymore');
+const l1 = await leaderOf();
+await db.exec(`UPDATE ents SET enter_time = -100, tl_ask = 0, tl_become = 0 WHERE classname = 'bot'`);
+let elected = null;
+for (let i = 0; i < 700 && elected === null; i++) { await tic(); const l = await leaderOf(); if (l.L !== null && l.L !== pe) elected = l.L; }
+const who1 = await say('who is our leader');
+const answered = (await lines()).filter((l) => /I'm the team leader/.test(l)).at(-1);
+const iam = await say('I am the leader now');
+const l2 = await leaderOf();
+const who2 = await say('who is our leader');
+assert(who0.KIND.trim() === 'whoisleader' && who0.HEARD === 0 && quit.KIND.trim() === 'notleader' && quit.HEARD === mates.length && l1.L === null && l1.N === 1
+  && mates.some((m) => m.ID === elected) && who1.HEARD === 1 && answered?.includes(mates.find((m) => m.ID === elected).BOT)
+  && iam.KIND.trim() === 'iamleader' && l2.L === pe && l2.N === 0 && who2.HEARD === 0,
+  `the leadership: we lead and nobody answers "who is our leader"; we quit and ${mates.find((m) => m.ID === elected)?.BOT} takes it: ${answered}; "I am the leader now" and it is ours again`);
 
 console.log(failed ? `${failed} FAILED` : 'all good');
 process.exit(failed ? 1 : 0);

@@ -46,6 +46,8 @@ const TESTS = [
   ['hey', 'hello'], ['you are bad at this', 'taunt'], ['nice one!', 'praise'],
   ['somebody grab the rail', 'get', 'weapon_railgun'], ['go get the red armour', 'get', 'item_armor_body'], ['need quad', 'get', 'item_quad'],
   ['take the plasma', 'get', 'weapon_plasmagun'], ['i need health', 'get', 'item_health'], ['Sarge fetch the rocket launcher', 'get', 'weapon_rocketlauncher'],
+  ['Major guard the rocket launcher', 'defend', 'weapon_rocketlauncher'], ['someone defend the quad', 'defend', 'item_quad'], ['protect the railgun', 'defend', 'weapon_railgun'],
+  ['who is our leader', 'whoisleader'], ['I am the leader now', 'iamleader'], ['i dont want to be leader anymore', 'notleader'],
   ['my cat sat on the keyboard', null], ['it is raining outside', null], ['brb', null],
 ];
 const tv = await embed(TESTS.map((t) => t[0]));

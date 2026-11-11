@@ -1403,6 +1403,7 @@ BEGIN
          e.yaw_speed = COALESCE(MAXVALUE(240, bot_cv(:eid, 'view_maxchange', NULL)) / 10, bot_char((SELECT b.skill FROM bot_defs b WHERE b.name = e.bot), 'turn')),
          e.view_factor = bot_cv(:eid, 'view_factor', 1), e.ideal_pitch = NULL WHERE e.id = :eid;
   EXECUTE PROCEDURE link_ent(eid);
+  EXECUTE PROCEDURE kill_box(eid);   -- (ClientSpawn's G_KillBox: whoever stands in the spot is telefragged)
   EXECUTE PROCEDURE snd_at(x, y, z, 'sound/world/telein.wav', 1, 1);
   EXECUTE PROCEDURE fx(5, x, y, z + 9, 0, 0, 0, 1);
 END^
@@ -2306,6 +2307,7 @@ BEGIN
     UPDATE ents e SET e.pteam = :tm, e.pskin = IIF(:tm = 1, 'red', 'blue') WHERE e.id = :id;
   END
   EXECUTE PROCEDURE link_ent(id);
+  EXECUTE PROCEDURE kill_box(id);   -- (G_KillBox: whoever stands where it spawns)
   EXECUTE PROCEDURE say(bname || ' entered the game' || COALESCE((SELECT TRIM(TRAILING FROM IIF(e.pteam = 1, ' (red)', IIF(e.pteam = 2, ' (blue)', ''))) FROM ents e WHERE e.id = :id), ''));
   IF ((SELECT g.tic FROM game g WHERE g.id = 1) > 0) THEN EXECUTE PROCEDURE bot_chat_event(id, 'game_enter', NULL, 0);   -- BotChat_EnterGame
   SUSPEND;

@@ -18,7 +18,7 @@ export const INTENTS = [
   // (small talk: nothing is asked of anyone)
   { kind: 'chat', phrases: ['the weather is nice today', 'I like this map', 'lol', 'that was close', 'I am hungry', 'what a game', 'this level is hard', 'be right back'] },
   { kind: 'get', arg: 'weapon_rocketlauncher', phrases: ['get the rocket launcher', 'grab the rockets gun', 'go pick up the RL'] },
-  { kind: 'get', arg: 'weapon_railgun', phrases: ['get the railgun', 'go for the rail gun', 'pick up the sniper weapon'] },
+  { kind: 'get', arg: 'weapon_railgun', phrases: ['get the railgun', 'go for the rail gun', 'pick up the sniper weapon', 'grab the railgun for yourself', 'someone take the rail'] },
   { kind: 'get', arg: 'weapon_shotgun', phrases: ['get the shotgun', 'grab the shotgun'] },
   { kind: 'get', arg: 'weapon_plasmagun', phrases: ['get the plasma gun', 'grab the plasma rifle'] },
   { kind: 'get', arg: 'weapon_lightning', phrases: ['get the lightning gun', 'grab the shaft'] },

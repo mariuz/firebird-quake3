@@ -433,6 +433,7 @@ BEGIN
          p.dmg_take = 0, p.dmg_save = 0, p.dmg_time = -10, p.bonus_time = -10, p.quad_finished = 0, p.haste_finished = 0, p.invis_finished = 0, p.regen_finished = 0, p.enviro_finished = 0, p.flight_finished = 0,
          p.holdable = 0, p.jump_released = 1, p.air_finished = :t + 12, p.drown_dmg = 2, p.pitch = 0, p.stepz = 0, p.dead_time = 0, p.weapon_sound = 0, p.health_decay = :t + 1, p.spawn_protect = :t + 0.5e0 WHERE p.id = 1;
   EXECUTE PROCEDURE link_ent(pe);
+  EXECUTE PROCEDURE kill_box(pe);   -- (ClientSpawn's G_KillBox)
   EXECUTE PROCEDURE snd_at(x, y, z, 'sound/world/telein.wav', 1, 1);
   EXECUTE PROCEDURE fx(5, x, y, z + 9, 0, 0, 0, 1);
 END^
