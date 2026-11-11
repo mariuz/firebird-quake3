@@ -209,6 +209,32 @@ export function smallWord(answer, words) {
   return (String(answer).toLowerCase().match(/[a-z]+/g) ?? []).find((w) => offered.includes(w)) ?? '';
 }
 
+// The Worker the model runs in: it loads the library and the model when told, then answers each chat with the
+// few tokens the model generates
+const WORKER = `
+let pipe = null;
+onmessage = async ({ data }) => {
+  try {
+    if (data.load) {
+      const { pipeline } = await import(data.lib);
+      const seen = new Map();
+      const progress_callback = (p) => {
+        if (p.status !== 'progress' || !p.total) return;
+        seen.set(p.file, [p.loaded, p.total]);
+        let l = 0, t = 0;
+        for (const [a, b] of seen.values()) { l += a; t += b; }
+        postMessage({ progress: (l / 1e6).toFixed(0) + ' of ' + (t / 1e6).toFixed(0) + ' MB' });
+      };
+      pipe = await pipeline('text-generation', data.load, { device: 'webgpu', dtype: data.dtype, progress_callback });
+      postMessage({ id: data.id, text: 'ready' });
+    } else {
+      const out = await pipe(data.messages, { max_new_tokens: 4, do_sample: false });
+      postMessage({ id: data.id, text: out[0].generated_text.at(-1).content });
+    }
+  } catch (err) { postMessage({ id: data.id, error: String(err && err.message || err) }); }
+};
+`;
+
 export class LocalStrategist {
   /**
    * @param {object} o
@@ -225,27 +251,32 @@ export class LocalStrategist {
     this.decisions = 0; this.ms = 0;
   }
 
-  /** Fetch the library and the model (once; the browser keeps them) */
+  /**
+   * Fetch the library and the model (once; the browser keeps them), in a Worker of their own: the model's work
+   * between two of the GPU's answers is long enough to stall a frame, and the game's loop must not wait for it
+   */
   connect() {
     if (this.generate) return Promise.resolve();
     this.loading ??= (async () => {
       const adapter = typeof navigator !== 'undefined' && navigator.gpu ? await navigator.gpu.requestAdapter().catch(() => null) : null;
       if (!adapter) throw new Error('this browser has no WebGPU, which the model needs');
-      this.onStatus('loading Transformers.js…');
-      const url = TRANSFORMERS;   // (a URL the bundler leaves alone)
-      const { pipeline } = await import(url);
       const [, label, dtype] = LOCAL_MODELS.find(([id]) => id === this.model) ?? [null, this.model, 'q4'];
-      const seen = new Map();
-      const progress_callback = (p) => {
-        if (p.status !== 'progress' || !p.total) return;
-        seen.set(p.file, [p.loaded, p.total]);
-        let l = 0, t = 0;
-        for (const [a, b] of seen.values()) { l += a; t += b; }
-        this.onStatus(`${label.replace(/ \(.*/, '')}: ${(l / 1e6).toFixed(0)} of ${(t / 1e6).toFixed(0)} MB`);
+      const name = label.replace(/ \(.*/, '');
+      this.onStatus('loading Transformers.js…');
+      const worker = new Worker(URL.createObjectURL(new Blob([WORKER], { type: 'text/javascript' })), { type: 'module' });
+      const waiting = new Map();
+      let n = 0;
+      const call = (msg) => new Promise((resolve, reject) => { waiting.set(++n, { resolve, reject }); worker.postMessage({ ...msg, id: n }); });
+      worker.onmessage = ({ data }) => {
+        if (data.progress) { this.onStatus(`${name}: ${data.progress}`); return; }
+        const w = waiting.get(data.id);
+        waiting.delete(data.id);
+        if (data.error) w?.reject(new Error(data.error)); else w?.resolve(data.text);
       };
-      const pipe = await pipeline('text-generation', this.model, { device: 'webgpu', dtype, progress_callback });
-      this.generate = async (messages) => (await pipe(messages, { max_new_tokens: 4, do_sample: false }))[0].generated_text.at(-1).content;
-      this.onStatus(`${label.replace(/ \(.*/, '')} ready`);
+      worker.onerror = (e) => { for (const w of waiting.values()) w.reject(new Error(e.message || 'the model\'s worker failed')); waiting.clear(); };
+      await call({ load: this.model, dtype, lib: TRANSFORMERS });
+      this.generate = (messages) => call({ messages });
+      this.onStatus(`${name} ready`);
     })().catch((err) => { this.stopped = err?.message ?? String(err); this.onStatus(`stopped: ${this.stopped}`); });
     return this.loading;
   }
