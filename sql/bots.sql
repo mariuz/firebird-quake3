@@ -1189,7 +1189,7 @@ END^
 CREATE OR ALTER FUNCTION bot_pick_weapon (eid INTEGER, dist DOUBLE PRECISION) RETURNS INTEGER
 AS
 DECLARE mode SMALLINT; DECLARE held INTEGER; DECLARE t DOUBLE PRECISION; DECLARE w INTEGER; DECLARE until_ DOUBLE PRECISION;
-DECLARE n INTEGER; DECLARE k INTEGER; DECLARE bit_ INTEGER; DECLARE b SMALLINT; DECLARE best DOUBLE PRECISION; DECLARE cur DOUBLE PRECISION;
+DECLARE n INTEGER; DECLARE k INTEGER; DECLARE bit_ INTEGER; DECLARE b SMALLINT; DECLARE best DOUBLE PRECISION; DECLARE cur DOUBLE PRECISION; DECLARE fav INTEGER;
 BEGIN
   mode = bot_wsel_mode(eid);
   IF (mode = 0) THEN RETURN bot_best_weapon(eid, dist);
@@ -1217,16 +1217,22 @@ BEGIN
     UPDATE ents e SET e.w_pick = :w, e.w_until = :t + 3 WHERE e.id = :eid;
     RETURN w;
   END
-  -- by what was measured: the most damage a second of fire at this distance; the gun in hand is kept unless the
-  -- best does a fifth more (a change of guns is half a second without a shot, and an enemy at the edge of a band
-  -- would have the bot change at every step)
+  -- by what was measured, and by the bot: its character's favourite is the gun it aims best with, and a table
+  -- that is everyone's average lost to it when it chose alone (1,357 frags to 1,729 over 16 matches). So the
+  -- favourite stays, unless another gun the bot holds does twice as much at this distance (a shotgun at 1000
+  -- units); the gun changed to is kept while it still does one and a half times as much
   b = bot_wband(dist);
+  fav = bot_best_weapon(eid, dist);
+  SELECT p.dmg / p.secs FROM bot_wdps p WHERE p.band = :b AND p.w = :fav AND p.secs >= 30 INTO cur;
+  IF (cur IS NULL) THEN RETURN fav;
   w = NULL;
   SELECT FIRST 1 p.w, p.dmg / p.secs FROM bot_wdps p WHERE p.band = :b AND p.secs >= 30 AND BIN_AND(:held, p.w) <> 0 ORDER BY p.dmg / p.secs DESC, p.w DESC INTO w, best;
-  IF (w IS NULL) THEN RETURN bot_best_weapon(eid, dist);
-  SELECT p.dmg / p.secs FROM bot_wdps p JOIN ents e ON e.id = :eid AND p.w = e.weapon WHERE p.band = :b AND p.secs >= 30 AND BIN_AND(:held, p.w) <> 0 INTO cur;
-  IF (cur IS NOT NULL AND best < cur * 1.2e0) THEN RETURN (SELECT e.weapon FROM ents e WHERE e.id = :eid);
-  RETURN w;
+  IF (w IS NULL OR w = fav) THEN RETURN fav;
+  IF (best >= cur * 2) THEN RETURN w;
+  -- (the gun in hand, if it is neither: kept while it does one and a half times the favourite)
+  SELECT p.w, p.dmg / p.secs FROM bot_wdps p JOIN ents e ON e.id = :eid AND p.w = e.weapon WHERE p.band = :b AND p.secs >= 30 AND BIN_AND(:held, p.w) <> 0 INTO w, best;
+  IF (w IS NOT NULL AND w <> fav AND best >= cur * 1.5e0) THEN RETURN w;
+  RETURN fav;
 END^
 
 -- aim at the enemy (leading projectiles when skilled enough), scattered by the aim accuracy, and fire
