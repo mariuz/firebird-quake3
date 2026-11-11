@@ -149,7 +149,8 @@ const dstate = async () => (await q(`SELECT e.def_id, e.def_until, e.def_away, e
 const d0 = await dstate();
 let dsaid = [];
 for (let i = 0; i < 60 && !dsaid.length; i++) { await tic(); dsaid = (await since(id0)).filter((l) => l.includes(m0.BOT + ')') && /Rocket Launcher/.test(l)); }
-const other = (await state()).find((r) => m1 && r.ID === m1.ID);
+// (the other is not told: it may be going for the launcher all the same, of its own accord)
+const [other] = m1 ? await q(`SELECT def_id FROM ents WHERE id = ${m1.ID}`) : [];
 let arrived = -1, away = -1, back = -1, farthest = 0;
 for (let i = 0; i < 1500 && back < 0; i++) {
   await tic();
@@ -164,7 +165,7 @@ const doing = await say(`${m0.BOT} what are you doing?`, null);
 let dsaid2 = [];
 for (let i = 0; i < 60 && !dsaid2.length; i++) { await tic(); dsaid2 = (await since(id1)).filter((l) => l.includes(m0.BOT + ']') && /Rocket Launcher/.test(l)); }
 assert(def[0].KIND.trim() === 'defend' && def[0].ARG.trim() === 'weapon_rocketlauncher' && def[0].HEARD === 1 && d0.ITEM === 'weapon_rocketlauncher' && Math.abs(d0.DEF_UNTIL - d0.T - 600) < 1
-  && (!other || other.GOAL_ID !== d0.DEF_ID) && arrived >= 0 && away >= 0 && back > away && farthest < 1200 && dsaid.length >= 1 && doing.KIND?.trim() === 'whatareyoudoing' && dsaid2.length >= 1,
+  && (!other || other.DEF_ID === null) && arrived >= 0 && away >= 0 && back > away && farthest < 1200 && dsaid.length >= 1 && doing.KIND?.trim() === 'whatareyoudoing' && dsaid2.length >= 1,
   `"${m0.BOT} guard the rocket launcher": ${m0.BOT} alone defends it for 600 s, is there after ${arrived} tics, off about its own goals (${farthest.toFixed(0)} units at the farthest) and back for it ${back - away} tics later; ${dsaid[0]}; asked: ${dsaid2.at(-1)}`);
 
 // an order outlives the bot's death (AIEnter_Respawn resets the goals, not the order): fragged, the bot still
