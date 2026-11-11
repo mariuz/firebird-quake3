@@ -746,6 +746,47 @@ Fourteen of forty and twenty-six of forty are what one word always gives. The qu
 22 against a gun it lacks. What would work in a browser is a model trained for this one decision, which is what
 `bot_rl_move`'s network already is.
 
+### The gun for the distance, measured: `bot_pick_weapon`, `bot_wdps`
+
+botlib's bots fight with their character's favourite of the guns they hold, whatever the distance
+(`bot_best_weapon`: the weights of `bots/NAME_w.c`, constant but for the lightning gun's reach). Which gun does
+the most at which distance can be measured, and was, as the first step of pretraining the bots. With
+`game.bot_wsel` 2 every bot fights with a gun at random of those it holds, changed every 3 s, and `bot_wdps`
+counts for each gun and each of six distance bands (`bot_wband`: under 150 units, 300, 500, 800, 1200, beyond)
+the seconds of fire (`bot_w_shot`, from `bot_fire`: a shot is the gun's time between two, 0.1 s at the least, a
+bot firing once a think) and the health taken off (`bot_w_damage`, from `t_damage`, by the means of death, so a
+rocket that lands after a change of guns is the launcher's). `scripts/wsel-train.mjs` runs it: six bots at
+skill 4 set on each other on the demo's four arenas, guns dealt every 20 s, 160 minutes of play and three hours
+of fire in all, added up into `src/botw.js`. Health a second of fire:
+
+| | <150 | <300 | <500 | <800 | <1200 |
+| --- | --- | --- | --- | --- | --- |
+| Machinegun | 55 | 41 | 25 | 9 | 4 |
+| Shotgun | 63 | 53 | 36 | 15 | 9 |
+| Grenade launcher | 44 | 24 | 22 | 14 | 3 |
+| Rocket launcher | 73 | 38 | 22 | 7 | 11 |
+| Lightning gun | 61 | 52 | 37 | 28 | |
+| Railgun | 37 | 32 | 26 | 21 | 17 |
+| Plasma gun | 115 | 74 | 41 | 22 | |
+
+The numbers are sound; choosing by them does not make a better bot. Two bots on the table against two of
+botlib's, sixteen matches of twenty minutes on the four arenas with the sides swapped (`--eval`):
+
+| The table's bots take | Frags | botlib's | Ahead in |
+| --- | --- | --- | --- |
+| the best gun of the table (the lightning gun's fire counted at 0.05 s a shot, twice what it is) | 1,264 | 1,795 | 4 of 16 |
+| the best gun of the table as above, the gun in hand kept unless the best does a fifth more | 1,357 | 1,729 | 5 |
+| their favourite, unless another gun held does twice as much at the distance | 1,521 | 1,600 | 8 |
+
+The first two lose by more than four times what chance gives, and how they lose says why: with one pair of
+bots on the table they make half the others' frags, with the other pair they draw. A character's favourite is
+the gun it aims best with (each has its own accuracy and aim skill for every gun), and the table is everyone's
+average, so it takes some characters off the gun they are good with. The third rule keeps the favourite and
+corrects only a gun far out of its range; it draws (79 frags behind, about one standard error). That is what
+`game.bot_wsel` 1 and the page's *Bot guns: By distance* do; the default is botlib's choice. What might win is
+the same table for each character, five times the measuring. `npm run test:rl` checks the rule on a small table
+and the counting.
+
 ### The learned fight moves: `bot_rl_move`, a Q table and a network
 
 Quake III's bots move in a fight by `BotAttackMove`: closer when far, a strafe by the attack skill, a jump or a

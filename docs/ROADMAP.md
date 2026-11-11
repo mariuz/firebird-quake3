@@ -117,7 +117,8 @@ in SQL: `sql/chat.sql`, `npm run test:chat`) a bot led by a language model (Clau
 what the bot goes after, SQL writes the situation, carries out the answer and keeps the model's memory, its
 decisions with what followed and its notes, as rows: `bot_llm_state`, `bot_llm_apply`,
 `src/llm.js`, `npm run test:llm`; an open model on the player's own Ollama or LM Studio can take Claude's place,
-and a small one in the browser is an experiment that chose no better than a fixed answer) and their learned fight moves (not Quake III's: six moves chosen by a
+and a small one in the browser is an experiment that chose no better than a fixed answer) the gun for the distance (what each gun does at each distance in a bot's hands, measured in self-play: `bot_wdps`,
+`bot_pick_weapon`, the page's *Bot guns*; choosing by it played no better than botlib's favourite gun) and their learned fight moves (not Quake III's: six moves chosen by a
 network trained offline from self-play with Double DQN and CQL, its forward pass in SQL, or by a Q table learned in
 SQL: `bot_rl_move`, `bot_nn_best`, the page's *Bot AI*, `npm run test:rl`), demos (`record`, `demo`: every snapshot kept as rows, the
 entities delta-compressed against the last, played back into the tables the frame reads with the game not

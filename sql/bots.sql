@@ -1230,6 +1230,7 @@ BEGIN
   IF (w IS NULL OR w = fav) THEN RETURN fav;
   IF (best >= cur * 2) THEN RETURN w;
   -- (the gun in hand, if it is neither: kept while it does one and a half times the favourite)
+  w = NULL; best = NULL;
   SELECT p.w, p.dmg / p.secs FROM bot_wdps p JOIN ents e ON e.id = :eid AND p.w = e.weapon WHERE p.band = :b AND p.secs >= 30 AND BIN_AND(:held, p.w) <> 0 INTO w, best;
   IF (w IS NOT NULL AND w <> fav AND best >= cur * 1.5e0) THEN RETURN w;
   RETURN fav;

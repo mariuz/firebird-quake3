@@ -149,6 +149,12 @@ four twenty-minute matches against Quake III's moves it made 464 frags to 476: a
 Quake III's moves stay the default and the network is a choice in the menu. A Q table learned by
 tabular Q-learning in SQL is there too, and can go on learning as you play; it plays worse than either.
 
+The first step of pretraining the bots was to measure: three hours of fire in self-play give what each gun
+does at each distance in a bot's hands (the plasma gun 115 health a second of fire up close, the railgun the
+most past 800 units). Bots choosing their gun by that table lost to Quake III's bots, who fight with their
+character's favourite: the favourite is the gun a character aims best with. Kept as *Bot guns: By distance*
+(the favourite unless another gun does twice as much), which plays level.
+
 And a language model can lead a bot (*Claude leads*, with your own Anthropic API key, kept in your browser):
 every five seconds SQL writes what the bot knows as a dozen lines of text, Claude answers which item to go
 for, whom to hunt or where to wait, and now and then a line to say, and SQL carries it out. The bot's aim and

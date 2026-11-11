@@ -106,15 +106,20 @@ const wCells = (await q('SELECT COUNT(*) n, SUM(secs) secs FROM bot_wdps'))[0];
 await wArm(1 + 2 + 4 + 16 + 32 + 64);
 await db.exec(`UPDATE ents SET wsel = 0 WHERE id = ${b0}`);
 const wOwn = [await wPick(100), await wPick(1000)];
-await loadBotW(db, [[2, 0, 100, 3000], [4, 0, 100, 6000], [32, 0, 100, 9000], [64, 0, 100, 2000], [16, 0, 10, 5000], [2, 4, 100, 400], [64, 4, 100, 1700], [4, 4, 100, 900]]);
+// (its favourite is the shotgun: 60 a second under 150 units here, 36 at 300 to 500, 9 at 800 to 1200)
+await loadBotW(db, [[2, 0, 100, 3000], [4, 0, 100, 6000], [32, 0, 100, 15000], [64, 0, 100, 2000], [16, 0, 10, 50000], [4, 2, 100, 3600], [64, 2, 100, 6000], [2, 4, 100, 400], [64, 4, 100, 2500], [4, 4, 100, 900]]);
 await db.exec(`UPDATE ents SET wsel = 1 WHERE id = ${b0}`);
 const wNear = await wPick(100), wFar = await wPick(1000), wUnknown = await wPick(2000);
-await db.exec(`UPDATE ents SET ammo6 = 0 WHERE id = ${b0}`);
+const wMid = await wPick(400);                                   // (the railgun does 1.67 times the shotgun there: not twice)
+await db.exec(`UPDATE ents SET weapon = 64 WHERE id = ${b0}`);
+const wMidKept = await wPick(400);                               // (but in hand already, it is kept: one and a half times)
+await db.exec(`UPDATE ents SET ammo6 = 0, weapon = 2 WHERE id = ${b0}`);
 const wDry = await wPick(100);
 await wArm(1 + 2 + 16);
-const wFew = await wPick(100);   // (the rocket launcher fired 10 s there: not known; of the known it holds the machinegun alone)
-assert(BOT_W.length >= 40 && wCells.N === BOT_W.length && wCells.SECS > 3600 && wOwn[0] === wOwn[1] && wNear === 32 && wFar === 64 && wUnknown === wOwn[1] && wDry === 4 && wFew === 2,
-  `the gun for the distance: ${BOT_W.length} cells measured over ${(wCells.SECS / 3600).toFixed(1)} hours of fire ship; by a table a bot takes the lightning gun at 100 units (${wNear}), the railgun at 1000 (${wFar}), the shotgun when the lightning gun is dry (${wDry}), no gun fired under 30 s there (${wFew}), and its character's favourite where nothing is known (${wUnknown}, as without the table: ${wOwn[0]} at any distance)`);
+const wFew = await wPick(100);   // (its favourite of these is the rocket launcher, fired 10 s there: nothing known of it, so it stays)
+assert(BOT_W.length >= 40 && wCells.N === BOT_W.length && wCells.SECS > 3600 && wOwn[0] === 4 && wOwn[1] === 4 && wNear === 32 && wFar === 64 && wUnknown === 4
+  && wMid === 4 && wMidKept === 64 && wDry === 4 && wFew === 16,
+  `the gun for the distance: ${BOT_W.length} cells measured over ${(wCells.SECS / 3600).toFixed(1)} hours of fire ship; a bot whose favourite is the shotgun (${wOwn[0]} at any distance without the table) takes the lightning gun at 100 units, which does 2.5 times as much there (${wNear}), the railgun at 1000 (${wFar}), keeps the shotgun where the railgun does 1.67 times as much (${wMid}) but keeps the railgun there once in hand (${wMidKept}); the shotgun again when the lightning gun is dry (${wDry}), and its favourite where that was fired under 30 s (${wFew}) or nothing is known (${wUnknown})`);
 await loadBotW(db, []);
 await db.exec(`UPDATE ents SET wsel = 2, enemy_id = ${b1} WHERE id = ${b0}`);
 await wArm(1 + 2 + 4 + 16 + 32 + 64);
