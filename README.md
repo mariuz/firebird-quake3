@@ -156,7 +156,10 @@ its legs stay its own: a model that answers in a second cannot steer a game that
 The model remembers nothing between two questions, so the database does: every decision and what followed
 it is a row, a `GROUP BY` totals what each kind of decision has brought on the arena, the model can ask to
 have a note kept, and all of it is written back into the next question and kept in your browser between
-visits. Each decision is a paid API call.
+visits. Each decision is a paid API call. An open model can take Claude's place: one you run yourself
+with Ollama or LM Studio is asked the same question on localhost, free. A small one downloaded into the
+browser (WebGPU) is there too, as an experiment that did not work: from 270 million parameters to Phi-4
+mini's 3.8 billion, every model tried gave nearly the same answer whatever the bot's health and guns.
 
 The bots know their way around because the arena is a graph (`sql/waypoints.sql`, the part of Quake
 III's area awareness system a deathmatch bot needs). When a map loads, `BUILD_WAYPOINTS` puts a node

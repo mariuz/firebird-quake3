@@ -695,6 +695,38 @@ totals, a note kept once and twelve at most, the rows out to storage and back), 
 the wrong key. Against the real API
 it has not been run here, there being no key: how well a led bot plays is not measured.
 
+**An open model in Claude's place, on the player's own server.** Ollama, LM Studio and llama.cpp's server put
+a model on localhost behind OpenAI's chat-completions API. `ServerStrategist` (`src/llm.js`) asks it what Claude
+is asked, `bot_llm_ask`'s situation and memory with the same system prompt, and takes the same five fields: the
+answer is asked for as a JSON schema, as plain JSON if the server answers 400 to that, and the object is cut
+out of whatever the model wrote around it. No key is sent. The page's model menu has *Your own server* with the
+server's address and the model's name; the server has to allow the page (Ollama's `OLLAMA_ORIGINS`, LM Studio's
+CORS switch). `test:llm` runs it against the stand-in server. No real one was run here: how a model of seven or
+eight billion parameters plays is not known.
+
+**A small open model in the browser: an experiment that did not work.** `LocalStrategist` downloads a model
+once and runs it with Transformers.js on WebGPU, in a Worker of its own (on the page's thread the first answer
+froze the game). A small model cannot be trusted with an item's class or a JSON object, so SQL does more:
+`bot_llm_offer` writes one line about the bot and the best move of each kind under a word (*heal*: the nearest
+health or armor; *arm*: the nearest gun it lacks, or powerup; *hunt*: the nearest of the others; *wait*: an
+ambush), kept in `bot_llm_choices`; the model answers one word after five worked examples in the same form;
+`bot_llm_pick` gives the move kept under the word to `bot_llm_apply`, so the memory is written as for Claude.
+Mechanically it works. As a strategist it does not, and the menu calls it experimental: measured on the CPU with
+the ONNX builds the page loads, every model small enough to download answered nearly the same whatever the bot's
+health and guns.
+
+| Asked for | Situations | Result (the sensible answer) |
+| --- | --- | --- |
+| the number of one of up to eleven moves | 8 from the game | Gemma 3 270M, SmolLM2 360M, LFM2 350M, Qwen 2.5 0.5B, Gemma 3 1B: one number whatever the bot; Qwen 2.5 1.5B 2, Llama 3.2 3B 2 (always a hunt), Phi-4 mini 6 |
+| one of four words, with examples | 40 made up | Gemma 3 1B 12 and Phi-4 mini 13 (*arm* in 36 and 33 of the 40), Qwen 2.5 0.5B 25 (*heal* and *hunt* right, never *arm*) |
+| the same, each word's score less what a blank brief gives it | 40 | Qwen 2.5 0.5B 13, SmolLM2 360M 13, Gemma 3 1B 15: worse |
+| one of two words, *heal* or *fight* | 40 | SmolLM2 360M and Gemma 3 1B always *heal*, LFM2 350M and Gemma 3 270M always *fight*, Qwen 2.5 0.5B 25 at four bits and always *fight* at full precision |
+
+Fourteen of forty and twenty-six of forty are what one word always gives. The quantization is not the reason
+(full precision does the same), nor the form of the question; a model of this size does not weigh a health of
+22 against a gun it lacks. What would work in a browser is a model trained for this one decision, which is what
+`bot_rl_move`'s network already is.
+
 ### The learned fight moves: `bot_rl_move`, a Q table and a network
 
 Quake III's bots move in a fight by `BotAttackMove`: closer when far, a strafe by the attack skill, a jump or a
@@ -1387,7 +1419,7 @@ passes in Node is what runs in the browser.
 | `npm run test:bots` | `bots-test.mjs`: four bots join, see, fire, die, respawn, pick up a weapon, a bot hunts the player from the farthest spawn over the graph, a minute of play scores frags and strands nobody |
 | `npm run test:bots:dm17` | the same on q3dm17, plus: the bots take the jump pads |
 | `npm run test:chat` | `chat-test.mjs`: 25 lines embedded beforehand are understood by meaning, and in a team game the bots follow, camp, fetch, stand down and hunt as told |
-| `npm run test:llm` | `llm-test.mjs`: a bot led by a language model, a local server standing in for the API: the situation SQL writes, the request sent, each answer carried out, its memory in the database (decisions and what followed, the arena's totals, notes) out to storage and back, a refusal, a limit, a wrong key |
+| `npm run test:llm` | `llm-test.mjs`: a bot led by a language model (Claude, an open model on the player's server, a small one in the browser), a local server standing in for the APIs and the small model's answers given: the situation SQL writes, the request sent, each answer carried out, its memory in the database (decisions and what followed, the arena's totals, notes) out to storage and back, a refusal, a limit, a wrong key |
 | `npm run test:rl` | `rl-test.mjs`: the Q-learning step, the table's rule, the network's pass in SQL against JavaScript's, two bots learning as they fight |
 | `npm run test:demo` | `demo-test.mjs`: a demo recorded on q3dm1 and played back gives every snapshot as it was painted, saved to JSON and loaded back too |
 | `npm run test:save` | `save-test.mjs`: a game saved in a fight, played on, loaded on a fresh arena is back as saved, row for row, and plays on |

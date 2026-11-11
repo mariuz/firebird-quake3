@@ -170,16 +170,75 @@ export async function importMemory(db, mem) {
   return mem.notes.length + mem.log.length;
 }
 
+// ── an open model on the player's own machine, in Claude's place ───────────────────────────────────────────────
+// Ollama, LM Studio, llama.cpp's server and the like serve a model on localhost behind OpenAI's chat-completions
+// API. A model of that size (seven or eight billion parameters and up) can be asked what Claude is asked, the
+// situation and the memory, and answer the same five fields, so only the call differs. No key, no bill; the page
+// has to be allowed to reach the server (Ollama: OLLAMA_ORIGINS, LM Studio: its CORS switch).
+
+/** Where such a server usually is, and a model to start with */
+export const SERVER_DEFAULT = { url: 'http://localhost:11434', model: 'llama3.1:8b' };
+
+export class ServerStrategist extends Strategist {
+  /**
+   * @param {object} o
+   * @param {string} [o.url]    the server, without the /v1
+   * @param {string} [o.model]  the model's name as the server knows it
+   */
+  constructor({ url = SERVER_DEFAULT.url, model = SERVER_DEFAULT.model, every = 5, onStatus = () => {} } = {}) {
+    super({ apiKey: '', model, every, onStatus });
+    this.url = url.trim().replace(/\/+$/, '').replace(/\/v1$/, '');
+    this.schema = true;   // (until the server says it does not take a JSON schema)
+  }
+
+  async connect() { /* nothing to load */ }
+
+  async decide(situation) {
+    const body = (schema) => JSON.stringify({
+      model: this.model,
+      messages: [{ role: 'system', content: `${SYSTEM}\n\nAnswer with one JSON object and nothing else: {"action": "get" | "hunt" | "ambush" | "roam", "target": "…", "say": "…", "note": "…"}.` },
+        { role: 'user', content: situation }],
+      max_tokens: 400, temperature: 0.2, stream: false,
+      response_format: schema ? { type: 'json_schema', json_schema: { name: 'decision', strict: true, schema: FORMAT.schema } } : { type: 'json_object' },
+    });
+    const post = (schema) => fetch(`${this.url}/v1/chat/completions`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: body(schema), signal: AbortSignal.timeout(60_000) });
+    let rsp = await post(this.schema);
+    // (a server that does not know json_schema: the plainer JSON mode from now on)
+    if (rsp.status === 400 && this.schema) { this.schema = false; rsp = await post(false); }
+    if (!rsp.ok) throw Object.assign(new Error(`the server answered ${rsp.status}`), { status: rsp.status });
+    const data = await rsp.json();
+    this.tokensIn += data.usage?.prompt_tokens ?? 0;
+    this.tokensOut += data.usage?.completion_tokens ?? 0;
+    // (the object, whatever the model wrote around it)
+    const text = String(data.choices?.[0]?.message?.content ?? '');
+    const from = text.indexOf('{'), to = text.lastIndexOf('}');
+    if (from < 0 || to < from) return null;
+    let d;
+    try { d = JSON.parse(text.slice(from, to + 1)); } catch { return null; }
+    return { action: String(d.action ?? ''), target: String(d.target ?? ''), say: String(d.say ?? ''), note: String(d.note ?? '') };
+  }
+
+  /** A failed call: a model the server does not have ends it, a server that is not there is tried again */
+  failed(err, eid) {
+    if (err?.status === 404) { this.stopped = `the server has no model "${this.model}"`; this.onStatus(`stopped: ${this.stopped}`); return; }
+    this.due.set(eid, performance.now() + 15_000);
+    this.onStatus(err?.status ? `${err.message}: trying again in 15 s` : `no server at ${this.url} (is it running, and may this page reach it?): trying again in 15 s`);
+  }
+}
+
 // ── a small open model in the browser, in Claude's place ───────────────────────────────────────────────────────
-// No key and no bill: the model is downloaded once into the browser and runs on the player's GPU (Transformers.js
-// on WebGPU, as the embedding model of chat.js does). It is a far weaker strategist. Models under a billion
-// parameters answered the same whatever the bot's situation when asked to choose from a list, so the question is
-// made as small as it can be: SQL finds the best move of each kind (bot_llm_offer) and the model answers one
+// No key, no bill and nothing to install: the model is downloaded once into the browser and runs on the player's
+// GPU (Transformers.js on WebGPU, as the embedding model of chat.js does). It is an experiment, and by what was
+// measured not a strategist: every model small enough to download, from 270 million parameters to Phi-4 mini's
+// 3.8 billion, answered nearly the same whatever the bot's health and guns, asked for a number of a list, one of
+// four words or one of two, with worked examples, at four bits or at full precision (docs/ARCHITECTURE.md has
+// the numbers). So the question is as small as it can be and SQL does the rest: SQL finds the best move of each kind (bot_llm_offer) and the model answers one
 // word, heal, arm, hunt or wait, after a few worked examples; SQL carries out the move kept under the word
 // (bot_llm_pick). It writes no chat lines and no notes; its decisions go into the same memory.
 
 /** The models offered: [id, label, dtype], the first the default */
 export const LOCAL_MODELS = [
+  ['onnx-community/Qwen2.5-0.5B-Instruct', 'Qwen 2.5 0.5B (0.8 GB)', 'q4'],
   ['onnx-community/gemma-3-1b-it-ONNX', 'Gemma 3 1B (0.9 GB)', 'q4'],
   ['onnx-community/Phi-4-mini-instruct-ONNX', 'Phi-4 mini (2.8 GB)', 'q4'],
 ];

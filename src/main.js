@@ -29,7 +29,7 @@ import { exportDemo, importDemo, listDemos } from './demo.js';
 import { exportSave, importSave, saveMap } from './save.js';
 import { loadEmbedder, embedderReady, embed } from './chat.js';
 import { loadBotQ } from './loader.js';
-import { Strategist, LocalStrategist, LLM_MODELS, LOCAL_MODELS, exportMemory, importMemory } from './llm.js';
+import { Strategist, ServerStrategist, LocalStrategist, LLM_MODELS, LOCAL_MODELS, SERVER_DEFAULT, exportMemory, importMemory } from './llm.js';
 
 const $ = (id) => document.getElementById(id);
 const canvas = $('screen');
@@ -67,7 +67,7 @@ let lastFxId = 0;
 let frameNo = 0;
 let scores = [];
 const state = new FrameState();
-const settings = { map: 'q3dm1', detail: 'medium', sfx: 70, music: 40, musicMode: 'tracks', skill: 2, bots: 3, fov: 90, renderer: 'fast', brightness: 4, predict: true, fraglimit: 20, timelimit: 10, rotate: true, name: 'Player', model: 'sarge/default', rail: 4, gametype: 'ffa', team: 'auto', botai: 0, chatModel: false, llm: 0, llmModel: LLM_MODELS[0][0] };
+const settings = { map: 'q3dm1', detail: 'medium', sfx: 70, music: 40, musicMode: 'tracks', skill: 2, bots: 3, fov: 90, renderer: 'fast', brightness: 4, predict: true, fraglimit: 20, timelimit: 10, rotate: true, name: 'Player', model: 'sarge/default', rail: 4, gametype: 'ffa', team: 'auto', botai: 0, chatModel: false, llm: 0, llmModel: LLM_MODELS[0][0], llmUrl: SERVER_DEFAULT.url, llmName: SERVER_DEFAULT.model };
 try { Object.assign(settings, JSON.parse(localStorage.getItem('firebird-quake3:settings') || '{}')); } catch { /* defaults */ }
 const saveSettings = () => { try { localStorage.setItem('firebird-quake3:settings', JSON.stringify(settings)); } catch { /* ignore */ } };
 const viewWidth = () => (settings.detail === 'high' ? 640 : settings.detail === 'low' ? 160 : 320);
@@ -856,28 +856,36 @@ async function restoreLlmMemory() {
   if (mem) await importMemory(db, mem);
 }
 async function leadBots() {
-  const key = llmKey(), local = LOCAL_MODELS.some(([id]) => id === settings.llmModel);
-  $('llmkey').hidden = local;
+  const key = llmKey(), kind = llmKind();
   strategist = !settings.llm ? null
-    : local ? new LocalStrategist({ model: settings.llmModel, onStatus: llmStatus })
-      : key ? new Strategist({ apiKey: key, model: settings.llmModel, onStatus: llmStatus }) : null;
+    : kind === 'server' ? new ServerStrategist({ url: settings.llmUrl, model: settings.llmName, onStatus: llmStatus })
+      : kind === 'local' ? new LocalStrategist({ model: settings.llmModel, onStatus: llmStatus })
+        : key ? new Strategist({ apiKey: key, model: settings.llmModel, onStatus: llmStatus }) : null;
   llmStatus(settings.llm && !strategist ? 'needs an API key' : '');
   if (db && map) await db.exec(`EXECUTE PROCEDURE bot_llm_lead(${strategist ? settings.llm | 0 : 0})`);
 }
-for (const [title, list] of [['Claude (your API key)', LLM_MODELS], ['In this browser (WebGPU)', LOCAL_MODELS]]) {
+// (which kind of model the menu is on: Claude's API, the player's own server, or a model in this browser)
+const LLM_SERVER = 'server';
+const llmKind = () => (settings.llmModel === LLM_SERVER ? 'server' : LOCAL_MODELS.some(([id]) => id === settings.llmModel) ? 'local' : 'claude');
+const llmFields = () => { const k = llmKind(); $('llmkey').hidden = k !== 'claude'; $('llmurl').hidden = $('llmname').hidden = k !== 'server'; };
+for (const [title, list] of [['Claude (your API key)', LLM_MODELS], ['Your own server', [[LLM_SERVER, 'Ollama, LM Studio…']]], ['In this browser (experimental)', LOCAL_MODELS]]) {
   const group = document.createElement('optgroup');
   group.label = title;
   for (const [id, label] of list) group.append(new Option(label, id));
   $('llmmodel').append(group);
 }
-if (![...LLM_MODELS, ...LOCAL_MODELS].some(([id]) => id === settings.llmModel)) settings.llmModel = LLM_MODELS[0][0];
-$('llmkey').hidden = LOCAL_MODELS.some(([id]) => id === settings.llmModel);
+if (![...LLM_MODELS, ...LOCAL_MODELS, [LLM_SERVER]].some(([id]) => id === settings.llmModel)) settings.llmModel = LLM_MODELS[0][0];
+$('llmurl').value = settings.llmUrl;
+$('llmname').value = settings.llmName;
+llmFields();
 $('llmmodel').value = settings.llmModel;
 $('llmbots').value = String(settings.llm);
 $('llmkey').value = llmKey();
 const llmChanged = () => { saveSettings(); leadBots().catch((err) => console.error(err)); };
 $('llmbots').addEventListener('change', (e) => { settings.llm = Number(e.target.value); llmChanged(); });
-$('llmmodel').addEventListener('change', (e) => { settings.llmModel = e.target.value; llmChanged(); });
+$('llmmodel').addEventListener('change', (e) => { settings.llmModel = e.target.value; llmFields(); llmChanged(); });
+$('llmurl').addEventListener('change', (e) => { settings.llmUrl = e.target.value.trim() || SERVER_DEFAULT.url; llmChanged(); });
+$('llmname').addEventListener('change', (e) => { settings.llmName = e.target.value.trim() || SERVER_DEFAULT.model; llmChanged(); });
 $('llmkey').addEventListener('change', (e) => {
   try { if (e.target.value.trim()) localStorage.setItem(LLM_KEY, e.target.value.trim()); else localStorage.removeItem(LLM_KEY); } catch { /* storage blocked */ }
   llmChanged();

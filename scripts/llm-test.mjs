@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { FirebirdBrowser, DirectTransport } from 'firebird-wasm/browser';
 import { Pk3 } from '../src/pk3.js';
 import { createSchema, loadResources, loadMap, buildWaypoints, SQL_FILES } from '../src/loader.js';
-import { Strategist, LocalStrategist, LLM_MODELS, LOCAL_MODELS, smallMessages, smallWord, exportMemory, importMemory } from '../src/llm.js';
+import { Strategist, ServerStrategist, LocalStrategist, LLM_MODELS, LOCAL_MODELS, smallMessages, smallWord, exportMemory, importMemory } from '../src/llm.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const sql = Object.fromEntries(SQL_FILES.map((n) => [n, fs.readFileSync(path.join(root, `sql/${n}.sql`), 'utf8')]));
@@ -39,6 +39,8 @@ const server = http.createServer((req, rsp) => {
     const a = answers.shift();
     if (a?.status) { rsp.writeHead(a.status, { 'content-type': 'application/json' }); rsp.end(JSON.stringify({ type: 'error', error: { type: a.type, message: a.type } })); return; }
     rsp.writeHead(200, { 'content-type': 'application/json' });
+    // (the other API: an open model's server, OpenAI's chat completions)
+    if (req.url === '/v1/chat/completions') { rsp.end(JSON.stringify({ choices: [{ message: { role: 'assistant', content: a.text } }], usage: { prompt_tokens: 900, completion_tokens: 30 } })); return; }
     rsp.end(JSON.stringify({ id: 'msg_test', type: 'message', role: 'assistant', model: requests.at(-1).body.model, stop_reason: a?.stop ?? 'end_turn', stop_sequence: null,
       content: a?.stop === 'refusal' ? [] : [{ type: 'text', text: JSON.stringify({ note: '', ...(a ?? { action: 'roam', target: '', say: '' }) }) }], usage: { input_tokens: 700, output_tokens: 40 } }));
   });
@@ -133,6 +135,25 @@ const m2 = await memOf();
 assert(kept.log.length === n1 && back === n1 + 12 && n2.N === n1 && n2.PAST === n1 && n2.NOTES === 12 && !/your last decisions/.test(m2)
   && /what your decisions have brought on this arena/.test(m2) && /\n  roam: 1[45] times/.test(m2) && /\n  lesson 12/.test(m2) && (await importMemory(db, { version: 2 })) === 0,
   `the memory out to storage and back (${kept.log.length} decisions, ${kept.notes.length} notes): they count for the arena's totals, not as this match's last decisions`);
+
+// an open model on the player's own server (Ollama, LM Studio), in Claude's place: the same question, OpenAI's API
+const own = new ServerStrategist({ url: `${baseURL}/v1/`, model: 'llama3.1:8b', every: 0 });
+const r0 = requests.length;
+answers.push({ status: 400, type: 'invalid_request_error' }, { text: 'Here you go:\n{"action": "ambush", "target": "", "say": "Come and get it.", "note": "The corridor by the armor is a good ambush."}\n' });
+await own.tick(db);
+const o1 = await state();
+answers.push({ text: 'I think the bot should hunt.' });
+await own.tick(db);
+const o2 = await state();
+answers.push({ status: 404, type: 'not_found_error' });
+await own.tick(db);
+const [sr1, sr2, sr3] = requests.slice(r0);
+assert(sr1.url === '/v1/chat/completions' && sr1.body.model === 'llama3.1:8b' && sr1.body.response_format.type === 'json_schema' && sr2.body.response_format.type === 'json_object'
+  && sr3.body.response_format.type === 'json_object' && sr1.body.messages[0].role === 'system' && /^you: /.test(sr1.body.messages[1].content) && /what your decisions have brought/.test(sr1.body.messages[1].content)
+  && sr1.headers['x-api-key'] === undefined && sr1.headers.authorization === undefined
+  && o1.LASTD === 'ambush' && o1.CAMP_ID !== null && o2.LASTD === 'ambush' && own.decisions === 1 && own.notes === 1 && own.tokensIn === 1800
+  && (await q("SELECT COUNT(*) n FROM bot_llm_notes WHERE note LIKE 'The corridor%'"))[0].N === 1 && own.stopped === 'the server has no model "llama3.1:8b"',
+  `an open model on your own server is asked the same over OpenAI's chat API, no key sent: a server without JSON schemas gets the plainer mode, the object is found in what the model wrote around it, an answer with none is passed over, a model the server lacks ends it`);
 
 // a small model in the browser, in Claude's place: SQL finds the best move of each kind, the model answers a word.
 // (No model here either: the answers are given)
