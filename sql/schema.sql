@@ -910,6 +910,16 @@ CREATE TABLE bot_llm_notes (
 );
 CREATE INDEX bot_llm_notes_map ON bot_llm_notes (map_name, id);
 
+-- What a small model was last offered (chat.sql: bot_llm_offer writes it, bot_llm_pick reads it): a small model
+-- cannot be trusted with an item's class or a name, so SQL numbers what can be done and the model answers a number
+CREATE TABLE bot_llm_choices (
+  eid    INTEGER NOT NULL,
+  n      SMALLINT NOT NULL,
+  action VARCHAR(20) NOT NULL,
+  arg    VARCHAR(40) NOT NULL,
+  PRIMARY KEY (eid, n)
+);
+
 CREATE TABLE bot_rl_log (
   id INTEGER NOT NULL PRIMARY KEY,
   f0 DOUBLE PRECISION, f1 DOUBLE PRECISION, f2 DOUBLE PRECISION, f3 DOUBLE PRECISION, f4 DOUBLE PRECISION, f5 DOUBLE PRECISION, f6 DOUBLE PRECISION, f7 DOUBLE PRECISION, f8 DOUBLE PRECISION, f9 DOUBLE PRECISION, f10 DOUBLE PRECISION, f11 DOUBLE PRECISION,

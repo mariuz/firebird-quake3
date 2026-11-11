@@ -446,4 +446,94 @@ BEGIN
   SUSPEND;
 END^
 
+-- ── The same for a small model that runs in the browser ───────────────────────────────────────────────────────
+-- A model of a few hundred million parameters reads a short text and cannot be trusted to write an item's class
+-- or a JSON object. So SQL does more of the work: bot_llm_offer writes a brief of a few lines and numbers what
+-- the bot can do now, the items that are there and worth having, the others alive, an ambush, roaming; the model
+-- answers with a number; bot_llm_pick looks the number up among what was offered and gives it to bot_llm_apply.
+
+-- The brief and the numbered choices, one row for each led bot alive; the choices are kept in bot_llm_choices
+CREATE OR ALTER PROCEDURE bot_llm_offer
+RETURNS (eid INTEGER, bot VARCHAR(16), txt VARCHAR(3000), choices SMALLINT)
+AS
+DECLARE t DOUBLE PRECISION; DECLARE x DOUBLE PRECISION; DECLARE y DOUBLE PRECISION; DECLARE z DOUBLE PRECISION;
+DECLARE hp INTEGER; DECLARE ar INTEGER; DECLARE fr INTEGER; DECLARE w INTEGER; DECLARE ws INTEGER; DECLARE team SMALLINT; DECLARE gt SMALLINT;
+DECLARE mapn VARCHAR(32); DECLARE n SMALLINT; DECLARE cls VARCHAR(40); DECLARE nm VARCHAR(40); DECLARE kind CHAR(1); DECLARE bit INTEGER;
+DECLARE d DOUBLE PRECISION; DECLARE o INTEGER; DECLARE onm VARCHAR(32); DECLARE ow INTEGER; DECLARE line VARCHAR(300);
+DECLARE act VARCHAR(20); DECLARE arg VARCHAR(40); DECLARE cnt INTEGER; DECLARE dfr INTEGER; DECLARE dde INTEGER; DECLARE k INTEGER; DECLARE vis SMALLINT;
+BEGIN
+  t = now_();
+  SELECT g.gametype, g.map_name FROM game g WHERE g.id = 1 INTO gt, mapn;
+  FOR SELECT e.id, e.bot, e.x, e.y, e.z, e.health, e.armor, e.frags, e.weapon, e.weapons, e.pteam
+        FROM ents e WHERE e.classname = 'bot' AND e.llm = 1 AND e.health > 0 AND e.queued = 0 ORDER BY e.id
+      INTO eid, bot, x, y, z, hp, ar, fr, w, ws, team DO
+  BEGIN
+    DELETE FROM bot_llm_choices c WHERE c.eid = :eid;
+    txt = 'You are ' || TRIM(bot) || ' in a deathmatch. Health ' || hp || ', armor ' || ar || ', frags ' || fr || '.' || ASCII_CHAR(10)
+          || 'Your guns: ' || llm_guns(eid) || '.' || ASCII_CHAR(10);
+    -- what has paid on this arena (the memory's totals), the four most tried
+    k = 0;
+    FOR SELECT TRIM(l.action), TRIM(l.arg), COUNT(*), SUM(l.frags1 - l.frags0), SUM(l.deaths1 - l.deaths0)
+          FROM bot_llm_log l WHERE l.map_name = :mapn AND l.hp1 IS NOT NULL AND l.ok = 1
+         GROUP BY 1, 2 HAVING COUNT(*) >= 3 ORDER BY 3 DESC, 1, 2 ROWS 4 INTO act, arg, cnt, dfr, dde DO
+    BEGIN
+      IF (k = 0) THEN txt = txt || 'Before, on this arena:' || ASCII_CHAR(10);
+      k = k + 1;
+      line = '- ' || act;
+      IF (arg <> '') THEN line = line || ' ' || arg;
+      txt = txt || line || ', ' || cnt || ' times: ' || dfr || ' frags, ' || dde || ' deaths' || ASCII_CHAR(10);
+    END
+    txt = txt || 'Choices:';
+    n = 0;
+    -- the items that are there: a gun it does not have, armor, health when it is hurt (the mega always), a powerup;
+    -- the nearest of each class, guns and powerups first, eight at most
+    FOR SELECT TRIM(i.cls), TRIM(i.name), i.kind, MIN(SQRT((g.x - :x) * (g.x - :x) + (g.y - :y) * (g.y - :y) + (g.z - :z) * (g.z - :z)))
+          FROM ents g JOIN item_defs i ON i.cls = TRIM(g.item)
+         WHERE g.classname = 'item' AND g.solid = 1
+           AND ((i.kind = 'W' AND BIN_AND(:ws, i.bit) = 0) OR i.kind = 'P' OR (i.kind = 'A' AND :ar < 100 AND i.qty >= 25)
+                OR (i.kind = 'H' AND (:hp < 100 AND i.qty >= 25 OR i.qty >= 100)))
+         GROUP BY 1, 2, 3 ORDER BY IIF(i.kind IN ('W', 'P'), 0, 1), 4 ROWS 8 INTO cls, nm, kind, d DO
+    BEGIN
+      n = n + 1;
+      INSERT INTO bot_llm_choices (eid, n, action, arg) VALUES (:eid, :n, 'get', :cls);
+      txt = txt || ASCII_CHAR(10) || n || '. get the ' || nm || ', ' || CAST(d AS INTEGER) || ' units away';
+    END
+    -- the others alive (the enemies, in a team game), the nearest four
+    FOR SELECT q.id, chat_name(q.id), IIF(q.classname = 'player', p.weapon, q.weapon),
+               SQRT((q.x - :x) * (q.x - :x) + (q.y - :y) * (q.y - :y) + (q.z - :z) * (q.z - :z))
+          FROM ents q LEFT JOIN player p ON p.id = 1
+         WHERE q.classname IN ('player', 'bot') AND q.id <> :eid AND q.queued = 0 AND q.health > 0 AND NOT (q.classname = 'player' AND p.spectator = 1)
+           AND (:gt < 3 OR q.pteam <> :team)
+         ORDER BY 4 ROWS 4 INTO o, onm, ow, d DO
+    BEGIN
+      n = n + 1;
+      INSERT INTO bot_llm_choices (eid, n, action, arg) VALUES (:eid, :n, 'hunt', TRIM(:onm));
+      vis = visible(eid, o);
+      line = n || '. hunt ' || TRIM(onm) || ', ' || CAST(d AS INTEGER) || ' units away';
+      IF (vis = 1) THEN line = line || ', in sight';
+      txt = txt || ASCII_CHAR(10) || line || ', holding the ' || COALESCE((SELECT TRIM(i.name) FROM item_defs i WHERE i.kind = 'W' AND i.bit = :ow), 'Machinegun');
+    END
+    n = n + 1;
+    INSERT INTO bot_llm_choices (eid, n, action, arg) VALUES (:eid, :n, 'ambush', '');
+    txt = txt || ASCII_CHAR(10) || n || '. wait here in ambush';
+    n = n + 1;
+    INSERT INTO bot_llm_choices (eid, n, action, arg) VALUES (:eid, :n, 'roam', '');
+    txt = txt || ASCII_CHAR(10) || n || '. roam for items';
+    choices = n;
+    SUSPEND;
+  END
+END^
+
+-- The number a small model answered, carried out: the choice of that number among those last offered to the bot
+CREATE OR ALTER PROCEDURE bot_llm_pick (eid INTEGER, n INTEGER)
+RETURNS (done VARCHAR(60))
+AS
+DECLARE act VARCHAR(20); DECLARE arg VARCHAR(40);
+BEGIN
+  SELECT c.action, c.arg FROM bot_llm_choices c WHERE c.eid = :eid AND c.n = :n INTO act, arg;
+  IF (act IS NULL) THEN done = 'no such choice: ' || COALESCE(n, 0);
+  ELSE SELECT a.done FROM bot_llm_apply(:eid, :act, :arg, '', '') a INTO done;
+  SUSPEND;
+END^
+
 SET TERM ; ^
