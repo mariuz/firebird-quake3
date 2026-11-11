@@ -1642,32 +1642,34 @@ END^
 -- SelectRandomDeathmatchSpawnPoint: one of the info_player_deathmatch spots nobody is near (SpotWouldTelefrag
 -- leaves those out), at random among them; any of them when someone is at every one, and whoever spawns there
 -- telefrags who stands in it (kill_box). Eight tries at random used to stand for this, and with six in an arena
--- of few spots they could all miss: two bots were then given one spot and stood in each other for good
+-- of few spots they could all miss: two bots were then given one spot and stood in each other for good. An
+-- info_player_start is a deathmatch spot as any (SP_info_player_start renames it): an arena with those alone
+-- gave everyone its first
 CREATE OR ALTER PROCEDURE select_spawn (avoid INTEGER)
 RETURNS (x DOUBLE PRECISION, y DOUBLE PRECISION, z DOUBLE PRECISION, yaw DOUBLE PRECISION)
 AS
 DECLARE n INTEGER; DECLARE k INTEGER;
 BEGIN
-  SELECT COUNT(*) FROM ents e WHERE e.classname = 'info_player_deathmatch'
+  SELECT COUNT(*) FROM ents e WHERE e.classname IN ('info_player_deathmatch', 'info_player_start')
      AND NOT EXISTS (SELECT 1 FROM ents o WHERE o.classname IN ('player', 'bot') AND o.health > 0 AND (:avoid IS NULL OR o.id <> :avoid)
                         AND ABS(o.x - e.x) < 128 AND ABS(o.y - e.y) < 128 AND ABS(o.z - e.z) < 128) INTO n;
   IF (n > 0) THEN
   BEGIN
     k = FLOOR(RAND() * n);
-    SELECT FIRST 1 SKIP (:k) e.x, e.y, e.z, e.yaw FROM ents e WHERE e.classname = 'info_player_deathmatch'
+    SELECT FIRST 1 SKIP (:k) e.x, e.y, e.z, e.yaw FROM ents e WHERE e.classname IN ('info_player_deathmatch', 'info_player_start')
        AND NOT EXISTS (SELECT 1 FROM ents o WHERE o.classname IN ('player', 'bot') AND o.health > 0 AND (:avoid IS NULL OR o.id <> :avoid)
                           AND ABS(o.x - e.x) < 128 AND ABS(o.y - e.y) < 128 AND ABS(o.z - e.z) < 128)
      ORDER BY e.id INTO x, y, z, yaw;
     SUSPEND; EXIT;
   END
-  SELECT COUNT(*) FROM ents e WHERE e.classname = 'info_player_deathmatch' INTO n;
+  SELECT COUNT(*) FROM ents e WHERE e.classname IN ('info_player_deathmatch', 'info_player_start') INTO n;
   IF (n = 0) THEN
   BEGIN
-    SELECT FIRST 1 e.x, e.y, e.z, e.yaw FROM ents e WHERE e.classname IN ('info_player_start', 'info_player_intermission') INTO x, y, z, yaw;
+    SELECT FIRST 1 e.x, e.y, e.z, e.yaw FROM ents e WHERE e.classname = 'info_player_intermission' INTO x, y, z, yaw;
     SUSPEND; EXIT;
   END
   k = FLOOR(RAND() * n);
-  SELECT FIRST 1 SKIP (:k) e.x, e.y, e.z, e.yaw FROM ents e WHERE e.classname = 'info_player_deathmatch' ORDER BY e.id INTO x, y, z, yaw;
+  SELECT FIRST 1 SKIP (:k) e.x, e.y, e.z, e.yaw FROM ents e WHERE e.classname IN ('info_player_deathmatch', 'info_player_start') ORDER BY e.id INTO x, y, z, yaw;
   SUSPEND;
 END^
 

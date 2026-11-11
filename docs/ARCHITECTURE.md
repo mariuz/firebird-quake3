@@ -459,8 +459,9 @@ it, so `killed` makes a kill by it, as by any entity that is not a player, the w
 lost, the bot's suicide chat), the
 items, `info_player_deathmatch` (`select_spawn` picks at random among those not within 128 units of anyone, as
 `SelectRandomDeathmatchSpawnPoint` leaves out the spots that would telefrag, and any when someone is at every
-one; who spawns then telefrags whoever its box touches, `kill_box`, `ClientSpawn`'s `G_KillBox`: without the
-two, two bots given one spot stood in each other for good); `use_targets` and `trigger_fire` are `G_UseTargets` with
+one; an `info_player_start` is such a spot too, as `SP_info_player_start` renames it; who spawns then
+telefrags whoever its box touches, `kill_box`, `ClientSpawn`'s `G_KillBox`: without these, two bots given
+one spot stood in each other for good, and so did everyone on an arena with `info_player_start`s alone); `use_targets` and `trigger_fire` are `G_UseTargets` with
 delays and the `wait`/`random` timing.
 
 ---
