@@ -81,6 +81,11 @@ assert(all.KIND.trim() === 'accompany' && all.HEARD === mates.length && mine(st)
   `"everyone on me": the ${mates.length} bots of our team accompany us, the other team does not; ${told[0]}`);
 
 // one named: it alone camps where we stand, the other goes on accompanying
+// (nobody fights from here on: a bot that is fragged on its way loses its order with its life, and the test is of
+// the orders; everyone is whole again and nobody a target)
+await db.exec("UPDATE ents SET flags = BIN_OR(flags, 64), enemy_id = NULL, health = IIF(health > 0, 100, health) WHERE classname IN ('bot', 'player')");
+for (let i = 0; i < 120 && (await q("SELECT COUNT(*) n FROM ents WHERE classname = 'bot' AND health <= 0 AND queued = 0"))[0].N > 0; i++) await tic();
+await db.exec("UPDATE ents SET flags = BIN_OR(flags, 64), enemy_id = NULL WHERE classname = 'bot'");
 const [m0, m1] = mates;
 const [me] = await q(`SELECT x, y, z FROM ents WHERE id = ${pe}`);
 const camp = await q('SELECT * FROM player_say(?, ?)', [`${m0.BOT} camp right here`, vecOf('Major camp right here')]);
