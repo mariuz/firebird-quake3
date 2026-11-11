@@ -32,7 +32,7 @@ has no ladders.
 | **Holdables** | medkit and the personal teleporter are picked up and used; the teleporter's destination is a random spawn, as in the game |
 | **Powerups** | quad, haste, invisibility, regeneration, battle suit, flight are here, for the bots too but flight (they would float off); the powerups' sounds are the regeneration's pulse, the flight's loop, the quad's fire, the battle suit's hit and the last five seconds' ticks (the flight is the only powerup with a loop: `CG_PlayerPowerups`). The dead drop the gun in hand and their powerups (`toss_client_items`) |
 | **Corpses** | the body is a separate entity from the moment of death (Quake III keeps the dead player itself until the respawn copies it into the queue); the dead player's eye follows it every tic, so the two differ only within a tic. Gibs leave blood on the walls; a bleeding player does not (`CG_Bleed` leaves no mark either); the gibs trail blood puffs in the air (`CG_BloodTrail`) |
-| **Persistent stats** | the match's stats are shown at the intermission, and the career's frags are kept in the browser's storage for the frags medal, every hundred (see §8); the other awards' career counts (`UI_LogAwardData` logs them all) and the menu that shows them are not; kills per weapon are a later games' screen, not Quake III's |
+| **Persistent stats** | the match's stats are shown at the intermission, and the career's six award counts are kept in the browser's storage as `UI_LogAwardData` logs them and shown as a line of text by the page's controls (see §8); the single-player menu's row of medal pictures is not, there being no menu; kills per weapon are a later games' screen, not Quake III's |
 
 ## 4. The renderer
 

@@ -10,7 +10,7 @@ import { FrameState, firstPersonView, zoomedFov, fovY, mapTorsoToWeaponFrame, vi
 import { Renderer, tagTransform, autospriteQuads, fogST, fogFactor, md3Lod, entityFog, clipFace, polyFog, fogFade } from '../src/renderer.js';
 import { parseDeform, waveValue, deformVertex, envTexCoords, parseShaderScript, surfaceLook, shellMesh, eyeInModel, stageBrightness, stageTcMatrix, stageColor, stageAlpha, shaderStages, fogAdjust, blendFogAdjust, specularAlpha, SPECULAR_LIGHT } from '../src/shader.js';
 import { Md3, parseAnimationCfg, parseSkin } from '../src/md3.js';
-import { postgameMedals } from '../src/hud.js';
+import { postgameMedals, careerAfter, careerAwards } from '../src/hud.js';
 import { Q3Audio, weaponLoop, dopplerRate } from '../src/audio.js';
 import { parseWeights, preprocess, weightOf } from '../src/itemweights.js';
 import { Pk3 } from '../src/pk3.js';
@@ -719,8 +719,11 @@ assert(colorFromString(4).join() === '1,0,0' && colorFromString('6').join() === 
 // the end of the match (UI_SPPostgameMenu): the accuracy, the awards earned, the frags, perfect for a win
 // without dying
 {
-  const m = postgameMedals({ ACC_SHOTS: 30, ACC_HITS: 11, N_IMPRESSIVE: 2, N_EXCELLENT: 0, N_GAUNTLET: 1, FRAGS: 20, WINNER: 'You', DEATHS: 0 });
-  assert(m.map((x) => x.join(' ')).join(', ') === 'accuracy 36%, impressive 2, gauntlet 1, frags 20, victory Perfect', `the postgame medals (${m.map((x) => x.join(' ')).join(', ')})`);
+  const won = { ACC_SHOTS: 30, ACC_HITS: 18, N_IMPRESSIVE: 2, N_EXCELLENT: 0, N_GAUNTLET: 1, FRAGS: 20, WINNER: 'You', DEATHS: 0 };
+  const m = postgameMedals(won);
+  assert(m.map((x) => x.join(' ')).join(', ') === 'accuracy 60%, impressive 2, gauntlet 1, frags 20, victory Perfect', `the postgame medals (${m.map((x) => x.join(' ')).join(', ')})`);
+  const poor = postgameMedals({ ...won, ACC_HITS: 14 });
+  assert(!poor.some((x) => x[0] === 'accuracy'), 'an accuracy under 50 percent (14 of 30) is no award');
   const lost = postgameMedals({ ACC_SHOTS: 0, ACC_HITS: 0, N_IMPRESSIVE: 0, N_EXCELLENT: 0, N_GAUNTLET: 0, FRAGS: 3, WINNER: 'Sarge', DEATHS: 0 });
   assert(lost.length === 1 && lost[0][0] === 'frags', 'no shots, no accuracy; no win, no perfect');
   // the frags medal, with a career kept: for every hundred frags of it
@@ -728,6 +731,13 @@ assert(colorFromString(4).join() === '1,0,0' && colorFromString('6').join() === 
   const frags = (career, n) => postgameMedals({ ...base, FRAGS: n, CAREER_FRAGS: career }).find((x) => x[0] === 'frags')?.[1] ?? null;
   assert(frags(90, 20) === '100' && frags(10, 20) === null && frags(180, 25) === '200' && frags(0, 250) === '200',
     `the frags medal for each hundred of a career: 90 + 20 → ${frags(90, 20)}, 10 + 20 → ${frags(10, 20)}, 180 + 25 → ${frags(180, 25)}, 0 + 250 → ${frags(0, 250)}`);
+  // the career's counts (UI_LogAwardData) and the menu's row of awards (UI_SPLevelMenu)
+  const show = (c) => careerAwards(c).map(([a, n]) => (n ? `${a} ${n}` : a)).join(', ');
+  const c1 = careerAfter({}, won), c2 = careerAfter(c1, { ...won, ACC_HITS: 14, N_EXCELLENT: 3, DEATHS: 2, FRAGS: 95 }), c3 = careerAfter({ frags: 90, matches: 4, name: 'kept' }, { ...base, FRAGS: 15 });
+  assert(show({}) === '' && show(c1) === 'accuracy, impressive 2, gauntlet, perfect' && c1.frags === 20 && c1.matches === 1
+    && show(c2) === 'accuracy, impressive 4, excellent 3, gauntlet 2, frags 100, perfect' && c2.frags === 115 && c2.matches === 2
+    && show(c3) === 'frags 100' && c3.matches === 5 && c3.name === 'kept' && show({ frags: 99 }) === '' && show({ frags: 'x', perfect: 2 }) === 'perfect 2' && show({ impressive: 1234, frags: 3456789 }) === 'impressive 1k, frags 3m',
+    `the career's awards: after a perfect match with 60 percent (${show(c1)}), after a second (${show(c2)}); the frags in hundreds, a count shown from two up`);
 }
 
 // the bots' item weights (be_ai_weight.c's switches, botfiles/fw_items.c): the first case the inventory is

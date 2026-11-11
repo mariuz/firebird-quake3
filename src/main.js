@@ -22,7 +22,7 @@ import { createSchema, loadResources, loadMap, buildWaypoints, setView, setRotat
 import { loadShaders } from './shader.js';
 import { Renderer } from './renderer.js';
 import { GLRenderer } from './renderer-gl.js';
-import { Hud } from './hud.js';
+import { Hud, careerAfter, careerAwards } from './hud.js';
 import { FrameState, drawScene, firstPersonView, zoomedFov, fovY, ZOOM_FOV, underwaterFov, findPortals, portalView, mirrorView, portalFade } from './scene.js';
 import { Q3Audio, weaponLoop } from './audio.js';
 import { exportDemo, importDemo, listDemos } from './demo.js';
@@ -422,7 +422,8 @@ async function frame() {
         const c = readCareer();
         if (c) {
           careerFrags = Number(c.frags) || 0;
-          try { localStorage.setItem(CAREER, JSON.stringify({ ...c, frags: careerFrags + Math.max(0, last.FRAGS | 0), matches: (Number(c.matches) || 0) + 1 })); } catch { careerFrags = null; }
+          try { localStorage.setItem(CAREER, JSON.stringify(careerAfter(c, last))); } catch { careerFrags = null; }
+          showCareer();
         }
       }
       if (last.MATCH_OVER && careerFrags !== null && !demoPlaying) last.CAREER_FRAGS = careerFrags;
@@ -890,6 +891,14 @@ $('llmkey').addEventListener('change', (e) => {
   try { if (e.target.value.trim()) localStorage.setItem(LLM_KEY, e.target.value.trim()); else localStorage.removeItem(LLM_KEY); } catch { /* storage blocked */ }
   llmChanged();
 });
+// the career's awards (UI_SPLevelMenu's row of medals with their counts), as kept in the browser's storage
+function showCareer() {
+  const c = readCareer() ?? {};
+  const awards = careerAwards(c);
+  $('career').textContent = awards.length ? awards.map(([a, n]) => (n ? `${a} ${n}` : a)).join(' · ') : '';
+  $('career').title = `Your career's awards over ${Number(c.matches) || 0} match${Number(c.matches) === 1 ? '' : 'es'} (kept in this browser): one accuracy for each match at 50% or better, the impressives, excellents and gauntlet frags counted, the frags in hundreds, one perfect for each win without a death`;
+}
+showCareer();
 // spectating: out of the match and back (SetTeam)
 $('spectate').addEventListener('click', () => {
   if (!db || !running || !last) return;

@@ -225,22 +225,65 @@ export class Hud {
 }
 
 /**
- * UI_SPPostgameMenu's awards for the player: the accuracy (hits over shots, the gauntlet's swings not
- * counted, as G_Damage's callers count them), impressive, excellent and gauntlet when earned, the frags,
- * and perfect (medal_victory) for a win without dying. [medal, text] pairs. The frags medal is for every
+ * UI_SPPostgameMenu's awards for the player: the accuracy when it is 50 percent or more (hits over shots, the
+ * gauntlet's swings not counted, as G_Damage's callers count them), impressive, excellent and gauntlet when
+ * earned, the frags, and perfect (medal_victory) for a win without dying. [medal, text] pairs. The frags medal is for every
  * hundred frags of a career (UI_LogAwardData keeps the count): with the career's frags before this match
  * (hud.CAREER_FRAGS) it comes when they pass a hundred and shows the hundreds reached; without them (no
  * storage, a demo) it shows the match's frags.
  */
 export function postgameMedals(hud) {
   const out = [];
-  if (hud.ACC_SHOTS > 0) out.push(['accuracy', `${Math.min(100, Math.floor((hud.ACC_HITS * 100) / hud.ACC_SHOTS))}%`]);
+  const acc = matchAccuracy(hud);
+  if (acc >= 50) out.push(['accuracy', `${acc}%`]);
   for (const [kind, n] of [['impressive', hud.N_IMPRESSIVE], ['excellent', hud.N_EXCELLENT], ['gauntlet', hud.N_GAUNTLET]]) if (n > 0) out.push([kind, `${n}`]);
   if (typeof hud.CAREER_FRAGS === 'number') {
     const before = Math.floor(hud.CAREER_FRAGS / 100), after = Math.floor((hud.CAREER_FRAGS + Math.max(0, hud.FRAGS)) / 100);
     if (after > before) out.push(['frags', `${after * 100}`]);
   } else if (hud.FRAGS > 0) out.push(['frags', `${hud.FRAGS}`]);
   if (hud.WINNER === 'You' && hud.DEATHS === 0) out.push(['victory', 'Perfect']);
+  return out;
+}
+
+/** The match's accuracy in percent (hits over shots; 0 without a shot) */
+function matchAccuracy(hud) {
+  return hud.ACC_SHOTS > 0 ? Math.min(100, Math.floor((hud.ACC_HITS * 100) / hud.ACC_SHOTS)) : 0;
+}
+
+/** The six awards a career counts, in ui_local.h's order (AWARD_ACCURACY … AWARD_PERFECT) */
+export const CAREER_AWARDS = ['accuracy', 'impressive', 'excellent', 'gauntlet', 'frags', 'perfect'];
+
+/**
+ * The career after a match (UI_SPPostgameMenu_f's UI_LogAwardData calls): one more accuracy award for 50
+ * percent or better, the match's impressives, excellents and gauntlet frags added, its frags added, one more
+ * perfect for a win without a death; and one more match. `career` is what was kept ({} at first).
+ */
+export function careerAfter(career, hud) {
+  const n = (v) => Math.max(0, Math.floor(Number(v) || 0));
+  return {
+    ...career,
+    matches: n(career.matches) + 1,
+    accuracy: n(career.accuracy) + (matchAccuracy(hud) >= 50 ? 1 : 0),
+    impressive: n(career.impressive) + n(hud.N_IMPRESSIVE),
+    excellent: n(career.excellent) + n(hud.N_EXCELLENT),
+    gauntlet: n(career.gauntlet) + n(hud.N_GAUNTLET),
+    frags: n(career.frags) + n(hud.FRAGS),
+    perfect: n(career.perfect) + (hud.WINNER === 'You' && hud.DEATHS === 0 ? 1 : 0),
+  };
+}
+
+/**
+ * The awards row of the single-player menu (UI_SPLevelMenu): each award the career has, with its count when
+ * that is more than one (in thousands or millions when it gets there: "3k"); the frags in whole hundreds, and
+ * not before the first hundred. [award, text] pairs.
+ */
+export function careerAwards(career) {
+  const out = [];
+  for (const award of CAREER_AWARDS) {
+    let level = Math.max(0, Math.floor(Number(career?.[award]) || 0));
+    if (award === 'frags') level = 100 * Math.floor(level / 100);
+    if (level) out.push([award, level === 1 ? '' : level >= 1e6 ? `${Math.floor(level / 1e6)}m` : level >= 1000 ? `${Math.floor(level / 1000)}k` : `${level}`]);
+  }
   return out;
 }
 
