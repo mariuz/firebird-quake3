@@ -29,11 +29,11 @@ DECLARE acc INTEGER; DECLARE camp INTEGER; DECLARE getid INTEGER; DECLARE en INT
 BEGIN
   pe = player_ent();
   t = now_();
-  IF (kind IN ('accompany', 'camp', 'dismiss', 'get', 'kill')) THEN
+  IF (kind IN ('accompany', 'camp', 'dismiss', 'get', 'kill', 'defend')) THEN
   BEGIN
     -- a new order ends the old one: the camp spot ordered before goes
     DELETE FROM ents c WHERE c.classname = 'camp_order' AND c.owner_id = :eid;
-    UPDATE ents e SET e.acc_id = NULL, e.camp_id = NULL, e.camp_until = NULL, e.get_id = NULL, e.goal_id = NULL, e.nbg_id = NULL WHERE e.id = :eid;
+    UPDATE ents e SET e.acc_id = NULL, e.camp_id = NULL, e.camp_until = NULL, e.get_id = NULL, e.def_id = NULL, e.goal_id = NULL, e.nbg_id = NULL WHERE e.id = :eid;
   END
   IF (kind = 'accompany') THEN EXECUTE PROCEDURE bot_order_accompany(eid, pe, pe);   -- (it answers within two seconds: accompany_start)
   ELSE IF (kind = 'camp') THEN
@@ -60,6 +60,20 @@ BEGIN
       EXECUTE PROCEDURE bot_say(eid, 'getitem_start', nm, NULL, NULL, NULL, NULL, NULL, pe, 0);
     END
   END
+  ELSE IF (kind = 'defend') THEN
+  BEGIN
+    -- BotMatch_DefendKeyArea: the item's place is the team goal for TEAM_DEFENDKEYAREA_TIME, 600 s; the nearest
+    -- one of the arena, there or taken (BotGetLevelItemGoal: an item of the level, not a dropped one). No such
+    -- item, no answer, as the original has it (its "cannotfind" is commented out)
+    SELECT i.name FROM item_defs i WHERE i.cls = :arg INTO nm;
+    SELECT FIRST 1 o.id FROM ents o CROSS JOIN ents e WHERE e.id = :eid AND o.classname = 'item' AND TRIM(o.item) = :arg AND o.think IS DISTINCT FROM 'remove'
+     ORDER BY (o.x - e.x) * (o.x - e.x) + (o.y - e.y) * (o.y - e.y) + (o.z - e.z) * (o.z - e.z) INTO g;
+    IF (g IS NOT NULL) THEN
+    BEGIN
+      UPDATE ents e SET e.def_id = :g, e.def_until = :t + 600, e.def_away = 0 WHERE e.id = :eid;
+      EXECUTE PROCEDURE bot_say(eid, 'defend_start', nm, NULL, NULL, NULL, NULL, NULL, -1, 0);
+    END
+  END
   ELSE IF (kind = 'kill') THEN
   BEGIN
     -- after it for TEAM_KILL_SOMEONE, 180 s
@@ -77,8 +91,10 @@ BEGIN
   END
   ELSE IF (kind = 'whatareyoudoing') THEN
   BEGIN
-    SELECT e.acc_id, e.camp_id, e.get_id, e.enemy_id FROM ents e WHERE e.id = :eid INTO acc, camp, getid, en;
+    SELECT e.acc_id, e.camp_id, e.get_id, e.enemy_id, e.def_id FROM ents e WHERE e.id = :eid INTO acc, camp, getid, en, g;
     IF (acc IS NOT NULL) THEN EXECUTE PROCEDURE bot_say(eid, 'accompanying', chat_name(acc), NULL, NULL, NULL, NULL, NULL, pe, 0);
+    ELSE IF (g IS NOT NULL) THEN
+      EXECUTE PROCEDURE bot_say(eid, 'defending', (SELECT i.name FROM ents o JOIN item_defs i ON i.cls = o.item WHERE o.id = :g), NULL, NULL, NULL, NULL, NULL, pe, 0);
     ELSE IF (camp IS NOT NULL) THEN EXECUTE PROCEDURE bot_say(eid, 'camping', NULL, NULL, NULL, NULL, NULL, NULL, pe, 0);
     ELSE IF (getid IS NOT NULL) THEN
       EXECUTE PROCEDURE bot_say(eid, 'gettingitem', (SELECT i.name FROM ents o JOIN item_defs i ON i.cls = o.item WHERE o.id = :getid), NULL, NULL, NULL, NULL, NULL, pe, 0);
@@ -138,7 +154,36 @@ BEGIN
   IF (kind IS NULL OR kind = 'chat') THEN BEGIN kind = NULL; SUSPEND; EXIT; END
   SELECT g.gametype FROM game g WHERE g.id = 1 INTO gt;
   SELECT o.pteam, (SELECT pl.spectator FROM player pl WHERE pl.id = 1) FROM ents o WHERE o.id = :pe INTO pteam, spec;
-  ordered = IIF(kind IN ('accompany', 'camp', 'dismiss', 'get', 'kill'), 1, 0);
+  -- the team's leader (BotMatch_WhoIsTeamLeader, _StartTeamLeaderShip, _StopTeamLeaderShip): asked for, the bot
+  -- that leads says so; "I am the leader" makes us it for every bot of the team; "I quit" leaves the team without
+  -- one and us out of it (notleader), and the bots find one among themselves (bot_team_ai)
+  IF (kind IN ('whoisleader', 'iamleader', 'notleader')) THEN
+  BEGIN
+    IF (gt >= 3 AND spec = 0) THEN
+    BEGIN
+      SELECT IIF(:pteam = 1, g.red_leader, g.blue_leader) FROM game g WHERE g.id = 1 INTO b;
+      IF (kind = 'whoisleader') THEN
+      BEGIN
+        IF (b IS NOT NULL AND b <> pe AND EXISTS (SELECT 1 FROM ents e WHERE e.id = :b AND e.classname = 'bot' AND e.pteam = :pteam AND e.queued = 0)) THEN
+        BEGIN
+          EXECUTE PROCEDURE say('(' || chat_name(b) || '): I''m the team leader');
+          heard = 1;
+        END
+      END
+      ELSE
+      BEGIN
+        IF (kind = 'iamleader') THEN
+          UPDATE game g SET g.not_leader = 0, g.red_leader = IIF(:pteam = 1, :pe, g.red_leader), g.blue_leader = IIF(:pteam = 2, :pe, g.blue_leader) WHERE g.id = 1;
+        ELSE
+          UPDATE game g SET g.not_leader = 1, g.red_leader = IIF(:pteam = 1 AND g.red_leader IS NOT DISTINCT FROM :pe, NULL, g.red_leader),
+                 g.blue_leader = IIF(:pteam = 2 AND g.blue_leader IS NOT DISTINCT FROM :pe, NULL, g.blue_leader) WHERE g.id = 1;
+        SELECT COUNT(*) FROM ents e WHERE e.classname = 'bot' AND e.queued = 0 AND e.pteam = :pteam INTO heard;
+      END
+    END
+    SUSPEND;
+    EXIT;
+  END
+  ordered = IIF(kind IN ('accompany', 'camp', 'dismiss', 'get', 'kill', 'defend'), 1, 0);
   -- the bots named in the line
   SELECT COUNT(*) FROM ents e WHERE e.classname = 'bot' AND e.queued = 0 AND POSITION(LOWER(TRIM(e.bot)) IN :low) > 0
      AND (:ordered = 0 OR (:gt >= 3 AND e.pteam = :pteam)) INTO named;

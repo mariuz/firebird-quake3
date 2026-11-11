@@ -1395,7 +1395,9 @@ BEGIN
   UPDATE ents e SET e.x = :x, e.y = :y, e.z = :z + 9, e.yaw = COALESCE(:yaw, 0), e.ideal_yaw = COALESCE(:yaw, 0), e.pitch = 0, e.vx = 0, e.vy = 0, e.vz = 0,
          e.solid = 3, e.movetype = 4, e.takedamage = 2, e.alpha = 0, e.deadflag = 0, e.viewheight = 26, e.maxz = 32, e.attack_crouch = NULL, e.hold_item = 0, e.health = 125, e.armor = 0, e.weapons = 3, e.weapon = 2,
          e.ammo2 = IIF((SELECT g.gametype FROM game g WHERE g.id = 1) = 3, 50, 100), e.ammo3 = 0, e.ammo4 = 0, e.ammo5 = 0, e.ammo6 = 0, e.ammo7 = 0, e.ammo8 = 0, e.ammo9 = 0,
-         e.flags = 32, e.st = 'stand', e.legs_anim = 22, e.legs_time = :t, e.torso_anim = 11, e.torso_time = :t, e.enemy_id = NULL, e.goal_id = NULL, e.nbg_id = NULL, e.nbg_check = NULL, e.act_id = NULL, e.act_until = NULL, e.camp_id = NULL, e.camp_until = NULL, e.rl_a = NULL, e.get_id = NULL,
+         e.flags = 32, e.st = 'stand', e.legs_anim = 22, e.legs_time = :t, e.torso_anim = 11, e.torso_time = :t, e.enemy_id = NULL, e.goal_id = NULL, e.nbg_id = NULL, e.nbg_check = NULL, e.act_id = NULL, e.act_until = NULL, e.rl_a = NULL, e.def_away = 0,
+         e.camp_id = IIF(EXISTS (SELECT 1 FROM ents c WHERE c.id = e.camp_id AND c.classname = 'camp_order'), e.camp_id, NULL),
+         e.camp_until = IIF(EXISTS (SELECT 1 FROM ents c WHERE c.id = e.camp_id AND c.classname = 'camp_order'), e.camp_until, NULL),
          e.attack_finished = :t + 1, e.teleport_time = :t + 0.3e0, e.lx = NULL, e.nextthink = :t + 0.1e0, e.think = 'bot_think', e.respawn_time = 0,
          e.quad_finished = 0, e.haste_finished = 0, e.invis_finished = 0, e.regen_finished = 0, e.enviro_finished = 0, e.health_tick = :t + 1,
          e.yaw_speed = COALESCE(MAXVALUE(240, bot_cv(:eid, 'view_maxchange', NULL)) / 10, bot_char((SELECT b.skill FROM bot_defs b WHERE b.name = e.bot), 'turn')),
@@ -1477,7 +1479,7 @@ BEGIN
   IF (team_member(eid, tm) = 0) THEN EXIT;
   SELECT IIF(:tm = 1, g.red_leader, g.blue_leader) FROM game g WHERE g.id = 1 INTO leader;
   IF (leader IS NOT NULL AND team_member(leader, tm) = 0) THEN leader = NULL;   -- BotValidTeamLeader
-  IF (leader IS NULL) THEN
+  IF (leader IS NULL AND (SELECT g.not_leader FROM game g WHERE g.id = 1) = 0) THEN
     SELECT e.id FROM ents e WHERE e.classname = 'player' AND team_member(e.id, :tm) = 1 INTO leader;
   IF (leader IS NULL) THEN
   BEGIN
@@ -1883,6 +1885,7 @@ END^
 CREATE OR ALTER PROCEDURE bot_think (eid INTEGER)
 AS
 DECLARE rlm SMALLINT; DECLARE getid INTEGER; DECLARE getu DOUBLE PRECISION;
+DECLARE defid INTEGER; DECLARE defu DOUBLE PRECISION; DECLARE defa DOUBLE PRECISION; DECLARE defd DOUBLE PRECISION;
 DECLARE t DOUBLE PRECISION; DECLARE nt DOUBLE PRECISION; DECLARE st VARCHAR(12); DECLARE enemy INTEGER; DECLARE flags INTEGER; DECLARE goal INTEGER;
 DECLARE rt DOUBLE PRECISION; DECLARE srch DOUBLE PRECISION; DECLARE af DOUBLE PRECISION; DECLARE lefty SMALLINT; DECLARE legs INTEGER; DECLARE skill SMALLINT; DECLARE tt DOUBLE PRECISION;
 DECLARE x DOUBLE PRECISION; DECLARE y DOUBLE PRECISION; DECLARE z DOUBLE PRECISION; DECLARE ex DOUBLE PRECISION; DECLARE ey DOUBLE PRECISION; DECLARE ez DOUBLE PRECISION; DECLARE ehp INTEGER;
@@ -2128,6 +2131,42 @@ BEGIN
         BEGIN
           goal = getid;
           UPDATE ents e SET e.goal_id = :goal WHERE e.id = :eid;
+        END
+      END
+    END
+    -- a place it was told to defend (LTG_DEFENDKEYAREA in BotGetLongTermGoal): the item there is the goal until
+    -- the bot is within 70 units of it; then it is off about its own goals for 3 to 6 s (defendaway_time), sooner
+    -- back if those take it farther than defendaway_range (350 of the AAS's hundredths of a second: 3.5 s at a
+    -- run, 1120 units here, as the crow flies); after the 600 s it says it stops
+    IF (busy = 0 AND getid IS NULL) THEN
+    BEGIN
+      SELECT e.def_id, e.def_until, e.def_away, SQRT((g.x - e.x) * (g.x - e.x) + (g.y - e.y) * (g.y - e.y) + (g.z - e.z) * (g.z - e.z))
+        FROM ents e LEFT JOIN ents g ON g.id = e.def_id WHERE e.id = :eid INTO defid, defu, defa, defd;
+      IF (defid IS NOT NULL) THEN
+      BEGIN
+        IF (defd IS NULL OR defu < t) THEN
+        BEGIN
+          IF (defd IS NOT NULL) THEN
+            EXECUTE PROCEDURE bot_say(eid, 'defend_stop', (SELECT i.name FROM ents g JOIN item_defs i ON i.cls = g.item WHERE g.id = :defid), NULL, NULL, NULL, NULL, NULL, -1, 0);
+          UPDATE ents e SET e.def_id = NULL WHERE e.id = :eid;
+        END
+        ELSE
+        BEGIN
+          IF (defa >= t AND defd > 1120) THEN defa = 0;
+          IF (defa < t) THEN
+          BEGIN
+            IF (defd < 70) THEN
+            BEGIN
+              defa = t + 3 + 3 * RAND();
+              IF (goal = defid) THEN BEGIN goal = NULL; UPDATE ents e SET e.goal_id = NULL WHERE e.id = :eid; END
+            END
+            ELSE IF (goal IS DISTINCT FROM defid) THEN
+            BEGIN
+              goal = defid;
+              UPDATE ents e SET e.goal_id = :goal WHERE e.id = :eid;
+            END
+          END
+          UPDATE ents e SET e.def_away = :defa WHERE e.id = :eid;
         END
       END
     END

@@ -53,6 +53,7 @@ CREATE TABLE game (
   red_score      INTEGER DEFAULT 0 NOT NULL,            -- level.teamScores[TEAM_RED], [TEAM_BLUE]
   blue_score     INTEGER DEFAULT 0 NOT NULL,
   team_lead      SMALLINT DEFAULT 0 NOT NULL,           -- who leads, as last announced: 0 tied 1 red 2 blue
+  not_leader     SMALLINT DEFAULT 0 NOT NULL,           -- 1: the player said it will not lead its team (notleader[client]): the bots find a leader among themselves
   red_leader     INTEGER,                               -- each team's leader (bs->teamleader, heard by all its bots)
   blue_leader    INTEGER,
   match_over     SMALLINT DEFAULT 0 NOT NULL,           -- 1 from the frag or time limit on: the intermission
@@ -403,6 +404,11 @@ CREATE TABLE ents (
   acc_arrived SMALLINT DEFAULT 0 NOT NULL,
   get_id     INTEGER,                       -- a bot told to get an item (LTG_GETITEM, chat.sql): which, and until when
   get_until  DOUBLE PRECISION,
+  -- a bot told to defend an item's place (LTG_DEFENDKEYAREA, chat.sql): which item, until when (teamgoal_time),
+  -- and until when it is off about its own goals after coming within 70 units of it (defendaway_time)
+  def_id     INTEGER,
+  def_until  DOUBLE PRECISION,
+  def_away   DOUBLE PRECISION DEFAULT 0 NOT NULL,
   -- a bot whose strategy a language model decides (bot_llm_state and bot_llm_apply in chat.sql; src/llm.js asks
   -- the model): 1 when it is led, what it was last told and when
   llm        SMALLINT DEFAULT 0 NOT NULL,
