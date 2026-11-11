@@ -644,6 +644,40 @@ on 25 lines embedded beforehand (`scripts/say-fixtures.json`): none of them is a
 French, three are small talk, and all are understood; then in a team game the team follows, one bot named camps
 where we stand, fetches the rocket launcher and says it has it, the team stands down and goes after an enemy.
 
+### A language model as a bot's strategist: `bot_llm_state`, `bot_llm_apply`, `src/llm.js`
+
+A third thing that is not Quake III's: Claude can lead a bot. A model answers in a second or several and the game
+ticks twenty times in one, so it is not given the bot's hands. Every five seconds it is told what the bot knows
+and asked one thing, what to go after; aiming, dodging, firing and the way through the arena stay `bot_think`'s.
+
+`bot_llm_lead(n)` marks the bots led (`ents.llm`: none, the first, all) and says so in the console.
+`bot_llm_state` is a selectable procedure with a row for each led bot alive, its situation as text: itself (health,
+armor, frags, the gun in hand, every gun with its ammunition, the quad's seconds), what it is doing and what it
+was last told, the match, the others by distance (in sight or not by `visible`, the gun in hand, dead), the
+arena's weapons, powerups, health and armor by class (the nearest of each: how far, or in how many seconds it is
+back) and the console's last six lines, about a thousand characters. `bot_llm_apply(eid, action, arg, line)`
+carries out the answer with what a teammate's order does (`bot_take_order`), without the chatter: *get* an item
+class is `ents.get_id` on the nearest one that is there, for 40 s; *hunt* a name sets the enemy for 40 s;
+*ambush* is a `camp_order` where the bot stands for 25 s; *roam* clears them. An item the arena does not have or
+a name nobody bears changes nothing, and what was done or why not is kept in `ents.llm_plan`, which the next
+situation carries, so the model reads its own mistake. A line, if the answer has one, goes to the console under
+the bot's name.
+
+JavaScript passes the text one way and four fields the other (`src/llm.js`, `Strategist`): Anthropic's SDK, a
+file of its own in `dist/` fetched only when this is turned on, called from the browser with the player's own
+key, which the page keeps in `localStorage` and sends to api.anthropic.com alone. One request a decision, no
+history: the system prompt explains the game and the four actions, the situation is the one user message, the
+answer is held to a JSON schema (`output_config.format`) at low effort, and the API's default fallback model
+answers should the first decline. A refusal is passed over, a rate limit waits half a minute, a key the API does
+not accept ends the asking, and the page's pill shows the last decision and the tokens spent. The page's
+*Claude leads* menu, the model (Opus 5.5, Sonnet 5.5, Haiku 5.5) and the key field are in `src/main.js`
+(`leadBots`); the loop calls `strategist.tick(db)` after a tic and does not wait for it.
+
+`npm run test:llm` asks no model: a local server stands in for the API. It checks the situation's text, the
+request as the SDK sends it, each action carried out (the bot told to get the rocket launcher has it within 700
+tics or finds it gone), the two that cannot be, and the refusal, the limit and the wrong key. Against the real API
+it has not been run here, there being no key: how well a led bot plays is not measured.
+
 ### The learned fight moves: `bot_rl_move`, a Q table and a network
 
 Quake III's bots move in a fight by `BotAttackMove`: closer when far, a strafe by the attack skill, a jump or a
@@ -1336,6 +1370,7 @@ passes in Node is what runs in the browser.
 | `npm run test:bots` | `bots-test.mjs`: four bots join, see, fire, die, respawn, pick up a weapon, a bot hunts the player from the farthest spawn over the graph, a minute of play scores frags and strands nobody |
 | `npm run test:bots:dm17` | the same on q3dm17, plus: the bots take the jump pads |
 | `npm run test:chat` | `chat-test.mjs`: 25 lines embedded beforehand are understood by meaning, and in a team game the bots follow, camp, fetch, stand down and hunt as told |
+| `npm run test:llm` | `llm-test.mjs`: a bot led by a language model, a local server standing in for the API: the situation SQL writes, the request sent, each answer carried out, a refusal, a limit, a wrong key |
 | `npm run test:rl` | `rl-test.mjs`: the Q-learning step, the table's rule, the network's pass in SQL against JavaScript's, two bots learning as they fight |
 | `npm run test:demo` | `demo-test.mjs`: a demo recorded on q3dm1 and played back gives every snapshot as it was painted, saved to JSON and loaded back too |
 | `npm run test:save` | `save-test.mjs`: a game saved in a fight, played on, loaded on a fresh arena is back as saved, row for row, and plays on |

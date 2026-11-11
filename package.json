@@ -18,6 +18,7 @@
     "test:demo": "node scripts/demo-test.mjs",
     "test:chat": "node scripts/chat-test.mjs",
     "test:rl": "node scripts/rl-test.mjs",
+    "test:llm": "node scripts/llm-test.mjs",
     "test:save": "node scripts/save-test.mjs q3dm7",
     "bench": "node scripts/bench.mjs",
     "bench:tic": "node scripts/tic-bench.mjs",
@@ -33,6 +34,7 @@
   },
   "license": "MIT",
   "dependencies": {
+    "@anthropic-ai/sdk": "^1.8.0",
     "firebird-wasm": "^0.14.0",
     "jpeg-js": "^0.4.4"
   },

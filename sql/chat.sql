@@ -172,4 +172,168 @@ BEGIN
   SUSPEND;
 END^
 
+-- ── A bot whose strategy a language model decides ─────────────────────────────────────────────────────────────
+-- Every few seconds the page asks a model (src/llm.js: Claude, with the player's own API key) what a bot should
+-- do next, and that is all it asks: which item to go for, whom to hunt, where to wait. The bot's hands stay
+-- bot_think's: it aims, dodges, fires and finds its way as every bot does. bot_llm_state writes what the bot
+-- knows as a few lines of text, bot_llm_apply carries out the answer with the orders a teammate could give
+-- (bot_take_order's get, kill, camp and dismiss, without the chatter), and JavaScript only passes the two along.
+
+-- The bots the model leads: none (0), the first (1) or all of them (2)
+CREATE OR ALTER PROCEDURE bot_llm_lead (n SMALLINT)
+AS
+DECLARE b INTEGER;
+BEGIN
+  UPDATE ents e SET e.llm = 0, e.llm_plan = NULL, e.llm_time = NULL WHERE e.classname = 'bot';
+  IF (n = 0) THEN EXIT;
+  FOR SELECT e.id FROM ents e WHERE e.classname = 'bot' AND e.queued = 0 ORDER BY e.id ROWS (IIF(:n = 1, 1, 64)) INTO b DO
+  BEGIN
+    UPDATE ents e SET e.llm = 1 WHERE e.id = :b;
+    EXECUTE PROCEDURE say(chat_name(b) || ' is led by a language model');
+  END
+END^
+
+-- The guns of a WP bitmask by name, with their ammunition: "Machinegun (40), Rocket Launcher (10)"
+CREATE OR ALTER FUNCTION llm_guns (eid INTEGER) RETURNS VARCHAR(300)
+AS
+DECLARE ws INTEGER; DECLARE bit INTEGER = 1; DECLARE k SMALLINT = 1; DECLARE nm VARCHAR(40); DECLARE am INTEGER; DECLARE r VARCHAR(300) = '';
+BEGIN
+  SELECT e.weapons FROM ents e WHERE e.id = :eid INTO ws;
+  WHILE (bit <= 256) DO
+  BEGIN
+    IF (BIN_AND(ws, bit) <> 0) THEN
+    BEGIN
+      SELECT i.name FROM item_defs i WHERE i.kind = 'W' AND i.bit = :bit INTO nm;
+      SELECT CASE :k WHEN 2 THEN e.ammo2 WHEN 3 THEN e.ammo3 WHEN 4 THEN e.ammo4 WHEN 5 THEN e.ammo5 WHEN 6 THEN e.ammo6
+                     WHEN 7 THEN e.ammo7 WHEN 8 THEN e.ammo8 WHEN 9 THEN e.ammo9 END FROM ents e WHERE e.id = :eid INTO am;
+      IF (r <> '') THEN r = r || ', ';
+      r = r || TRIM(nm);
+      IF (k > 1) THEN r = r || ' (' || COALESCE(am, 0) || ')';
+    END
+    bit = bit * 2; k = k + 1;
+  END
+  RETURN r;
+END^
+
+-- What a led bot knows, as text for the model: itself, what it is doing, the match, the others (how far, in
+-- sight or not, the gun in hand), the items of the arena by class (the nearest of each: how far, or in how many
+-- seconds it is back) and the console's last lines. One row for each led bot that is alive.
+CREATE OR ALTER PROCEDURE bot_llm_state
+RETURNS (eid INTEGER, bot VARCHAR(16), txt VARCHAR(4000))
+AS
+DECLARE t DOUBLE PRECISION; DECLARE pe INTEGER; DECLARE x DOUBLE PRECISION; DECLARE y DOUBLE PRECISION; DECLARE z DOUBLE PRECISION;
+DECLARE hp INTEGER; DECLARE ar INTEGER; DECLARE fr INTEGER; DECLARE de INTEGER; DECLARE w INTEGER; DECLARE ws INTEGER;
+DECLARE getid INTEGER; DECLARE camp INTEGER; DECLARE en INTEGER; DECLARE quad DOUBLE PRECISION; DECLARE lastd VARCHAR(60);
+DECLARE o INTEGER; DECLARE onm VARCHAR(32); DECLARE ohp INTEGER; DECLARE ofr INTEGER; DECLARE ow INTEGER; DECLARE d DOUBLE PRECISION;
+DECLARE cls VARCHAR(40); DECLARE nm VARCHAR(40); DECLARE kind CHAR(1); DECLARE bit INTEGER; DECLARE back DOUBLE PRECISION;
+DECLARE line VARCHAR(400); DECLARE gt SMALLINT; DECLARE lim INTEGER; DECLARE tl INTEGER; DECLARE mapn VARCHAR(32); DECLARE m VARCHAR(200);
+DECLARE team SMALLINT; DECLARE oteam SMALLINT;
+BEGIN
+  t = now_();
+  pe = player_ent();
+  SELECT g.gametype, g.fraglimit, g.timelimit, g.map_name FROM game g WHERE g.id = 1 INTO gt, lim, tl, mapn;
+  FOR SELECT e.id, e.bot, e.x, e.y, e.z, e.health, e.armor, e.frags, e.deaths, e.weapon, e.weapons, e.get_id, e.camp_id, e.enemy_id,
+             e.quad_finished, e.llm_plan, e.pteam
+        FROM ents e WHERE e.classname = 'bot' AND e.llm = 1 AND e.health > 0 AND e.queued = 0 ORDER BY e.id
+      INTO eid, bot, x, y, z, hp, ar, fr, de, w, ws, getid, camp, en, quad, lastd, team DO
+  BEGIN
+    txt = 'you: ' || TRIM(bot) || ', health ' || hp || ', armor ' || ar || ', frags ' || fr || ', deaths ' || de
+          || ', in hand ' || COALESCE((SELECT TRIM(i.name) FROM item_defs i WHERE i.kind = 'W' AND i.bit = :w), 'nothing')
+          || TRIM(TRAILING FROM IIF(quad > t, ', quad damage for ' || CAST(quad - t AS INTEGER) || ' s', ''))
+          || TRIM(TRAILING FROM IIF(gt >= 3, ', team ' || TRIM(IIF(team = 1, 'red', 'blue')), '')) || ASCII_CHAR(10)
+          || 'guns (ammo): ' || llm_guns(eid) || ASCII_CHAR(10)
+          || 'doing: ' || TRIM(CASE
+               WHEN getid IS NOT NULL THEN 'going for the ' || COALESCE((SELECT TRIM(i.name) FROM ents g JOIN item_defs i ON i.cls = TRIM(g.item) WHERE g.id = :getid), 'item')
+               WHEN camp IS NOT NULL THEN 'waiting in ambush'
+               WHEN en IS NOT NULL AND EXISTS (SELECT 1 FROM ents q WHERE q.id = :en AND q.health > 0) THEN 'after ' || chat_name(en)
+               ELSE 'roaming for items' END)
+          || TRIM(TRAILING FROM IIF(lastd IS NULL, '', ' (your last decision: ' || TRIM(lastd) || ')')) || ASCII_CHAR(10)
+          || 'match: ' || TRIM(CASE gt WHEN 1 THEN 'tournament' WHEN 3 THEN 'team deathmatch' ELSE 'free for all' END) || ' on ' || COALESCE(TRIM(mapn), '?')
+          || ', first to ' || lim || ' frags' || TRIM(TRAILING FROM IIF(tl > 0, ', ' || CAST(t / 60 AS INTEGER) || ' of ' || tl || ' minutes played', '')) || ASCII_CHAR(10)
+          || 'others:';
+    FOR SELECT q.id, chat_name(q.id), q.health, IIF(q.classname = 'player', p.frags, q.frags), IIF(q.classname = 'player', p.weapon, q.weapon),
+               SQRT((q.x - :x) * (q.x - :x) + (q.y - :y) * (q.y - :y) + (q.z - :z) * (q.z - :z)), q.pteam
+          FROM ents q LEFT JOIN player p ON p.id = 1
+         WHERE q.classname IN ('player', 'bot') AND q.id <> :eid AND q.queued = 0 AND NOT (q.classname = 'player' AND p.spectator = 1)
+         ORDER BY 6 INTO o, onm, ohp, ofr, ow, d, oteam DO
+    BEGIN
+      line = ASCII_CHAR(10) || '  ' || TRIM(onm) || TRIM(TRAILING FROM IIF(gt >= 3, IIF(oteam = team, ' (teammate)', ' (enemy)'), '')) || ': frags ' || ofr;
+      IF (ohp <= 0) THEN line = line || ', dead';
+      ELSE line = line || ', ' || CAST(d AS INTEGER) || ' units away, ' || TRIM(IIF(visible(eid, o) = 1, 'in sight', 'out of sight'))
+                  || ', in hand ' || COALESCE((SELECT TRIM(i.name) FROM item_defs i WHERE i.kind = 'W' AND i.bit = :ow), '?');
+      txt = txt || line;
+    END
+    txt = txt || ASCII_CHAR(10) || 'items (class: name, the nearest one):';
+    FOR SELECT TRIM(i.cls), TRIM(i.name), i.kind, i.bit,
+               MIN(IIF(g.solid = 1, SQRT((g.x - :x) * (g.x - :x) + (g.y - :y) * (g.y - :y) + (g.z - :z) * (g.z - :z)), NULL)),
+               MIN(IIF(g.solid = 1, NULL, g.nextthink - :t))
+          FROM ents g JOIN item_defs i ON i.cls = TRIM(g.item)
+         WHERE g.classname = 'item' AND i.kind IN ('W', 'A', 'H', 'P') AND g.think IS DISTINCT FROM 'remove'
+         GROUP BY 1, 2, 3, 4 ORDER BY 3 DESC, 5 INTO cls, nm, kind, bit, d, back DO
+    BEGIN
+      line = ASCII_CHAR(10) || '  ' || cls || ': ' || nm
+             || TRIM(TRAILING FROM IIF(d IS NOT NULL, ', ' || CAST(d AS INTEGER) || ' units away', ', taken, back in ' || CAST(MAXVALUE(back, 0) AS INTEGER) || ' s'))
+             || TRIM(TRAILING FROM IIF(kind = 'W' AND BIN_AND(ws, bit) <> 0, ' (you have it)', ''));
+      IF (CHAR_LENGTH(txt) + CHAR_LENGTH(line) < 3400) THEN txt = txt || line;
+    END
+    txt = txt || ASCII_CHAR(10) || 'console, latest last:';
+    FOR SELECT s.msg FROM (SELECT FIRST 6 c.id, c.msg FROM messages c ORDER BY c.id DESC) s ORDER BY s.id INTO m DO
+      IF (CHAR_LENGTH(txt) + CHAR_LENGTH(m) < 3900) THEN txt = txt || ASCII_CHAR(10) || '  ' || TRIM(m);
+    SUSPEND;
+  END
+END^
+
+-- The model's answer carried out. `action` is get (an item's class in `arg`: the nearest one, for 40 s), hunt (a
+-- player's name: after it for 40 s), ambush (wait where it stands, 25 s) or roam (as the bot's own goals say);
+-- `line`, if any, is said in the console. Anything else, an item the arena does not have, a name nobody bears:
+-- nothing is done and `done` says why, which the next question to the model carries as its last decision.
+CREATE OR ALTER PROCEDURE bot_llm_apply (eid INTEGER, action VARCHAR(20), arg VARCHAR(40), line VARCHAR(160))
+RETURNS (done VARCHAR(60))
+AS
+DECLARE t DOUBLE PRECISION; DECLARE g INTEGER; DECLARE c INTEGER; DECLARE o INTEGER;
+DECLARE x DOUBLE PRECISION; DECLARE y DOUBLE PRECISION; DECLARE z DOUBLE PRECISION;
+BEGIN
+  t = now_();
+  action = LOWER(TRIM(COALESCE(action, '')));
+  arg = TRIM(COALESCE(arg, ''));
+  IF (NOT EXISTS (SELECT 1 FROM ents e WHERE e.id = :eid AND e.classname = 'bot' AND e.llm = 1 AND e.health > 0)) THEN
+  BEGIN done = 'no such bot alive'; SUSPEND; EXIT; END
+  done = action || IIF(arg = '', '', ' ' || arg);
+  IF (action = 'get') THEN
+  BEGIN
+    SELECT FIRST 1 q.id FROM ents q CROSS JOIN ents e WHERE e.id = :eid AND q.classname = 'item' AND TRIM(q.item) = LOWER(:arg) AND q.solid = 1
+     ORDER BY (q.x - e.x) * (q.x - e.x) + (q.y - e.y) * (q.y - e.y) + (q.z - e.z) * (q.z - e.z) INTO g;
+    IF (g IS NULL) THEN done = 'get ' || arg || ': none there now';
+  END
+  ELSE IF (action = 'hunt') THEN
+  BEGIN
+    SELECT FIRST 1 q.id FROM ents q WHERE q.classname IN ('player', 'bot') AND q.id <> :eid AND q.health > 0 AND LOWER(chat_name(q.id)) = LOWER(:arg) INTO o;
+    IF (o IS NULL) THEN done = 'hunt ' || arg || ': nobody alive by that name';
+  END
+  ELSE IF (action NOT IN ('ambush', 'roam')) THEN done = 'not understood: ' || SUBSTRING(action FROM 1 FOR 20);
+  IF (action IN ('get', 'hunt', 'ambush', 'roam') AND NOT (action = 'get' AND g IS NULL) AND NOT (action = 'hunt' AND o IS NULL)) THEN
+  BEGIN
+    -- a new decision ends the last one, as a new order does
+    DELETE FROM ents q WHERE q.classname = 'camp_order' AND q.owner_id = :eid;
+    UPDATE ents e SET e.camp_id = NULL, e.camp_until = NULL, e.get_id = NULL, e.goal_id = NULL, e.nbg_id = NULL WHERE e.id = :eid;
+    IF (action = 'get') THEN
+    BEGIN
+      UPDATE ents e SET e.get_id = :g, e.get_until = :t + 40, e.goal_id = :g WHERE e.id = :eid;
+      DELETE FROM bot_avoid a WHERE a.ent_id = :eid AND a.item_id = :g;
+    END
+    ELSE IF (action = 'hunt') THEN UPDATE ents e SET e.enemy_id = :o, e.search_time = :t + 40, e.st = 'run' WHERE e.id = :eid;
+    ELSE IF (action = 'ambush') THEN
+    BEGIN
+      SELECT e.x, e.y, e.z FROM ents e WHERE e.id = :eid INTO x, y, z;
+      EXECUTE PROCEDURE spawn_ent('camp_order', x, y, z) RETURNING_VALUES c;
+      UPDATE ents q SET q.owner_id = :eid WHERE q.id = :c;
+      UPDATE ents e SET e.camp_id = :c, e.camp_until = :t + 25, e.camp_time = :t WHERE e.id = :eid;
+    END
+  END
+  UPDATE ents e SET e.llm_plan = SUBSTRING(:done FROM 1 FOR 60), e.llm_time = :t WHERE e.id = :eid;
+  line = TRIM(COALESCE(line, ''));
+  IF (line <> '') THEN EXECUTE PROCEDURE say(SUBSTRING(chat_name(eid) || ': ' || line FROM 1 FOR 200));
+  SUSPEND;
+END^
+
 SET TERM ; ^

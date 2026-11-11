@@ -113,6 +113,14 @@
         <label title="Say something to the bots (T or Y, Enter to send): in a team game your teammates take orders (follow me, camp here, get the railgun, kill Sarge, dismissed) and anyone answers where are you? or what are you doing?">Say <input id="chat" type="text" maxlength="150" size="22" spellcheck="false" autocomplete="off" placeholder="follow me…"></label>
         <label title="Understand what you type by its meaning, in any wording or language: loads Google's EmbeddingGemma 2 into this browser (175 MB once, then cached). Without it a command has to be typed word for word">Understand <input id="chatmodel" type="checkbox"></label>
         <span id="chatinfo" class="pill"></span>
+        <label title="A language model decides a bot's strategy: every few seconds Claude is told what the bot knows and answers which item to go for, whom to hunt or where to wait, and may say a line. The bot still aims, dodges and finds its way itself. Needs your own Anthropic API key, and each decision is a paid API call">Claude leads <select id="llmbots">
+          <option value="0">no bot</option>
+          <option value="1">one bot</option>
+          <option value="2">all bots</option>
+        </select></label>
+        <select id="llmmodel" title="The model asked. Opus thinks best and costs most; Haiku answers fastest and costs a fraction"></select>
+        <input id="llmkey" type="password" size="14" maxlength="200" autocomplete="off" spellcheck="false" placeholder="Anthropic API key" title="Your Anthropic API key (console.anthropic.com). It is kept in this browser's storage and sent to api.anthropic.com only">
+        <span id="llminfo" class="pill"></span>
         <button id="savegame" type="button" title="Save the game as it stands to a file (F5 saves it in the browser, F9 loads that)">Save game</button>
         <label title="Load a game saved here: its arena loads and the game goes on from where it was saved">Load game <input id="loadgame" type="file" accept=".json,application/json"></label>
         <span id="engine" class="pill">Firebird</span>

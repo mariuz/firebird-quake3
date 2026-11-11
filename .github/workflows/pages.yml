@@ -97,6 +97,10 @@ jobs:
       - name: Learned fight moves
         run: npm run test:rl
 
+      # A bot led by a language model: the situation SQL writes and the answer carried out, a local server for the API
+      - name: A bot led by a language model
+        run: npm run test:llm
+
       - name: Team deathmatch
         run: npm run test:team
 

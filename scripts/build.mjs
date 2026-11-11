@@ -40,6 +40,19 @@ await build({
   logLevel: 'warning',
 });
 
+// Anthropic's SDK, for the bots a language model leads (src/llm.js): a file of its own, fetched only by who
+// turns that on
+await build({
+  entryPoints: [path.join(root, 'node_modules/@anthropic-ai/sdk/index.mjs')],
+  outfile: path.join(OUT, 'anthropic-sdk.js'),
+  bundle: true,
+  format: 'esm',
+  platform: 'browser',
+  target: 'es2020',
+  minify: true,
+  logLevel: 'warning',
+});
+
 // The engine Worker: a classic script that loads the Emscripten glue first and
 // finds the .wasm next to itself, whatever path prefix the site is served from.
 const worker = await build({

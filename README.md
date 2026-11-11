@@ -44,6 +44,7 @@ npm run test:dm7       # the same on the Temple of Retribution
 npm run test:bots      # the bots: they see, chase, shoot, pick things up, die and respawn; the score keeps up
 npm run test:demo      # a demo recorded and played back: every snapshot as it was painted
 npm run test:chat      # what you type to the bots, understood by meaning (EmbeddingGemma 2) and obeyed
+npm run test:llm       # a bot led by a language model: what SQL tells it and does with the answer (no model asked)
 npm run test:rl        # the bots' learned fight moves: Q-learning in SQL, the network's forward pass in SQL
 npm run test:save      # a game saved in a fight and loaded back on a fresh arena (F5 and F9 on the page)
 npm run serve          # http://localhost:8080/
@@ -147,6 +148,12 @@ JavaScript) whose forward pass is three `INSERT … SELECT SUM(w * x) … GROUP 
 four twenty-minute matches against Quake III's moves it made 464 frags to 476: as good, not better, so
 Quake III's moves stay the default and the network is a choice in the menu. A Q table learned by
 tabular Q-learning in SQL is there too, and can go on learning as you play; it plays worse than either.
+
+And a language model can lead a bot (*Claude leads*, with your own Anthropic API key, kept in your browser):
+every five seconds SQL writes what the bot knows as a dozen lines of text, Claude answers which item to go
+for, whom to hunt or where to wait, and now and then a line to say, and SQL carries it out. The bot's aim and
+its legs stay its own: a model that answers in a second cannot steer a game that ticks twenty times in one.
+Each decision is a paid API call.
 
 The bots know their way around because the arena is a graph (`sql/waypoints.sql`, the part of Quake
 III's area awareness system a deathmatch bot needs). When a map loads, `BUILD_WAYPOINTS` puts a node

@@ -29,6 +29,7 @@ import { exportDemo, importDemo, listDemos } from './demo.js';
 import { exportSave, importSave, saveMap } from './save.js';
 import { loadEmbedder, embedderReady, embed } from './chat.js';
 import { loadBotQ } from './loader.js';
+import { Strategist, LLM_MODELS } from './llm.js';
 
 const $ = (id) => document.getElementById(id);
 const canvas = $('screen');
@@ -66,7 +67,7 @@ let lastFxId = 0;
 let frameNo = 0;
 let scores = [];
 const state = new FrameState();
-const settings = { map: 'q3dm1', detail: 'medium', sfx: 70, music: 40, musicMode: 'tracks', skill: 2, bots: 3, fov: 90, renderer: 'fast', brightness: 4, predict: true, fraglimit: 20, timelimit: 10, rotate: true, name: 'Player', model: 'sarge/default', rail: 4, gametype: 'ffa', team: 'auto', botai: 0, chatModel: false };
+const settings = { map: 'q3dm1', detail: 'medium', sfx: 70, music: 40, musicMode: 'tracks', skill: 2, bots: 3, fov: 90, renderer: 'fast', brightness: 4, predict: true, fraglimit: 20, timelimit: 10, rotate: true, name: 'Player', model: 'sarge/default', rail: 4, gametype: 'ffa', team: 'auto', botai: 0, chatModel: false, llm: 0, llmModel: LLM_MODELS[0][0] };
 try { Object.assign(settings, JSON.parse(localStorage.getItem('firebird-quake3:settings') || '{}')); } catch { /* defaults */ }
 const saveSettings = () => { try { localStorage.setItem('firebird-quake3:settings', JSON.stringify(settings)); } catch { /* ignore */ } };
 const viewWidth = () => (settings.detail === 'high' ? 640 : settings.detail === 'low' ? 160 : 320);
@@ -271,6 +272,7 @@ async function startMap(name) {
   await setPlayerModel();
   await setPlayerColor();
   await db.exec(`UPDATE game SET bot_rl = ${settings.botai | 0}`);
+  await leadBots();
   renderer.setResources(res);
   renderer.particles = [];
   renderer.meshCache?.clear();
@@ -476,6 +478,8 @@ async function frame() {
     if (fr.fx.length) { lastFxId = fr.fx[fr.fx.length - 1][0]; state.handleFx(renderer, fr.fx, view.TIME_, map.bsp); }
     if (ticked && (scoreboard || last.MATCH_OVER) && frameNo % 10 === 0) scores = (await db.query('SELECT * FROM scoreboard', [], arr)).rows;
     // the bots learn the arena while we play: a few grid columns, then a few nodes' edges, a tic (sql/waypoints.sql)
+    // (the bots a language model leads: asked now and then, without the loop waiting for the answer)
+    if (ticked && strategist && !demoPlaying && !saving && !last.MATCH_OVER) strategist.tick(db).catch((err) => console.error(err));
     if (ticked && map.unlinked > 0 && !demoPlaying && !saving) {
       t = performance.now();
       map.unlinked = await buildWaypoints(db, perf.graph > 40 ? 1 : 3, perf.graph > 40 ? 1 : 2);   // smaller bites when a chunk ran long (q3dm7's 500 nodes)
@@ -829,6 +833,30 @@ async function restoreBotQ() {
   try { rows = JSON.parse(localStorage.getItem('firebird-quake3:botq') ?? 'null'); } catch { /* none */ }
   if (Array.isArray(rows) && rows.length) await loadBotQ(db, rows);
 }
+// a language model as a bot's strategist (src/llm.js; sql/chat.sql bot_llm_state, bot_llm_apply): which bots it
+// leads, the model, and the player's API key, which is kept in this browser and nowhere else
+const LLM_KEY = 'firebird-quake3:anthropic-key';
+let strategist = null;
+const llmKey = () => { try { return localStorage.getItem(LLM_KEY) ?? ''; } catch { return ''; } };
+const llmStatus = (s) => { $('llminfo').textContent = s; };
+async function leadBots() {
+  const key = llmKey();
+  strategist = settings.llm && key ? new Strategist({ apiKey: key, model: settings.llmModel, onStatus: llmStatus }) : null;
+  llmStatus(settings.llm && !key ? 'needs an API key' : '');
+  if (db && map) await db.exec(`EXECUTE PROCEDURE bot_llm_lead(${strategist ? settings.llm | 0 : 0})`);
+}
+for (const [id, label] of LLM_MODELS) $('llmmodel').add(new Option(label, id));
+if (!LLM_MODELS.some(([id]) => id === settings.llmModel)) settings.llmModel = LLM_MODELS[0][0];
+$('llmmodel').value = settings.llmModel;
+$('llmbots').value = String(settings.llm);
+$('llmkey').value = llmKey();
+const llmChanged = () => { saveSettings(); leadBots().catch((err) => console.error(err)); };
+$('llmbots').addEventListener('change', (e) => { settings.llm = Number(e.target.value); llmChanged(); });
+$('llmmodel').addEventListener('change', (e) => { settings.llmModel = e.target.value; llmChanged(); });
+$('llmkey').addEventListener('change', (e) => {
+  try { if (e.target.value.trim()) localStorage.setItem(LLM_KEY, e.target.value.trim()); else localStorage.removeItem(LLM_KEY); } catch { /* storage blocked */ }
+  llmChanged();
+});
 // spectating: out of the match and back (SetTeam)
 $('spectate').addEventListener('click', () => {
   if (!db || !running || !last) return;

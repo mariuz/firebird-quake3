@@ -403,6 +403,11 @@ CREATE TABLE ents (
   acc_arrived SMALLINT DEFAULT 0 NOT NULL,
   get_id     INTEGER,                       -- a bot told to get an item (LTG_GETITEM, chat.sql): which, and until when
   get_until  DOUBLE PRECISION,
+  -- a bot whose strategy a language model decides (bot_llm_state and bot_llm_apply in chat.sql; src/llm.js asks
+  -- the model): 1 when it is led, what it was last told and when
+  llm        SMALLINT DEFAULT 0 NOT NULL,
+  llm_plan   VARCHAR(60),
+  llm_time   DOUBLE PRECISION,
   -- a bot's learned fight moves (bot_rl_move in bots.sql): whether it uses them (NULL: as game.bot_rl says), the
   -- state and the move it is on and until when, the damage it has given and taken in all and at that choice
   rl         SMALLINT,
