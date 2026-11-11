@@ -1161,7 +1161,9 @@ BEGIN
   SELECT e.weapon, vlen(o.x - e.x, o.y - e.y, o.z - e.z) FROM ents e JOIN ents o ON o.id = e.enemy_id WHERE e.id = :eid INTO w, d;
   IF (d IS NULL) THEN EXIT;
   b = bot_wband(d);
-  s = fire_time(w);
+  -- (a bot thinks ten times a second and fires once a think at most: the lightning gun's 0.05 s between two
+  -- shots is 0.1 s in its hands. Counted at 0.05, the gun looked twice what it is, and bots choosing by that lost)
+  s = MAXVALUE(fire_time(w), 0.1e0);
   UPDATE bot_wdps p SET p.secs = p.secs + :s WHERE p.w = :w AND p.band = :b;
   IF (ROW_COUNT = 0) THEN INSERT INTO bot_wdps (w, band, secs, dmg) VALUES (:w, :b, :s, 0);
 END^
@@ -1187,7 +1189,7 @@ END^
 CREATE OR ALTER FUNCTION bot_pick_weapon (eid INTEGER, dist DOUBLE PRECISION) RETURNS INTEGER
 AS
 DECLARE mode SMALLINT; DECLARE held INTEGER; DECLARE t DOUBLE PRECISION; DECLARE w INTEGER; DECLARE until_ DOUBLE PRECISION;
-DECLARE n INTEGER; DECLARE k INTEGER; DECLARE bit_ INTEGER; DECLARE b SMALLINT;
+DECLARE n INTEGER; DECLARE k INTEGER; DECLARE bit_ INTEGER; DECLARE b SMALLINT; DECLARE best DOUBLE PRECISION; DECLARE cur DOUBLE PRECISION;
 BEGIN
   mode = bot_wsel_mode(eid);
   IF (mode = 0) THEN RETURN bot_best_weapon(eid, dist);
@@ -1215,12 +1217,16 @@ BEGIN
     UPDATE ents e SET e.w_pick = :w, e.w_until = :t + 3 WHERE e.id = :eid;
     RETURN w;
   END
-  -- by what was measured: the most damage a second of fire at this distance
+  -- by what was measured: the most damage a second of fire at this distance; the gun in hand is kept unless the
+  -- best does a fifth more (a change of guns is half a second without a shot, and an enemy at the edge of a band
+  -- would have the bot change at every step)
   b = bot_wband(dist);
   w = NULL;
-  SELECT FIRST 1 p.w FROM bot_wdps p WHERE p.band = :b AND p.secs >= 30 AND BIN_AND(:held, p.w) <> 0 ORDER BY p.dmg / p.secs DESC, p.w DESC INTO w;
-  IF (w IS NOT NULL) THEN RETURN w;
-  RETURN bot_best_weapon(eid, dist);
+  SELECT FIRST 1 p.w, p.dmg / p.secs FROM bot_wdps p WHERE p.band = :b AND p.secs >= 30 AND BIN_AND(:held, p.w) <> 0 ORDER BY p.dmg / p.secs DESC, p.w DESC INTO w, best;
+  IF (w IS NULL) THEN RETURN bot_best_weapon(eid, dist);
+  SELECT p.dmg / p.secs FROM bot_wdps p JOIN ents e ON e.id = :eid AND p.w = e.weapon WHERE p.band = :b AND p.secs >= 30 AND BIN_AND(:held, p.w) <> 0 INTO cur;
+  IF (cur IS NOT NULL AND best < cur * 1.2e0) THEN RETURN (SELECT e.weapon FROM ents e WHERE e.id = :eid);
+  RETURN w;
 END^
 
 -- aim at the enemy (leading projectiles when skilled enough), scattered by the aim accuracy, and fire
