@@ -11,6 +11,7 @@ import { Renderer, tagTransform, autospriteQuads, fogST, fogFactor, md3Lod, enti
 import { parseDeform, waveValue, deformVertex, envTexCoords, parseShaderScript, surfaceLook, shellMesh, eyeInModel, stageBrightness, stageTcMatrix, stageColor, stageAlpha, shaderStages, fogAdjust, blendFogAdjust, specularAlpha, SPECULAR_LIGHT } from '../src/shader.js';
 import { Md3, parseAnimationCfg, parseSkin } from '../src/md3.js';
 import { postgameMedals, careerAfter, careerAwards } from '../src/hud.js';
+import { ACTIONS, makeBinds, savedBinds, keysOf, bind, unbind, keyName, mouseCode, wheelCode } from '../src/binds.js';
 import { Q3Audio, weaponLoop, dopplerRate } from '../src/audio.js';
 import { parseWeights, preprocess, weightOf } from '../src/itemweights.js';
 import { Pk3 } from '../src/pk3.js';
@@ -714,6 +715,40 @@ assert(colorFromString(4).join() === '1,0,0' && colorFromString('6').join() === 
   const strip = verts([[0, 0, 0], [64, 0, 0], [0, 64, 0], [64, 64, 0], [0, 128, 0], [64, 128, 0]]);
   assert(isFan(new Uint16Array([3, 0, 2, 2, 0, 1]), 4, quad, [0, 0, 1]) && !isFan(new Uint16Array([0, 1, 2, 1, 3, 2, 2, 3, 4, 3, 5, 4]), 6, strip, [0, 0, 1]),
     'a convex quad in q3map\'s triangle order is one polygon; a strip of triangles in zigzag order is not');
+}
+
+// the keys (Quake III's bind and its Controls menu): a key does one thing, an action has two keys at most once
+// it is bound anew, and what the player changed is what is kept
+{
+  const b = makeBinds();
+  const first = { KeyW: 'forward', ArrowUp: 'forward', KeyS: 'back', KeyA: 'moveleft', KeyD: 'moveright', ArrowLeft: 'left', Space: 'moveup', KeyC: 'movedown', ShiftLeft: 'speed',
+    ControlLeft: 'attack', KeyF: 'attack', Mouse0: 'attack', Mouse2: 'zoom', KeyZ: 'zoom', Digit5: 'weapon5', Slash: 'weapnext', WheelDown: 'weapnext', WheelUp: 'weapprev',
+    Enter: 'useitem', Tab: 'scores', KeyT: 'chat', KeyP: 'pause', KeyG: 'give' };
+  const codes = [...b.keys()];
+  assert(Object.entries(first).every(([code, a]) => b.get(code) === a) && new Set(ACTIONS.map((a) => a[0])).size === ACTIONS.length && codes.length === new Set(codes).size
+    && Object.keys(savedBinds(b)).length === 0 && mouseCode(0) === 'Mouse0' && wheelCode(120) === 'WheelDown' && wheelCode(-120) === 'WheelUp',
+    `the keys as they were before there was a choice: ${ACTIONS.length} actions, ${codes.length} keys, each key one action, nothing to keep`);
+  // E to crouch: it leaves the jump; crouch has C and E; a third key and crouch starts again with it alone
+  const moved = bind(b, 'movedown', 'KeyE');
+  const two = keysOf(b, 'movedown').join(' '), jumpNow = keysOf(b, 'moveup').join(' ');
+  bind(b, 'movedown', 'AltLeft');
+  const one = keysOf(b, 'movedown').join(' ');
+  bind(b, 'attack', 'Mouse1');
+  const fire = keysOf(b, 'attack').join(' ');
+  unbind(b, 'give');
+  const kept = savedBinds(b), again = makeBinds(JSON.parse(JSON.stringify(kept)));
+  assert(moved && two === 'KeyC KeyE' && jumpNow === 'Space' && one === 'AltLeft' && b.get('KeyC') === undefined && fire === 'Mouse1' && b.get('ControlLeft') === undefined
+    && !bind(b, 'attack', 'Escape') && !bind(b, 'attack', 'F5') && !bind(b, 'nothing', 'KeyQ') && keysOf(b, 'give').length === 0
+    && JSON.stringify(Object.keys(kept).sort()) === '["attack","give","movedown","moveup"]' && kept.give.length === 0
+    && [...again].sort().join() === [...b].sort().join() && again.get('KeyW') === 'forward',
+    `binding: E to crouch leaves the jump (${jumpNow}) and joins C (${two}); a third key starts crouch again (${one}); a mouse button for the attack takes the place of its four keys; Escape and F5 are not to be bound; what changed is kept (${Object.keys(kept).join(', ')}) and comes back the same`);
+  // a saved binding that takes another action's first key: the key is the saved one's
+  const clash = makeBinds({ zoom: ['KeyW'], scores: ['Escape', 'KeyQ', 'KeyR', 'KeyU'] });
+  assert(clash.get('KeyW') === 'forward' && keysOf(clash, 'scores').join(' ') === 'KeyQ KeyR' && keysOf(makeBinds({ forward: 'x' }), 'forward').join(' ') === 'KeyW ArrowUp',
+    'what was kept is read with care: a key two actions claim goes to the first, a reserved key is dropped, two keys an action, nonsense ignored');
+  assert(keyName('KeyW') === 'W' && keyName('ArrowUp') === 'Up Arrow' && keyName('ControlLeft') === 'Left Ctrl' && keyName('Mouse0') === 'Mouse 1' && keyName('Mouse2') === 'Mouse 2' && keyName('Mouse1') === 'Mouse 3' && keyName('Mouse3') === 'Mouse 4' && keyName('WheelDown') === 'Wheel Down'
+    && keyName('Digit5') === '5' && keyName('Numpad0') === 'Keypad 0' && keyName('Slash') === '/' && keyName('F7') === 'F7',
+    `the keys' names: ${['KeyW', 'ArrowUp', 'ControlLeft', 'Mouse0', 'WheelDown', 'Numpad0'].map(keyName).join(', ')}`);
 }
 
 // the end of the match (UI_SPPostgameMenu): the accuracy, the awards earned, the frags, perfect for a win

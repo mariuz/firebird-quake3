@@ -1384,7 +1384,14 @@ slow machine plays in slow motion rather than stalling) it calls `q3_tic` with t
 WASD or arrows, mouse look with pointer lock on the `#screen-wrap`, Ctrl or click fires, Space jumps,
 C crouches, Z or the right button zooms, Shift walks, 1–9 weapons, `/` or the wheel cycles, Enter or H uses the holdable, Tab shows the
 scoreboard, G gives everything, P pauses; touch: the left half moves, the right half looks, a tap
-fires) and keeps the previous tic's row and poses. Every frame, ticked or not, sits a fraction
+fires) and keeps the previous tic's row and poses. Those keys are the ones bound at first: `src/binds.js` is
+Quake III's `bind` and its Controls menu. Each of 29 actions (`+forward`, `+attack`, `weapon 5`, `+zoom`,
+`messagemode` …) has its keys, a key does one thing, and the mouse's buttons and the wheel are keys as there
+(`Mouse0`, `WheelDown`); `main.js` turns a key that goes down into its action (`actionDown`, `actionUp`) and
+`readInput` asks for actions, not keys. The page's *Keys* panel lists them: a click on one and the next key,
+button or turn of the wheel is bound to it, leaving whatever it did before; an action that has two keys starts
+again with the new one alone, as the menu's two columns do; Escape leaves it, Backspace takes its keys off,
+*Defaults* puts all back. What was changed is kept in the settings (`savedBinds`). Every frame, ticked or not, sits a fraction
 `alpha` of the way into the current tic, and is painted the way the original's client paints:
 
 - *Your own eye is predicted* (`CG_PredictPlayerState`). Quake III re-runs the player's move on the

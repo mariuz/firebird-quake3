@@ -76,11 +76,11 @@ fuzzy logic from the botfiles. What that leaves out:
 | Gap | Notes |
 | --- | --- |
 | **Networking** | none, by design: one player, local bots. Snapshots, prediction, delta compression, the master server do not apply |
-| **Console commands and cvars** | the SQL console replaces them; there is no `bind`, `cg_fov` and friends are settings in `localStorage` |
+| **Console commands and cvars** | the SQL console replaces them; the keys are bound in the page's *Keys* panel (see §8), not by a `bind` typed; `cg_fov` and friends are settings in `localStorage` |
 | **Demos, the rest** | recorded and played back, paused, seeked and slowed or sped up (see §8); no free camera, and the file is the tables' rows as JSON, not a `.dm_68` |
 | **Light styles** | not in the demo maps |
 | **File system** | the page stacks the demo's pak, the pk3s picked from disk and one hosted map pack (`PakSet`); the game searches every `pak*.pk3` in `baseq3` and a mod directory at once, and a picked pk3's models, sounds and bot files are not read again (its maps and shaders are) |
-| **The menu, key binding** | the page's controls do this, the name, the model and the rail's colour played among them (*Name*, *Model*: every player model of the pak with its own skins, *Rail*: `color1`); no key binding |
+| **The menu** | the page's controls do this, the name, the model, the rail's colour and the keys among them (*Name*, *Model*: every player model of the pak with its own skins, *Rail*: `color1`, *Keys*: the Controls menu's actions); the menu's own screens and art are not drawn |
 | **Sound** | OpenAL-style spatialisation, the muffle with the head under a liquid (a low-pass for the mixer's `inwater`), the movers', the missiles' and the guns' looping sounds, the missiles' doppler (OpenAL's, as ioquake3 sets it up) |
 
 ## 7. Performance and scale
@@ -117,7 +117,8 @@ in SQL: `sql/chat.sql`, `npm run test:chat`) a bot led by a language model (Clau
 what the bot goes after, SQL writes the situation, carries out the answer and keeps the model's memory, its
 decisions with what followed and its notes, as rows: `bot_llm_state`, `bot_llm_apply`,
 `src/llm.js`, `npm run test:llm`; an open model on the player's own Ollama or LM Studio can take Claude's place,
-and a small one in the browser is an experiment that chose no better than a fixed answer) the gun for the distance (what each gun does at each distance in a bot's hands, measured in self-play: `bot_wdps`,
+and a small one in the browser is an experiment that chose no better than a fixed answer) key binding (the Controls menu's actions, each bound to keys, mouse buttons or the wheel in the page's *Keys* panel:
+`src/binds.js`), the gun for the distance (what each gun does at each distance in a bot's hands, measured in self-play: `bot_wdps`,
 `bot_pick_weapon`, the page's *Bot guns*; choosing by it played no better than botlib's favourite gun) and their learned fight moves (not Quake III's: six moves chosen by a
 network trained offline from self-play with Double DQN and CQL, its forward pass in SQL, or by a Q table learned in
 SQL: `bot_rl_move`, `bot_nn_best`, the page's *Bot AI*, `npm run test:rl`), demos (`record`, `demo`: every snapshot kept as rows, the

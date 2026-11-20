@@ -127,6 +127,10 @@
         <input id="llmurl" type="text" size="18" maxlength="200" autocomplete="off" spellcheck="false" placeholder="http://localhost:11434" title="Your own model server: Ollama (http://localhost:11434), LM Studio (http://localhost:1234) or any other with OpenAI's chat API. It must allow this page: for Ollama start it with OLLAMA_ORIGINS set to this site's address, in LM Studio turn on CORS" hidden>
         <input id="llmname" type="text" size="12" maxlength="80" autocomplete="off" spellcheck="false" placeholder="llama3.1:8b" title="The model's name as your server knows it (ollama list). A model of 7 or 8 billion parameters or more is worth trying; smaller ones chose badly" hidden>
         <span id="llminfo" class="pill"></span>
+        <details id="keys"><summary title="Which key does what (Quake III's Controls menu): click an action, then press the key, mouse button or turn the wheel for it; Escape leaves it, Backspace takes its keys off. Kept in this browser">Keys</summary>
+          <table><tbody id="keyrows"></tbody></table>
+          <button id="keysreset" type="button" title="Every key as it was at first">Defaults</button>
+        </details>
         <button id="savegame" type="button" title="Save the game as it stands to a file (F5 saves it in the browser, F9 loads that)">Save game</button>
         <label title="Load a game saved here: its arena loads and the game goes on from where it was saved">Load game <input id="loadgame" type="file" accept=".json,application/json"></label>
         <span id="career" class="pill"></span>

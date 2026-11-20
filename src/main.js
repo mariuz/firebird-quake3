@@ -29,6 +29,7 @@ import { exportDemo, importDemo, listDemos } from './demo.js';
 import { exportSave, importSave, saveMap } from './save.js';
 import { loadEmbedder, embedderReady, embed } from './chat.js';
 import { loadBotQ } from './loader.js';
+import { ACTIONS, makeBinds, savedBinds, keysOf, bind, unbind, keyName, mouseCode, wheelCode } from './binds.js';
 import { Strategist, ServerStrategist, LocalStrategist, LLM_MODELS, LOCAL_MODELS, SERVER_DEFAULT, exportMemory, importMemory } from './llm.js';
 
 const $ = (id) => document.getElementById(id);
@@ -67,7 +68,7 @@ let lastFxId = 0;
 let frameNo = 0;
 let scores = [];
 const state = new FrameState();
-const settings = { map: 'q3dm1', detail: 'medium', sfx: 70, music: 40, musicMode: 'tracks', skill: 2, bots: 3, fov: 90, renderer: 'fast', brightness: 4, predict: true, fraglimit: 20, timelimit: 10, rotate: true, name: 'Player', model: 'sarge/default', rail: 4, gametype: 'ffa', team: 'auto', botai: 0, botguns: 0, chatModel: false, llm: 0, llmModel: LLM_MODELS[0][0], llmUrl: SERVER_DEFAULT.url, llmName: SERVER_DEFAULT.model };
+const settings = { map: 'q3dm1', detail: 'medium', sfx: 70, music: 40, musicMode: 'tracks', skill: 2, bots: 3, fov: 90, renderer: 'fast', brightness: 4, predict: true, fraglimit: 20, timelimit: 10, rotate: true, name: 'Player', model: 'sarge/default', rail: 4, gametype: 'ffa', team: 'auto', botai: 0, botguns: 0, chatModel: false, llm: 0, llmModel: LLM_MODELS[0][0], llmUrl: SERVER_DEFAULT.url, llmName: SERVER_DEFAULT.model, binds: {} };
 try { Object.assign(settings, JSON.parse(localStorage.getItem('firebird-quake3:settings') || '{}')); } catch { /* defaults */ }
 const saveSettings = () => { try { localStorage.setItem('firebird-quake3:settings', JSON.stringify(settings)); } catch { /* ignore */ } };
 const viewWidth = () => (settings.detail === 'high' ? 640 : settings.detail === 'low' ? 160 : 320);
@@ -95,21 +96,32 @@ let scoreboard = false;
 // +zoom (Z or the right mouse button): when it went down or up, and the field of view of the last frame
 let zoomed = false, zoomAt = -1e9, curFov = 90;
 const zoom = (on) => { if (on !== zoomed) { zoomed = on; zoomAt = performance.now(); } };
-const GAME_KEYS = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space', 'KeyE',
-  'ControlLeft', 'ControlRight', 'ShiftLeft', 'ShiftRight', 'Tab', 'Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5', 'Digit6', 'Digit7',
-  'Digit8', 'Digit9', 'Digit0', 'KeyF', 'KeyG', 'Comma', 'Period', 'PageUp', 'PageDown', 'Slash', 'Enter', 'KeyH', 'KeyC', 'KeyZ']);
+// the keys (src/binds.js: Quake III's bind): a key, a mouse button or a turn of the wheel that goes down is the
+// action bound to it, and `keys` holds the actions that are down, not the keys
+let binds = makeBinds(settings.binds);
+let binding = null;   // the action the Keys panel is waiting for a key for
+function actionDown(a) {
+  keys.add(a);
+  if (a.startsWith('weapon')) impulse = Number(a.slice(6));
+  else if (a === 'weapnext') impulse = 12;
+  else if (a === 'weapprev') impulse = 14;
+  else if (a === 'useitem') impulse = 13;
+  else if (a === 'give') impulse = 99;
+  else if (a === 'scores') scoreboard = true;
+  else if (a === 'zoom') zoom(true);
+  else if (a === 'pause') paused = !paused;
+  else if (a === 'chat' && !demoPlaying) { keys.clear(); document.exitPointerLock?.(); $('chat').focus(); }
+}
+function actionUp(a) {
+  keys.delete(a);
+  if (a === 'scores') scoreboard = false;
+  else if (a === 'zoom') zoom(false);
+}
 window.addEventListener('keydown', (e) => {
   if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement) return;
-  if (!running) return;
-  if (GAME_KEYS.has(e.code)) e.preventDefault();
-  keys.add(e.code);
-  if (e.code.startsWith('Digit')) { const n = Number(e.code.slice(5)); if (n >= 1 && n <= 9) impulse = n; }
-  if (e.code === 'Slash') impulse = 12;
-  if (e.code === 'KeyG') impulse = 99;
-  if (e.code === 'Enter' || e.code === 'KeyH') impulse = 13;
-  if (e.code === 'Tab') scoreboard = true;
-  if (e.code === 'KeyZ') zoom(true);
-  if (e.code === 'KeyP' || e.code === 'Pause') paused = !paused;
+  if (!running || binding) return;
+  const action = binds.get(e.code);
+  if (action) { e.preventDefault(); if (!e.repeat || !['pause', 'chat', 'give', 'useitem'].includes(action)) actionDown(action); }
   if (demoPlaying && (e.code === 'ArrowLeft' || e.code === 'ArrowRight') && last) seekDemo(last.TIME_ - demoInfo.start + (e.code === 'ArrowLeft' ? -5 : 5)).catch((err) => console.error(err));
   // quick save and quick load (Quake II's F6 and F9 are F5 and F9 here), into the browser's storage
   if (e.code === 'F5' || e.code === 'F9') {
@@ -117,17 +129,17 @@ window.addEventListener('keydown', (e) => {
     if (e.code === 'F5') quickSave(); else quickLoad();
   }
 });
-window.addEventListener('keyup', (e) => { keys.delete(e.code); if (e.code === 'Tab') scoreboard = false; if (e.code === 'KeyZ') zoom(false); });
+window.addEventListener('keyup', (e) => { const action = binds.get(e.code); if (action) actionUp(action); });
 window.addEventListener('blur', () => { keys.clear(); zoom(false); });
 wrap.addEventListener('click', () => {
   if (running && document.pointerLockElement !== wrap) wrap.requestPointerLock?.()?.catch?.(() => {});
 });
 wrap.addEventListener('mousedown', (e) => {
   if (document.pointerLockElement !== wrap) return;
-  if (e.button === 0) fireClick = true;
-  if (e.button === 2) zoom(true);
+  const action = binds.get(mouseCode(e.button));
+  if (action) actionDown(action);
 });
-window.addEventListener('mouseup', (e) => { if (e.button === 0) fireClick = false; if (e.button === 2) zoom(false); });
+window.addEventListener('mouseup', (e) => { const action = binds.get(mouseCode(e.button)); if (action) actionUp(action); });
 wrap.addEventListener('contextmenu', (e) => e.preventDefault());
 window.addEventListener('mousemove', (e) => {
   if (document.pointerLockElement === wrap) {
@@ -137,7 +149,12 @@ window.addEventListener('mousemove', (e) => {
     mousePitch += e.movementY * 0.15 * sens;
   }
 });
-window.addEventListener('wheel', (e) => { if (document.pointerLockElement === wrap) impulse = e.deltaY > 0 ? 12 : 14; });
+// (a turn of the wheel is a key that goes down and up at once)
+window.addEventListener('wheel', (e) => {
+  if (document.pointerLockElement !== wrap || !e.deltaY) return;
+  const action = binds.get(wheelCode(e.deltaY));
+  if (action) { actionDown(action); actionUp(action); }
+});
 // touch: left half moves, right half looks, tap fires
 const touch = { move: null, look: null };
 wrap.addEventListener('touchstart', (e) => {
@@ -172,11 +189,11 @@ wrap.addEventListener('touchend', (e) => {
 
 function readInput(tics) {
   const k = (c) => keys.has(c);
-  let fwd = (k('KeyW') || k('ArrowUp') ? 1 : 0) - (k('KeyS') || k('ArrowDown') ? 1 : 0);
-  let side = (k('KeyD') || k('Period') ? 1 : 0) - (k('KeyA') || k('Comma') ? 1 : 0);
-  const turnKeys = (k('ArrowLeft') ? 1 : 0) - (k('ArrowRight') ? 1 : 0);
-  const lookKeys = (k('PageDown') ? 1 : 0) - (k('PageUp') ? 1 : 0);
-  const run = k('ShiftLeft') || k('ShiftRight') ? 0 : 1;     // always run; shift walks
+  let fwd = (k('forward') ? 1 : 0) - (k('back') ? 1 : 0);
+  let side = (k('moveright') ? 1 : 0) - (k('moveleft') ? 1 : 0);
+  const turnKeys = (k('left') ? 1 : 0) - (k('right') ? 1 : 0);
+  const lookKeys = (k('lookdown') ? 1 : 0) - (k('lookup') ? 1 : 0);
+  const run = k('speed') ? 0 : 1;     // always run; +speed walks
   if (touch.move) {
     fwd = Math.max(-1, Math.min(1, -touch.move.dy / 40));
     side = Math.max(-1, Math.min(1, touch.move.dx / 40));
@@ -184,10 +201,10 @@ function readInput(tics) {
   const yaw = turnKeys * 7 * tics + mouseYaw;
   const pitch = lookKeys * 5 * tics + mousePitch;
   mouseYaw = 0; mousePitch = 0;
-  const fire = k('ControlLeft') || k('ControlRight') || k('KeyF') || fireClick ? 1 : 0;
+  const fire = k('attack') || fireClick ? 1 : 0;
   if (fireClick === 'tap') fireClick = false;
-  // upmove, as Quake III has it: 1 jumps, -1 crouches (C, Quake III's +movedown key)
-  const jump = k('Space') || k('KeyE') || k('TapJump') ? 1 : k('KeyC') ? -1 : 0;
+  // upmove, as Quake III has it: 1 jumps (+moveup), -1 crouches (+movedown)
+  const jump = k('moveup') || k('TapJump') ? 1 : k('movedown') ? -1 : 0;
   keys.delete('TapJump');
   const imp = impulse;
   impulse = 0;
@@ -354,8 +371,8 @@ function interpolateFrame(fr, alpha) {
 function viewRow(alpha, now) {
   const k = (c) => keys.has(c);
   const frac = Math.min(1, (now - lastTic) / TIC_MS);
-  const yawLive = mouseYaw + ((k('ArrowLeft') ? 1 : 0) - (k('ArrowRight') ? 1 : 0)) * 7 * frac;
-  const pitchLive = mousePitch + ((k('PageDown') ? 1 : 0) - (k('PageUp') ? 1 : 0)) * 5 * frac;
+  const yawLive = mouseYaw + ((k('left') ? 1 : 0) - (k('right') ? 1 : 0)) * 7 * frac;
+  const pitchLive = mousePitch + ((k('lookdown') ? 1 : 0) - (k('lookup') ? 1 : 0)) * 5 * frac;
   if (demoPlaying) {
     // a demo: the recorded view between the two snapshots (CG_InterpolatePlayerState), no live mouse, no prediction
     const v = { ...last };
@@ -376,7 +393,7 @@ function viewRow(alpha, now) {
   // the displacement of one tic, carried on for alpha of the next; with no move key down on the
   // ground, friction is stopping us, so carry on half as far (an overshoot that snaps back is worse
   // than a little lag)
-  const moving = touch.move || ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'Comma', 'Period'].some(k);
+  const moving = touch.move || ['forward', 'back', 'moveleft', 'moveright'].some(k);
   const kk = (alpha / Math.max(1, lastTics)) * (moving || !last.ONGROUND ? 1 : 0.5);
   v.PX = last.PX + (last.PX - prev.PX) * kk;
   v.PY = last.PY + (last.PY - prev.PY) * kk;
@@ -794,10 +811,6 @@ $('loadgame').addEventListener('change', async (e) => {
 // talking to the bots (sql/chat.sql): T or Y opens the line, Enter says it. With EmbeddingGemma 2 loaded (the
 // box beside it; src/chat.js) the line is matched by what it means, else a phrase has to be in it word for word
 const chatEl = $('chat');
-window.addEventListener('keydown', (e) => {
-  if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement) return;
-  if ((e.code === 'KeyT' || e.code === 'KeyY') && running && !demoPlaying) { e.preventDefault(); keys.clear(); document.exitPointerLock?.(); chatEl.focus(); }
-});
 chatEl.addEventListener('keydown', async (e) => {
   if (e.key === 'Escape') { chatEl.value = ''; chatEl.blur(); return; }
   if (e.key !== 'Enter') return;
@@ -905,6 +918,41 @@ function showCareer() {
   $('career').title = `Your career's awards over ${Number(c.matches) || 0} match${Number(c.matches) === 1 ? '' : 'es'} (kept in this browser): one accuracy for each match at 50% or better, the impressives, excellents and gauntlet frags counted, the frags in hundreds, one perfect for each win without a death`;
 }
 showCareer();
+// the Keys panel (the Controls menu): every action with its keys; a click on one and the next key, mouse button or
+// turn of the wheel is bound to it (Escape leaves it as it is, Backspace takes its keys off)
+function showBinds() {
+  const rows = $('keyrows');
+  rows.textContent = '';
+  for (const [id, label, command] of ACTIONS) {
+    const tr = document.createElement('tr'), name = document.createElement('td'), cell = document.createElement('td'), btn = document.createElement('button');
+    name.textContent = label;
+    name.title = command;
+    btn.type = 'button';
+    btn.dataset.action = id;
+    btn.textContent = binding === id ? 'press a key…' : keysOf(binds, id).map(keyName).join(' or ') || '—';
+    btn.addEventListener('click', () => { binding = binding === id ? null : id; showBinds(); });
+    cell.append(btn);
+    tr.append(name, cell);
+    rows.append(tr);
+  }
+}
+function bound(code) {
+  if (!binding) return false;
+  if (code === 'Backspace' || code === 'Delete') unbind(binds, binding);
+  else if (code !== 'Escape' && !bind(binds, binding, code)) return true;   // (a key that cannot be bound: still waiting)
+  binding = null;
+  settings.binds = savedBinds(binds);
+  saveSettings();
+  keys.clear();
+  showBinds();
+  return true;
+}
+window.addEventListener('keydown', (e) => { if (bound(e.code)) { e.preventDefault(); e.stopImmediatePropagation(); } }, true);
+$('keys').addEventListener('mousedown', (e) => { if (binding && !(e.target instanceof HTMLButtonElement) && bound(mouseCode(e.button))) e.preventDefault(); });
+$('keys').addEventListener('contextmenu', (e) => { if (binding) e.preventDefault(); });
+$('keys').addEventListener('wheel', (e) => { if (binding && e.deltaY && bound(wheelCode(e.deltaY))) e.preventDefault(); }, { passive: false });
+$('keysreset').addEventListener('click', () => { binds = makeBinds(); binding = null; settings.binds = {}; saveSettings(); showBinds(); });
+showBinds();
 // spectating: out of the match and back (SetTeam)
 $('spectate').addEventListener('click', () => {
   if (!db || !running || !last) return;
