@@ -1353,7 +1353,10 @@ lerps the tags the same way (`R_LerpTag`), so the torso rides the legs smoothly 
 shell, whose vertices move every frame, is still built in JavaScript. The picture is the canvas's size on
 the page in the display's own pixels (`fitCanvas`: a device pixel ratio of 2 and 2560 across at most; the
 page's *WebGL* menu has half of that, 640×480 and 320×240), antialiased by the context's multisampling,
-the textures filtered anisotropically where the browser has the extension. It stays on WebGL 2, which
+the textures filtered anisotropically where the browser has the extension. Its shape is the page's
+*Screen* (`setAspect`: 4:3, 16:10, 16:9, 21:9): `viewcfg` takes the same shape, so the faces Firebird
+selects are the wider frustum's, and `wideFov` widens `cg_fov` so that the view up and down stays that
+of 4 by 3; the HUD's 640 by 480 is stretched over it, as Quake III stretches its own. It stays on WebGL 2, which
 Chrome, Firefox, Edge and Safari all ship: the painter spends 2 ms a frame in JavaScript and about ten
 draw calls on a view, so WebGPU, not yet on by default everywhere, would buy nothing the tic and the frame
 query do not dwarf. The HUD, messages and the 2D pictures are drawn by a

@@ -372,6 +372,7 @@ export class GLRenderer {
     this.aniso = gl.getExtension('EXT_texture_filter_anisotropic');
     this.maxAniso = this.aniso ? Math.min(8, gl.getParameter(this.aniso.MAX_TEXTURE_MAX_ANISOTROPY_EXT)) : 0;
     this.resolution = 'native';
+    this.aspect = 4 / 3;
     this.res = res;
     this.pak = res.pak;
     this.overlay = new Renderer(overlayCanvas, res, { alpha: true });   // the HUD painter, on the transparent canvas above
@@ -414,6 +415,14 @@ export class GLRenderer {
    *  pixel ratio of 2 at most, 2560 across at most), 'half' half of that each way, or 640 or 320 across */
   setResolution(mode) { this.resolution = mode; this.fitCanvas(); }
 
+  /** The picture's shape, width over height (4/3, 16/9 …): the canvas takes it on the page; the HUD is stretched
+   *  over it as Quake III stretches its 640 by 480 */
+  setAspect(aspect) {
+    this.aspect = aspect > 0 ? aspect : 4 / 3;
+    if (this.canvas.style) this.canvas.style.aspectRatio = String(this.aspect);
+    this.fitCanvas();
+  }
+
   fitCanvas() {
     const c = this.canvas, mode = this.resolution;
     let w;
@@ -423,7 +432,7 @@ export class GLRenderer {
       w = Math.round(css * dpr * (mode === 'half' ? 0.5 : 1));
       w = Math.max(320, Math.min(2560, w));
     }
-    const h = Math.round((w * 3) / 4);
+    const h = Math.round(w / this.aspect);
     if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
   }
 

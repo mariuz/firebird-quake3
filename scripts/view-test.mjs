@@ -6,7 +6,7 @@
 //   node scripts/view-test.mjs
 
 import fs from 'node:fs';
-import { FrameState, firstPersonView, zoomedFov, fovY, mapTorsoToWeaponFrame, viewTorsoFrame, underwaterFov, sceneLights, gunFlashOrigin, litByDlights, MAX_DLIGHTS, drawRail, drawBolt, findPortals, portalView, mirrorView, portalFade, cameraRoll, perpendicular, floorBelow, floorUnderBox, drawShadows, colorFromString, boltImpact, ringStages, bulletStages, RING_TIME, followBolt, followOtherBolt, spriteExplosion, EXPLOSIONS } from '../src/scene.js';
+import { FrameState, firstPersonView, zoomedFov, fovY, wideFov, mapTorsoToWeaponFrame, viewTorsoFrame, underwaterFov, sceneLights, gunFlashOrigin, litByDlights, MAX_DLIGHTS, drawRail, drawBolt, findPortals, portalView, mirrorView, portalFade, cameraRoll, perpendicular, floorBelow, floorUnderBox, drawShadows, colorFromString, boltImpact, ringStages, bulletStages, RING_TIME, followBolt, followOtherBolt, spriteExplosion, EXPLOSIONS } from '../src/scene.js';
 import { Renderer, tagTransform, animLerp, lerpFrames, nearFrame, autospriteQuads, fogST, fogFactor, md3Lod, entityFog, clipFace, polyFog, fogFade } from '../src/renderer.js';
 import { parseDeform, waveValue, deformVertex, envTexCoords, parseShaderScript, surfaceLook, shellMesh, eyeInModel, stageBrightness, stageTcMatrix, stageColor, stageAlpha, shaderStages, fogAdjust, blendFogAdjust, specularAlpha, SPECULAR_LIGHT } from '../src/shader.js';
 import { Md3, parseAnimationCfg, parseSkin } from '../src/md3.js';
@@ -105,6 +105,10 @@ assert(weak.pitch <= -9.9 && strong.pitch >= -10.01, `low on health the kick is 
   const y = fovY(22.5, 640, 480);
   assert(Math.abs(y - 16.97) < 0.05 && Math.abs(y / 75 - 0.226) < 0.002, `zoomed on 4:3, fov_y ${y.toFixed(2)}, the mouse at ${(y / 75).toFixed(3)} of its speed`);
   assert(Math.abs(fovY(90, 640, 480) - 73.74) < 0.05, 'fov_y of 90 on 4:3 is 73.74');
+  const wide = wideFov(90, 640, 360);
+  assert(Math.abs(wideFov(90, 640, 480) - 90) < 1e-9 && Math.abs(wide - 106.26) < 0.01 && Math.abs(fovY(wide, 640, 360) - fovY(90, 640, 480)) < 1e-9
+    && Math.abs(fovY(wideFov(22.5, 640, 360), 640, 360) - fovY(22.5, 640, 480)) < 1e-9,
+    `a wide screen keeps the view up and down of 4 by 3 and sees more to the sides (90 becomes ${wide.toFixed(2)} at 16 by 9), zoomed too`);
 }
 
 // under water (CG_CalcFov): the view waves a degree either way at 0.4 Hz, only with the head under

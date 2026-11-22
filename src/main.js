@@ -23,7 +23,7 @@ import { loadShaders } from './shader.js';
 import { Renderer } from './renderer.js';
 import { GLRenderer } from './renderer-gl.js';
 import { Hud, careerAfter, careerAwards } from './hud.js';
-import { FrameState, drawScene, firstPersonView, zoomedFov, fovY, ZOOM_FOV, underwaterFov, findPortals, portalView, mirrorView, portalFade } from './scene.js';
+import { FrameState, drawScene, firstPersonView, zoomedFov, fovY, wideFov, ZOOM_FOV, underwaterFov, findPortals, portalView, mirrorView, portalFade } from './scene.js';
 import { Q3Audio, weaponLoop } from './audio.js';
 import { exportDemo, importDemo, listDemos } from './demo.js';
 import { exportSave, importSave, saveMap } from './save.js';
@@ -68,11 +68,16 @@ let lastFxId = 0;
 let frameNo = 0;
 let scores = [];
 const state = new FrameState();
-const settings = { map: 'q3dm1', detail: 'medium', sfx: 70, music: 40, musicMode: 'tracks', skill: 2, bots: 3, fov: 90, renderer: 'gl', glres: 'native', brightness: 4, predict: true, fraglimit: 20, timelimit: 10, rotate: true, name: 'Player', model: 'sarge/default', rail: 4, gametype: 'ffa', team: 'auto', botai: 0, botguns: 0, chatModel: false, llm: 0, llmModel: LLM_MODELS[0][0], llmUrl: SERVER_DEFAULT.url, llmName: SERVER_DEFAULT.model, binds: {} };
+const settings = { map: 'q3dm1', detail: 'medium', sfx: 70, music: 40, musicMode: 'tracks', skill: 2, bots: 3, fov: 90, renderer: 'gl', glres: 'native', aspect: '4:3', brightness: 4, predict: true, fraglimit: 20, timelimit: 10, rotate: true, name: 'Player', model: 'sarge/default', rail: 4, gametype: 'ffa', team: 'auto', botai: 0, botguns: 0, chatModel: false, llm: 0, llmModel: LLM_MODELS[0][0], llmUrl: SERVER_DEFAULT.url, llmName: SERVER_DEFAULT.model, binds: {} };
 try { Object.assign(settings, JSON.parse(localStorage.getItem('firebird-quake3:settings') || '{}')); } catch { /* defaults */ }
 const saveSettings = () => { try { localStorage.setItem('firebird-quake3:settings', JSON.stringify(settings)); } catch { /* ignore */ } };
 const viewWidth = () => (settings.detail === 'high' ? 640 : settings.detail === 'low' ? 160 : 320);
-const viewHeight = () => (settings.detail === 'high' ? 480 : settings.detail === 'low' ? 120 : 240);
+// the picture's shape: the WebGL painter's is the page's Screen menu, the software ones' 4 by 3
+const ASPECTS = { '4:3': 4 / 3, '16:10': 16 / 10, '16:9': 16 / 9, '21:9': 21 / 9 };
+const viewAspect = () => (settings.renderer === 'gl' ? ASPECTS[settings.aspect] ?? 4 / 3 : 4 / 3);
+const viewHeight = () => Math.round(viewWidth() / viewAspect());
+// cg_fov as the screen's shape shows it: the vertical view of 4 by 3 kept, more to the sides (wideFov)
+const screenFov = (fov) => wideFov(fov, viewWidth(), viewHeight());
 const audio = new Q3Audio();
 audio.setVolume(settings.sfx / 100);
 audio.setMusicVolume(settings.music / 100);
@@ -409,7 +414,7 @@ function viewRow(alpha, now) {
 async function frame() {
   if (!running || paused || saving || document.hidden) {
     lastTic = performance.now();
-    if (paused && renderer && last) { drawScene(renderer, hud, res, map.bsp, last, { faces: [], ents: [] }, { fov: settings.fov, state, playerModel: settings.model.split('/')[0] }); hud.drawCenter('paused', 80, 16); renderer.present(); }
+    if (paused && renderer && last) { drawScene(renderer, hud, res, map.bsp, last, { faces: [], ents: [] }, { fov: screenFov(settings.fov), state, playerModel: settings.model.split('/')[0] }); hud.drawCenter('paused', 80, 16); renderer.present(); }
     nextFrame();
     return;
   }
@@ -464,7 +469,8 @@ async function frame() {
     t = performance.now();
     // one round trip: every row is tagged with what it is (see FRAME_ALL in sql/render.sql); the view is this frame's
     const wantSpeakers = ++frameNo % 10 === 0;
-    curFov = last.MATCH_OVER || last.DEAD ? settings.fov : underwaterFov(zoomedFov(settings.fov, zoomed, now - zoomAt), view.WATERLEVEL, view.TIME_);
+    const narrowFov = last.MATCH_OVER || last.DEAD ? settings.fov : underwaterFov(zoomedFov(settings.fov, zoomed, now - zoomAt), view.WATERLEVEL, view.TIME_);
+    curFov = screenFov(narrowFov);
     audio.setUnderwater(view.WATERLEVEL >= 3 && !last.MATCH_OVER);   // the head under: muffled
     const fpv = firstPersonView(view, state, dt, curFov);   // the kicks, the dips, the bob, the zoom: the view that is painted
     // (its values bound, not written into the text: one statement the engine prepares once and keeps)
@@ -508,7 +514,7 @@ async function frame() {
 
     t = performance.now();
     // the gun is put away past half-way into the zoom: drawn with the zoomed view it would fill the screen
-    const noWeapon = curFov < (settings.fov + ZOOM_FOV) / 2;
+    const noWeapon = narrowFov < (settings.fov + ZOOM_FOV) / 2;
     const portal = await portalFrame(fr, fpv, view.TIME_);
     const tint = drawScene(renderer, hud, res, map.bsp, view, fr, { fov: curFov, sqlProjected: fr.sqlProjected, state, dt, scoreboard, scores, view: fpv, noWeapon, portal, playerModel: settings.model.split('/')[0] });
     renderer.present(tint);
@@ -599,7 +605,8 @@ function makeRenderer() {
   const isGl = renderer instanceof GLRenderer;
   overlayCanvas.hidden = !isGl; glCanvas.hidden = !isGl; canvas.hidden = isGl;
   renderer.setSize(viewWidth(), viewHeight());
-  if (isGl) renderer.setResolution(settings.glres);
+  if (isGl) { renderer.setAspect(viewAspect()); renderer.setResolution(settings.glres); }
+  if (db) setView(db, viewWidth(), viewHeight(), screenFov(settings.fov)).catch((err) => console.error(err));   // (the painters' shapes differ)
   overlayCanvas.style.imageRendering = 'auto';   // (the HUD's 640 by 480 is stretched over the picture smoothly, as Quake III scales its own)
   renderer.setBrightness(settings.brightness);
   renderer.setResources(res);
@@ -618,7 +625,7 @@ async function usePak(buffer, label) {
   if (!maps.length) throw new Error(`${label} has no maps`);
   pak.inflateAll((n) => !/^(demos|video|vm|botfiles|menu|levelshots)\//.test(n) && !n.endsWith('.aas'));
   setStatus(`Copying ${label} models into Firebird…`);
-  res = await loadResources(db, pak, { width: viewWidth(), height: viewHeight(), fov: settings.fov });
+  res = await loadResources(db, pak, { width: viewWidth(), height: viewHeight(), fov: screenFov(settings.fov) });
   if (settings.botai === 2) await restoreBotQ();   // (what the bots learned here before)
   await restoreLlmMemory();                        // (and what the bots a language model leads remember)
   makeRenderer();
@@ -673,8 +680,15 @@ $('map').addEventListener('change', (e) => { settings.map = e.target.value; save
 $('detail').value = settings.detail;
 $('detail').addEventListener('change', async (e) => {
   settings.detail = e.target.value; saveSettings();
-  await setView(db, viewWidth(), viewHeight(), settings.fov);
+  await setView(db, viewWidth(), viewHeight(), screenFov(settings.fov));
   renderer.setSize(viewWidth(), viewHeight());
+});
+// the picture's shape (the WebGL painter's): 4 by 3 as in 1999, or a wide screen's
+$('aspect').value = ASPECTS[settings.aspect] ? settings.aspect : '4:3';
+$('aspect').addEventListener('change', async (e) => {
+  settings.aspect = e.target.value; saveSettings();
+  renderer?.setAspect?.(viewAspect());
+  if (db) await setView(db, viewWidth(), viewHeight(), screenFov(settings.fov));
 });
 // the WebGL picture's resolution (the software painters' is Detail)
 $('glres').value = settings.glres;
