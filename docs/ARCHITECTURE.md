@@ -1356,7 +1356,12 @@ the sides, `movementDir`) and the torso a quarter of that, each swinging there a
 standing still, only once the head is 40 and 25 degrees off (`swingAngle`); the torso takes three quarters
 of the pitch and the legs lean into the run. The swings are cosmetic state kept per player by the scene
 (`FrameState.playerPose`), and the velocity is what the frames show: how far the player went since the
-frame before. `drawPlayer` turns each part on its parent's tag (`mulAxis`). Only a powerup's
+frame before. `drawPlayer` turns each part on its parent's tag (`mulAxis`). The same state holds each
+part's frames as `CG_RunLerpFrame` keeps them (`runLerpFrame`): a change of animation lets the frame under
+way finish, then goes from it to the new animation's first frame and on, so a player does not snap from
+standing into a run; a hit (the health in the frame's row falling) twitches the torso 20 degrees for a
+fifth of a second, one way and then the other (`CG_AddPainTwitch`); the muzzle's light is put where the
+gun is drawn, by the same angles and frames. Only a powerup's
 shell, whose vertices move every frame, is still built in JavaScript. The picture is the canvas's size on
 the page in the display's own pixels (`fitCanvas`: a device pixel ratio of 2 and 2560 across at most; the
 page's *WebGL* menu has half of that, 640×480 and 320×240), antialiased by the context's multisampling,

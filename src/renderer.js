@@ -1111,8 +1111,9 @@ export class Renderer {
     const sub = (a, b) => a.map((v, i) => { let d = (v - b[i]) % 360; if (d > 180) d -= 360; if (d < -180) d += 360; return d; });
     const axis = A ? anglesAxis(...A.legs) : yawAxis(yaw);
     // (the two frames each part is between: the WebGL painter and the tags lerp them, CG_RunLerpFrame)
-    const lf = animLerp(p.anims, legsAnim, time - legsTime);
-    const tf = animLerp(p.anims, torsoAnim < 0 ? legsAnim : torsoAnim, time - (torsoAnim < 0 ? legsTime : torsoTime));
+    // the scene's own, lerped across a change of animation too (runLerpFrame), when it gives them
+    const lf = A?.lf ?? animLerp(p.anims, legsAnim, time - legsTime);
+    const tf = A?.tf ?? animLerp(p.anims, torsoAnim < 0 ? legsAnim : torsoAnim, time - (torsoAnim < 0 ? legsTime : torsoTime));
     const pw = opts.powerups ?? 0;
     this.drawMd3Powered(p.lower, lf, origin, axis, sk, light, opts, pw, time);
     const torso = tagTransform(p.lower, lf, 'tag_torso', origin, axis);

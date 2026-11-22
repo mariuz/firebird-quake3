@@ -6,7 +6,7 @@
 //   node scripts/view-test.mjs
 
 import fs from 'node:fs';
-import { FrameState, firstPersonView, zoomedFov, fovY, wideFov, swingAngle, movementDir, playerAngles, mapTorsoToWeaponFrame, viewTorsoFrame, underwaterFov, sceneLights, gunFlashOrigin, litByDlights, MAX_DLIGHTS, drawRail, drawBolt, findPortals, portalView, mirrorView, portalFade, cameraRoll, perpendicular, floorBelow, floorUnderBox, drawShadows, colorFromString, boltImpact, ringStages, bulletStages, RING_TIME, followBolt, followOtherBolt, spriteExplosion, EXPLOSIONS } from '../src/scene.js';
+import { FrameState, firstPersonView, zoomedFov, fovY, wideFov, swingAngle, movementDir, playerAngles, runLerpFrame, mapTorsoToWeaponFrame, viewTorsoFrame, underwaterFov, sceneLights, gunFlashOrigin, litByDlights, MAX_DLIGHTS, drawRail, drawBolt, findPortals, portalView, mirrorView, portalFade, cameraRoll, perpendicular, floorBelow, floorUnderBox, drawShadows, colorFromString, boltImpact, ringStages, bulletStages, RING_TIME, followBolt, followOtherBolt, spriteExplosion, EXPLOSIONS } from '../src/scene.js';
 import { Renderer, tagTransform, mulAxis, anglesAxis, yawAxis, animLerp, lerpFrames, nearFrame, autospriteQuads, fogST, fogFactor, md3Lod, entityFog, clipFace, polyFog, fogFade } from '../src/renderer.js';
 import { parseDeform, waveValue, deformVertex, envTexCoords, parseShaderScript, surfaceLook, shellMesh, eyeInModel, stageBrightness, stageTcMatrix, stageColor, stageAlpha, shaderStages, fogAdjust, blendFogAdjust, specularAlpha, SPECULAR_LIGHT } from '../src/shader.js';
 import { Md3, parseAnimationCfg, parseSkin } from '../src/md3.js';
@@ -136,6 +136,53 @@ assert(weak.pitch <= -9.9 && strong.pitch >= -10.01, `low on health the kick is 
       && near(run.legs[1], 135) && near(run.torso[1], 101.25) && near(run.torso[0], 30) && near(run.head[1], 90)
       && run.legs[2] < -5 && Math.abs(run.legs[2] + run.legs[0] * 0) < 20 && near(dead.legs[1], 90) && dead.legs[2] === 0,
       `a player's parts: standing, a small turn shows in the head only; strafing left the legs turn 45 degrees to it and the torso a quarter, the torso takes three quarters of the pitch, the legs lean (${run.legs[2].toFixed(1)} of roll, ${run.legs[0].toFixed(1)} of pitch); the dead do not twitch`);
+    {
+      // CG_RunLerpFrame: an animation of 10 frames a second (100 ms a frame), its last 4 looping; one that does not loop
+      const an = [{ first: 100, count: 6, loop: 4, fps: 10 }, { first: 200, count: 3, loop: 0, fps: 10 }];
+      const lf = {};
+      const at = (ms, i = 0, key = 'a') => runLerpFrame(lf, an, i, key, 0, ms);
+      const f0 = at(0), f1 = at(50), f2 = at(130), f3 = at(790);
+      // changed at 800, while going from frame 103 to 104 (due at 800 … the frame under way is finished first)
+      const lfc = {};
+      const c = (ms, i, key) => runLerpFrame(lfc, an, i, key, 0, ms);
+      c(0, 0, 'a'); c(90, 0, 'a'); c(120, 0, 'a');           // going 101 to 102, due at 200
+      const c1 = c(150, 1, 'b');                              // changed: still 101 to 102 until 200
+      const c2 = c(250, 1, 'b');                              // then from 102 to the new one's first frame, due at 300
+      const c3 = c(350, 1, 'b'); c(450, 1, 'b'); c(550, 1, 'b'); const c4 = c(1000, 1, 'b');
+      // first seen 250 ms into an animation that began at 0: taken up where it is
+      const seen = runLerpFrame({}, an, 0, 'a', 0, 250);
+      // the haste: half as fast again
+      const lh = {}; runLerpFrame(lh, an, 0, 'a', 0, 0, 1.5); runLerpFrame(lh, an, 0, 'a', 0, 100, 1.5); const h = runLerpFrame(lh, an, 0, 'a', 0, 200, 1.5);   // its third frame is the fourth
+      assert(f0.a === 100 && f0.b === 101 && f1.a === 100 && f1.b === 101 && Math.abs(f1.t - 0.5) < 1e-9 && f2.a === 101 && f2.b === 102 && Math.abs(f2.t - 0.3) < 1e-9
+        && f3.b >= 102 && f3.b <= 105
+        && c1.a === 101 && c1.b === 102 && Math.abs(c1.t - 0.5) < 1e-9
+        && c2.a === 102 && c2.b === 200 && Math.abs(c2.t - 0.5) < 1e-9
+        && c3.a === 200 && c3.b === 201 && c4.a === 202 && c4.b === 202
+        && seen.a === 102 && seen.b === 103 && h.b === 104,
+        `a part's frames are kept from frame to frame: a change of animation lets the frame under way finish, then lerps from it (${c2.a}) to the new one's first (${c2.b}) and goes on; one that does not loop holds its last; a part first seen takes the animation up where it is; the haste runs it half as fast again`);
+      // the loop goes round its last frames
+      const ll = {}; let seenFrames = new Set();
+      for (let ms = 0; ms <= 3000; ms += 20) { const r = runLerpFrame(ll, an, 0, 'a', 0, ms); seenFrames.add(r.a); seenFrames.add(r.b); }
+      assert([100, 101, 102, 103, 104, 105].every((f) => seenFrames.has(f)) && seenFrames.size === 6, 'a looping animation plays every frame and stays within them');
+    }
+    {
+      // the scene: a hit twitches the torso for a fifth of a second, one way then the other; the frames come with the pose
+      const an = [], st2 = new FrameState();
+      an[22] = { first: 10, count: 1, loop: 1, fps: 10 }; an[11] = { first: 50, count: 1, loop: 1, fps: 10 }; an[15] = { first: 20, count: 8, loop: 8, fps: 10 };
+      const e = { id: 3, x: 0, y: 0, z: 0, yaw: 0, pitch: 0, effects: 0, legsTime: 0, torsoTime: 0 };
+      st2.playerPose(e, 22, 11, false, 0, an, 100);
+      const hit = st2.playerPose(e, 22, 11, false, 0.05, an, 80);
+      const half = st2.playerPose(e, 22, 11, false, 0.15, an, 80);
+      const over = st2.playerPose(e, 22, 11, false, 0.30, an, 80);
+      const hit2 = st2.playerPose(e, 22, 11, false, 0.35, an, 60);
+      // the legs begin to run at 0.4: lerped from the idle frame into the run's first
+      st2.playerPose({ ...e, legsTime: 0.4 }, 15, 11, false, 0.4, an, 60);
+      const turn = st2.playerPose({ ...e, legsTime: 0.4 }, 15, 11, false, 0.45, an, 60);
+      assert(Math.abs(Math.abs(hit.torso[2]) - 20) < 1e-6 && Math.abs(Math.abs(half.torso[2]) - 10) < 1e-6 && over.torso[2] === 0
+        && Math.sign(hit2.torso[2]) === -Math.sign(hit.torso[2]) && hit.lf.b === 10 && hit.tf.b === 50
+        && turn.lf.a === 10 && turn.lf.b === 20 && turn.lf.t > 0 && turn.lf.t < 1,
+        `a hit twitches the torso 20 degrees, gone in a fifth of a second, the next one the other way; the legs go from standing into the run between the two frames (${turn.lf.a} to ${turn.lf.b})`);
+    }
     // a part on its tag keeps its own turn (CG_PositionRotatedEntityOnTag)
     const m = mulAxis(anglesAxis(0, 30, 0), yawAxis(60)), y90 = yawAxis(90);
     assert([...m].every((v, i) => Math.abs(v - y90[i]) < 1e-9), 'a part turned 30 degrees on a parent at 60 faces 90');

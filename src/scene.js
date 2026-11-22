@@ -4,7 +4,7 @@
 // FrameState keeps what outlives a frame: explosions and beams in
 // flight, the pose of rotating brush models, the console lines.
 
-import { angleMatrix, yawAxis, anglesAxis, tagTransform, animFrame, WEAPON_DIRS } from './renderer.js';
+import { angleMatrix, yawAxis, anglesAxis, mulAxis, tagTransform, animFrame, WEAPON_DIRS } from './renderer.js';
 import { ITEMS, WEAPONS, PLAYER_MODEL } from './gamedata.js';
 
 const WEAPON_DIR = { 1: 'gauntlet', 2: 'machinegun', 4: 'shotgun', 8: 'grenadel', 16: 'rocketl', 32: 'lightning', 64: 'railgun', 128: 'plasma', 256: 'bfg' };
@@ -218,7 +218,7 @@ export function sceneLights(state, frame, last, view, time, res = null) {
     // the models, 24 ahead of it at the gun's height
     const fc = firing(e, time) && FLASH_DLIGHT[e.weapon];
     if (fc && !(e.effects & 256)) {
-      const at = gunFlashOrigin(res, e, time);
+      const at = gunFlashOrigin(res, e, time, state?.poses?.get(e.id)?.out ?? null);
       const yaw = (e.yaw * Math.PI) / 180;
       if (at) add(at[0], at[1], at[2], [300 + Math.random() * 32, ...fc]);
       else add(e.x + Math.cos(yaw) * 24, e.y + Math.sin(yaw) * 24, e.z + 16, [300 + Math.random() * 32, ...fc]);
@@ -249,13 +249,15 @@ export function sceneLights(state, frame, last, view, time, res = null) {
  * legs' tag_torso and the torso's tag_weapon at their frames of the moment, as drawPlayer places them; the
  * hand's tag when the gun has no flash tag; null without the models
  */
-export function gunFlashOrigin(res, e, time) {
+export function gunFlashOrigin(res, e, time, pose = null) {
   const p = res?.players?.get(String(e.pmodel ?? '').split('/')[0]);
   if (!p || !e.anims) return null;
   const [legs, torso] = e.anims.split(',').map(Number);
-  const lf = animFrame(p.anims, legs, time - e.legsTime);
-  const tf = animFrame(p.anims, torso < 0 ? legs : torso, time - (torso < 0 ? e.legsTime : e.torsoTime));
-  const t = tagTransform(p.lower, lf, 'tag_torso', [e.x, e.y, e.z], yawAxis(e.yaw));
+  const lf = pose?.lf ?? animFrame(p.anims, legs, time - e.legsTime);
+  const tf = pose?.tf ?? animFrame(p.anims, torso < 0 ? legs : torso, time - (torso < 0 ? e.legsTime : e.torsoTime));
+  // (the body as it is drawn: the pose's angles and frames, when the scene has them)
+  const t = tagTransform(p.lower, lf, 'tag_torso', [e.x, e.y, e.z], pose ? anglesAxis(...pose.legs) : yawAxis(e.yaw));
+  if (t && pose) t.axis = mulAxis(anglesAxis(...pose.torso.map((v, i) => angleSub(v, pose.legs[i]))), t.axis);
   const hand = t && tagTransform(p.upper, tf, 'tag_weapon', t.origin, t.axis);
   if (!hand) return null;
   const id = res.byName?.get(`models/weapons2/${WEAPON_DIRS[e.weapon]}.md3`);
@@ -294,6 +296,50 @@ export function movementDir(vx, vy, yaw, last = 0) {
   return Math.round(rel / 45) % 8;
 }
 
+/**
+ * CG_RunLerpFrame: the two frames a part of a player is between, kept from frame to frame so that a change of
+ * animation is lerped too: the frame under way is finished, then the part goes from it to the new animation's
+ * first frame over that animation's first frame time (CG_SetLerpFrameAnimation's initialLerp), then on through
+ * it. `lf` is the state ({ key, frame, oldFrame, frameTime, oldFrameTime, animationTime, anim }, times in ms),
+ * `key` what says the animation changed (its number and when it began), `start` when it began (a part first
+ * seen takes up the animation where it is by then), `speed` 1.5 with the haste. Returns { a, b, t }.
+ */
+export function runLerpFrame(lf, anims, index, key, start, now, speed = 1) {
+  const anim = anims[index];
+  if (!anim) return { a: 0, b: 0, t: 0 };
+  const L = 1000 / anim.fps;
+  const frameAt = (f) => {
+    f = Math.trunc(f * speed);
+    if (f >= anim.count) f = anim.loop > 0 ? anim.count - anim.loop + ((f - anim.count) % anim.loop) : anim.count - 1;
+    return anim.first + Math.max(0, f);
+  };
+  if (lf.key === undefined) {
+    // first seen (CG_ResetPlayerEntity): in the animation as far as it has run
+    lf.key = key; lf.anim = anim;
+    lf.animationTime = start;
+    lf.frame = lf.oldFrame = frameAt(Math.max(0, now - start) / L);
+    lf.frameTime = lf.oldFrameTime = now;
+  } else if (lf.key !== key) {
+    lf.key = key; lf.anim = anim;
+    lf.animationTime = lf.frameTime + L;
+  }
+  if (now >= lf.frameTime) {
+    lf.oldFrame = lf.frame;
+    lf.oldFrameTime = lf.frameTime;
+    lf.frameTime = now < lf.animationTime ? lf.animationTime : lf.oldFrameTime + L;
+    const f = Math.trunc((lf.frameTime - lf.animationTime) / L);
+    // (an animation at its end holds its last frame and can go on to another at once)
+    if (!(anim.loop > 0) && Math.trunc(f * speed) >= anim.count) lf.frameTime = now;
+    lf.frame = frameAt(f);
+    if (now > lf.frameTime) lf.frameTime = now;
+  }
+  if (lf.frameTime > now + 200) lf.frameTime = now;
+  if (lf.oldFrameTime > now) lf.oldFrameTime = now;
+  const t = lf.frameTime === lf.oldFrameTime ? 1 : (now - lf.oldFrameTime) / (lf.frameTime - lf.oldFrameTime);
+  return { a: lf.oldFrame, b: lf.frame, t };
+}
+
+const PAIN_TWITCH_TIME = 0.2;
 const MOVE_OFFSETS = [0, 22, 45, -22, 0, 22, -45, -22];
 const SWING_SPEED = 0.3;   // cg_swingSpeed
 
@@ -734,14 +780,17 @@ export class FrameState {
    * The angles a player's parts are drawn at this frame (playerAngles), from what the frames show of it: where it
    * looks, its animations, and its velocity, taken from how far it went since the frame before. Kept per player,
    * cosmetic: the swings' state. The same answer for every pass of one frame (the portal's view, the picture).
+   * With the model's animations (`anims`) the answer also has the frames its legs and torso are between (lf, tf:
+   * runLerpFrame, lerped across a change of animation); with its health (`hp`) a hit twitches the torso for a
+   * fifth of a second, to one side and then the other (CG_AddPainTwitch).
    */
-  playerPose(e, legsAnim, torsoAnim, dead, time) {
+  playerPose(e, legsAnim, torsoAnim, dead, time, anims = null, hp = null) {
     let pe = this.poses.get(e.id);
     if (pe && pe.time === time) return pe.out;
     const fresh = !pe || time - pe.time > 0.5 || time < pe.time;
     if (fresh) {
       const s = () => ({ angle: ((e.yaw % 360) + 360) % 360, swinging: false });
-      pe = { torsoYaw: s(), legsYaw: s(), torsoPitch: { angle: 0, swinging: false }, dir: 0, vel: [0, 0, 0] };
+      pe = { torsoYaw: s(), legsYaw: s(), torsoPitch: { angle: 0, swinging: false }, dir: 0, vel: [0, 0, 0], legs: {}, torso: {}, hp, painTime: -1e9, painDir: 0 };
       if (this.poses.size > 256) this.poses.clear();
       this.poses.set(e.id, pe);
     }
@@ -754,6 +803,17 @@ export class FrameState {
     pe.x = e.x; pe.y = e.y; pe.z = e.z; pe.time = time;
     if (!dead) pe.dir = movementDir(pe.vel[0], pe.vel[1], e.yaw, pe.dir);
     pe.out = playerAngles(pe, e.pitch ?? 0, e.yaw, legsAnim, torsoAnim < 0 ? legsAnim : torsoAnim, pe.dir, dead ? [0, 0, 0] : pe.vel, Math.min(100, dt * 1000), dead);
+    if (hp !== null) {
+      if (pe.hp !== null && hp < pe.hp && hp > 0) { pe.painTime = time; pe.painDir ^= 1; }
+      pe.hp = hp;
+      const f = 1 - (time - pe.painTime) / PAIN_TWITCH_TIME;
+      if (f > 0 && f <= 1) pe.out.torso[2] += (pe.painDir ? 20 : -20) * f;
+    }
+    if (anims) {
+      const speed = e.effects & 2048 ? 1.5 : 1, own = torsoAnim >= 0;
+      pe.out.lf = runLerpFrame(pe.legs, anims, legsAnim, `${legsAnim}:${e.legsTime}`, e.legsTime * 1000, time * 1000, speed);
+      pe.out.tf = runLerpFrame(pe.torso, anims, own ? torsoAnim : legsAnim, own ? `${torsoAnim}:${e.torsoTime}` : `${legsAnim}:${e.legsTime}`, (own ? e.torsoTime : e.legsTime) * 1000, time * 1000, speed);
+    }
     return pe.out;
   }
 
@@ -972,6 +1032,9 @@ export function viewTorsoFrame(anims, last, time) {
   return anims[11]?.first ?? 0;
 }
 
+/** The animations of the player model drawn for `pm` (drawPlayer's choice: the first there is when it is missing) */
+const playerAnims = (res, pm) => (res.players?.get(pm) ?? res.players?.values().next().value)?.anims ?? null;
+
 /** The whole picture of one frame into the renderer (not yet presented). Returns the screen tint. */
 export function drawScene(renderer, hud, res, bsp, last, frame, opts = {}) {
   const r = renderer;
@@ -992,7 +1055,7 @@ export function drawScene(renderer, hud, res, bsp, last, frame, opts = {}) {
           const [pm, skin] = e.pmodel.split('/');
           const [legs, torso, , cls] = e.anims.split(',');
           r.drawPlayer(pm, skin, +legs, e.legsTime, +torso, e.torsoTime, cls === 'corpse' ? 0 : e.weapon, [e.x, e.y, e.z], e.yaw, time, light,
-            { powerups: e.effects & POWERUP_BITS, flash: firing(e, time), angles: state.playerPose(e, +legs, +torso, cls === 'corpse' || +legs < 6, time) });
+            { powerups: e.effects & POWERUP_BITS, flash: firing(e, time), angles: state.playerPose(e, +legs, +torso, cls === 'corpse' || +legs < 6, time, playerAnims(res, pm)) });
           continue;
         }
         const m = res.models.get(e.model);
@@ -1022,7 +1085,7 @@ export function drawScene(renderer, hud, res, bsp, last, frame, opts = {}) {
       const [legs, torso, hp, cls] = e.anims.split(',');
       const isCorpse = cls === 'corpse';
       r.drawPlayer(pm, skin, +legs, e.legsTime, +torso, e.torsoTime, isCorpse ? 0 : e.weapon, [e.x, e.y, e.z], e.yaw, time, light,
-        { powerups: e.effects & POWERUP_BITS, flash: firing(e, time), angles: state.playerPose(e, +legs, +torso, isCorpse || +legs < 6, time) });
+        { powerups: e.effects & POWERUP_BITS, flash: firing(e, time), angles: state.playerPose(e, +legs, +torso, isCorpse || +legs < 6, time, playerAnims(res, pm), isCorpse ? null : +hp) });
       // CG_PlayerPowerups: the haste's smoke behind a runner (LEGS_RUN, LEGS_BACK)
       if (e.effects & 2048 && (+legs === 15 || +legs === 16)) state.hasteTrail(e.id, [e.x, e.y, e.z], time);
       // a fresh reward floats over the head (CG_PlayerSprites, CG_PlayerFloatSprite)
