@@ -1106,7 +1106,10 @@ export class Renderer {
     const skin = p.skins.get(skinName) ?? p.skins.get('default') ?? new Map();
     if (skinName === 'red') opts = { ...opts, red: true };   // (only the red team wears the red skin)
     const sk = (surf) => { const img = skin.get(surf.name.toLowerCase()); return img && img !== 'nodraw' ? img : surf.shaders[0] || null; };
-    const axis = yawAxis(yaw);
+    // the parts' own angles (CG_PlayerAngles, from the scene), or all of it at the one yaw
+    const A = opts.angles ?? null;
+    const sub = (a, b) => a.map((v, i) => { let d = (v - b[i]) % 360; if (d > 180) d -= 360; if (d < -180) d += 360; return d; });
+    const axis = A ? anglesAxis(...A.legs) : yawAxis(yaw);
     // (the two frames each part is between: the WebGL painter and the tags lerp them, CG_RunLerpFrame)
     const lf = animLerp(p.anims, legsAnim, time - legsTime);
     const tf = animLerp(p.anims, torsoAnim < 0 ? legsAnim : torsoAnim, time - (torsoAnim < 0 ? legsTime : torsoTime));
@@ -1114,8 +1117,10 @@ export class Renderer {
     this.drawMd3Powered(p.lower, lf, origin, axis, sk, light, opts, pw, time);
     const torso = tagTransform(p.lower, lf, 'tag_torso', origin, axis);
     if (!torso) return;
+    if (A) torso.axis = mulAxis(anglesAxis(...sub(A.torso, A.legs)), torso.axis);   // (CG_PositionRotatedEntityOnTag)
     this.drawMd3Powered(p.upper, tf, torso.origin, torso.axis, sk, light, opts, pw, time);
     const head = tagTransform(p.upper, tf, 'tag_head', torso.origin, torso.axis);
+    if (head && A) head.axis = mulAxis(anglesAxis(...sub(A.head, A.torso)), head.axis);
     if (head) this.drawMd3Powered(p.head, 0, head.origin, head.axis, sk, light, opts, pw, time);
     if (weaponBit) {
       const wm = this.weaponModel(weaponBit);
@@ -1394,6 +1399,13 @@ export function angleMatrix([pitch, yaw, roll]) {
 export function yawAxis(yaw) {
   const s = Math.sin((yaw * Math.PI) / 180), c = Math.cos((yaw * Math.PI) / 180);
   return [c, s, 0, -s, c, 0, 0, 0, 1];
+}
+
+/** MatrixMultiply of two axes (rows forward, left, up): `local` turned as `parent` is */
+export function mulAxis(local, parent) {
+  const out = new Float64Array(9);
+  for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) out[i * 3 + j] = local[i * 3] * parent[j] + local[i * 3 + 1] * parent[3 + j] + local[i * 3 + 2] * parent[6 + j];
+  return out;
 }
 
 /** AnglesToAxis: rows forward, left, up from pitch, yaw, roll (degrees, pitch positive down as the view has it). */

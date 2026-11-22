@@ -264,6 +264,65 @@ export function gunFlashOrigin(res, e, time) {
   return (flash ?? hand).origin;
 }
 
+const angleSub = (a, b) => { let d = (a - b) % 360; if (d > 180) d -= 360; if (d < -180) d += 360; return d; };
+const angleMod = (a) => ((a % 360) + 360) % 360;
+
+/**
+ * CG_SwingAngles: an angle of the body swings to where it should be only once it is more than `swingTol` degrees
+ * off, at `speed` degrees a millisecond (half of it close by, twice far off), and is never left more than
+ * `clampTol` behind. `s` is { angle, swinging }, changed in place; `ms` the frame's time.
+ */
+export function swingAngle(dest, swingTol, clampTol, speed, s, ms) {
+  if (!s.swinging && Math.abs(angleSub(s.angle, dest)) > swingTol) s.swinging = true;
+  if (!s.swinging) return;
+  let swing = angleSub(dest, s.angle);
+  const mag = Math.abs(swing), scale = mag < swingTol * 0.5 ? 0.5 : mag < swingTol ? 1 : 2;
+  let move = ms * scale * speed * (swing >= 0 ? 1 : -1);
+  if (Math.abs(move) >= mag) { move = swing; s.swinging = false; }
+  s.angle = angleMod(s.angle + move);
+  swing = angleSub(dest, s.angle);
+  if (swing > clampTol) s.angle = angleMod(dest - (clampTol - 1));
+  else if (swing < -clampTol) s.angle = angleMod(dest + (clampTol - 1));
+}
+
+/** PM_SetMovementDir from what is seen of a player: which of eight ways it moves by its facing (0 forward, 2
+ *  left, 4 back, 6 right, the odd ones between), from its velocity; hardly moving, the last one, a sideways one
+ *  turned to its diagonal so that the legs do not stop crossed */
+export function movementDir(vx, vy, yaw, last = 0) {
+  if (Math.hypot(vx, vy) < 30) return last === 2 ? 1 : last === 6 ? 7 : last;
+  const rel = angleMod((Math.atan2(vy, vx) * 180) / Math.PI - yaw);
+  return Math.round(rel / 45) % 8;
+}
+
+const MOVE_OFFSETS = [0, 22, 45, -22, 0, 22, -45, -22];
+const SWING_SPEED = 0.3;   // cg_swingSpeed
+
+/**
+ * CG_PlayerAngles: the angles [pitch, yaw, roll] of a player's legs, torso and head. The head looks exactly where
+ * the player does; the legs turn to the way it moves and the torso a quarter of that, both swinging there
+ * (standing still they let the head turn up to 40 and 25 degrees before they follow); the torso takes three
+ * quarters of the pitch; the legs lean into the run. `pe` is the player's cosmetic state ({ torsoYaw, legsYaw,
+ * torsoPitch }: { angle, swinging } each), `vel` its velocity, `ms` the frame's time. (The pain's twitch is not here.)
+ */
+export function playerAngles(pe, pitch, yaw, legsAnim, torsoAnim, dir, vel, ms, dead = false) {
+  const headYaw = angleMod(yaw);
+  // not standing still: everything is centred at once
+  if (legsAnim !== 22 || (torsoAnim !== 11 && torsoAnim !== 12)) pe.torsoYaw.swinging = pe.torsoPitch.swinging = pe.legsYaw.swinging = true;
+  const off = dead ? 0 : MOVE_OFFSETS[dir] ?? 0;
+  swingAngle(headYaw + 0.25 * off, 25, 90, SWING_SPEED, pe.torsoYaw, ms);
+  swingAngle(headYaw + off, 40, 90, SWING_SPEED, pe.legsYaw, ms);
+  swingAngle((pitch > 180 ? pitch - 360 : pitch) * 0.75, 15, 30, 0.1, pe.torsoPitch, ms);
+  const legs = [0, pe.legsYaw.angle, 0], torso = [pe.torsoPitch.angle, pe.torsoYaw.angle, 0];
+  // lean towards the direction of travel
+  const speed = Math.hypot(vel[0], vel[1], vel[2]);
+  if (speed > 0) {
+    const ax = anglesAxis(0, legs[1], 0), k = 0.05;
+    legs[2] -= k * (vel[0] * ax[3] + vel[1] * ax[4] + vel[2] * ax[5]);
+    legs[0] += k * (vel[0] * ax[0] + vel[1] * ax[1] + vel[2] * ax[2]);
+  }
+  return { legs, torso, head: [pitch, headYaw, 0] };
+}
+
 /** R_SetupEntityLighting's dynamic lights on a model: each adds 16 r² / d² (d at least 16) of its colour to the
  *  directed light, from its direction */
 export function litByDlights(light, x, y, z, lights) {
@@ -506,6 +565,7 @@ export class FrameState {
     this.rings = [];          // the rail's impact flashes: { at, axis, t0, end }
     this.teleports = [];      // CG_SpawnEffect: { at, t0, end }
     this.messages = [];       // [{ id, time, text }]
+    this.poses = new Map();   // a player's id → its body's swings (playerPose)
     this.kick = { dmgSeen: null, at: -1e9, pitch: 0, roll: 0, bob: 0 };   // the first-person view's state
     this.bubbles = [];        // { p: [x, y, z], v: [vx, vy, vz], t0, dur } (CG_BubbleTrail's local entities)
     this.lastPos = new Map(); // a missile's position and time at the last frame: its trail starts there
@@ -668,6 +728,33 @@ export class FrameState {
     const last = this.lastPos.get(id);
     if (last && Math.hypot(p[0] - last[0], p[1] - last[1], p[2] - last[2]) < 0.5) { this.lastPos.set(id, [p[0], p[1], p[2], time]); return; }
     this.missileTrail(id, p, time, 2, 20, 0.15, { img: 'gfx/damage/blood_spurt', alpha: 1, fall: 40, grow: 16 });
+  }
+
+  /**
+   * The angles a player's parts are drawn at this frame (playerAngles), from what the frames show of it: where it
+   * looks, its animations, and its velocity, taken from how far it went since the frame before. Kept per player,
+   * cosmetic: the swings' state. The same answer for every pass of one frame (the portal's view, the picture).
+   */
+  playerPose(e, legsAnim, torsoAnim, dead, time) {
+    let pe = this.poses.get(e.id);
+    if (pe && pe.time === time) return pe.out;
+    const fresh = !pe || time - pe.time > 0.5 || time < pe.time;
+    if (fresh) {
+      const s = () => ({ angle: ((e.yaw % 360) + 360) % 360, swinging: false });
+      pe = { torsoYaw: s(), legsYaw: s(), torsoPitch: { angle: 0, swinging: false }, dir: 0, vel: [0, 0, 0] };
+      if (this.poses.size > 256) this.poses.clear();
+      this.poses.set(e.id, pe);
+    }
+    const dt = fresh ? 0 : time - pe.time;
+    if (dt > 0) {
+      const v = [(e.x - pe.x) / dt, (e.y - pe.y) / dt, (e.z - pe.z) / dt];
+      // (a teleport is not a speed; the frames between two tics give the tic's speed in steps: smoothed a little)
+      if (Math.hypot(v[0], v[1], v[2]) < 2000) pe.vel = pe.vel.map((o, i) => o + (v[i] - o) * Math.min(1, dt * 20));
+    }
+    pe.x = e.x; pe.y = e.y; pe.z = e.z; pe.time = time;
+    if (!dead) pe.dir = movementDir(pe.vel[0], pe.vel[1], e.yaw, pe.dir);
+    pe.out = playerAngles(pe, e.pitch ?? 0, e.yaw, legsAnim, torsoAnim < 0 ? legsAnim : torsoAnim, pe.dir, dead ? [0, 0, 0] : pe.vel, Math.min(100, dt * 1000), dead);
+    return pe.out;
   }
 
   /** CG_HasteTrail: a runner with the haste drops a puff under its feet every 100 ms (16 below the origin,
@@ -904,7 +991,8 @@ export function drawScene(renderer, hud, res, bsp, last, frame, opts = {}) {
         if (e.pmodel) {
           const [pm, skin] = e.pmodel.split('/');
           const [legs, torso, , cls] = e.anims.split(',');
-          r.drawPlayer(pm, skin, +legs, e.legsTime, +torso, e.torsoTime, cls === 'corpse' ? 0 : e.weapon, [e.x, e.y, e.z], e.yaw, time, light, { powerups: e.effects & POWERUP_BITS, flash: firing(e, time) });
+          r.drawPlayer(pm, skin, +legs, e.legsTime, +torso, e.torsoTime, cls === 'corpse' ? 0 : e.weapon, [e.x, e.y, e.z], e.yaw, time, light,
+            { powerups: e.effects & POWERUP_BITS, flash: firing(e, time), angles: state.playerPose(e, +legs, +torso, cls === 'corpse' || +legs < 6, time) });
           continue;
         }
         const m = res.models.get(e.model);
@@ -933,7 +1021,8 @@ export function drawScene(renderer, hud, res, bsp, last, frame, opts = {}) {
       const [pm, skin] = e.pmodel.split('/');
       const [legs, torso, hp, cls] = e.anims.split(',');
       const isCorpse = cls === 'corpse';
-      r.drawPlayer(pm, skin, +legs, e.legsTime, +torso, e.torsoTime, isCorpse ? 0 : e.weapon, [e.x, e.y, e.z], e.yaw, time, light, { powerups: e.effects & POWERUP_BITS, flash: firing(e, time) });
+      r.drawPlayer(pm, skin, +legs, e.legsTime, +torso, e.torsoTime, isCorpse ? 0 : e.weapon, [e.x, e.y, e.z], e.yaw, time, light,
+        { powerups: e.effects & POWERUP_BITS, flash: firing(e, time), angles: state.playerPose(e, +legs, +torso, isCorpse || +legs < 6, time) });
       // CG_PlayerPowerups: the haste's smoke behind a runner (LEGS_RUN, LEGS_BACK)
       if (e.effects & 2048 && (+legs === 15 || +legs === 16)) state.hasteTrail(e.id, [e.x, e.y, e.z], time);
       // a fresh reward floats over the head (CG_PlayerSprites, CG_PlayerFloatSprite)

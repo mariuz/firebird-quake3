@@ -51,7 +51,7 @@ the order a player notices them on the demo maps:
 | **Curved surface LOD** | `r_lodCurveError` | the patches are tessellated once at level 4 |
 | **Rail and lightning, the rest** | `cg_oldRail 0`'s spiral of rings (in `color2`; off by default, `cg_oldRail 1`, whose core and rings are drawn); the bots' beams go with the bots between tics in their tic's aim (`followOtherBolt`; the player's follows the view every frame: `followBolt`; both traced through the world, the impact flare, `crackle.md3`, drawn); the browser's trace sees the world, not the doors and players (the tic's hit stands in for those) | `scene.js` `drawRail`, `drawBolt` |
 | **Texture quality** | `r_picmip` | the WebGL painter filters trilinearly with anisotropic filtering (8 at most, `r_ext_texture_filter_anisotropic`) at the display's own resolution, multisampled; the software one picks one mip per polygon |
-| **Model animation** | the lerp from one animation's last frame into the next's first (`CG_SetLerpFrameAnimation` keeps the old frame), the legs' and torso's yaw swing | the WebGL painter lerps a player's vertices and tags between the two frames of the moment within an animation (`animLerp`); the software one draws the nearer frame |
+| **Model animation** | the lerp from one animation's last frame into the next's first (`CG_SetLerpFrameAnimation` keeps the old frame); the pain's twitch of the torso (`CG_AddPainTwitch`); the legs, torso and head turn apart as `CG_PlayerAngles` has them (see §8), but the way a player moves is taken from the velocity the frames show, not from its keys (`PM_SetMovementDir`), and the muzzle's light is still placed as if the body stood straight | the WebGL painter lerps a player's vertices and tags between the two frames of the moment within an animation (`animLerp`); the software one draws the nearer frame |
 | **Wide screens** | any shape of window | the WebGL painter's picture is 4:3, 16:10, 16:9 or 21:9 (the page's *Screen*), the vertical view of 4 by 3 kept (`wideFov`: Quake III keeps the horizontal one and cuts the top and bottom off), the HUD stretched as there; not the window's own shape, no full screen; the software painters are 4 by 3 |
 | **Cinematics** | RoQ videos on `videoMap` surfaces and the intro | none |
 | **2D** | the full menu and HUD art (`gfx/2d/*`) with the `bigchars` font | the status bar, numbers, icons and the console font are drawn; menus are not |
@@ -95,6 +95,11 @@ fuzzy logic from the botfiles. What that leaves out:
 | Memory | the engine is `memory://`; nothing persists between page loads but the settings and a quick save (F5) |
 
 ## 8. Already there (for the record)
+
+The WebGL picture at the display's resolution, antialiased and anisotropically filtered, at 4:3 or a wide
+screen's shape; the models on the graphics card, lerped between the frames of their animation; a player's
+legs, torso and head turning apart (`CG_PlayerAngles`: the legs to the way it moves, the torso pitching with
+the aim, the lean of the run).
 
 Collision against brushes and patch facets, brush models with their own leaf, rotated models;
 `PM_GroundTrace`, slide and step moves, water, the open-ground movement matching `bg_pmove.c` at 8 ms

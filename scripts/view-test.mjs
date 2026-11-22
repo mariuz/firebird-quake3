@@ -6,8 +6,8 @@
 //   node scripts/view-test.mjs
 
 import fs from 'node:fs';
-import { FrameState, firstPersonView, zoomedFov, fovY, wideFov, mapTorsoToWeaponFrame, viewTorsoFrame, underwaterFov, sceneLights, gunFlashOrigin, litByDlights, MAX_DLIGHTS, drawRail, drawBolt, findPortals, portalView, mirrorView, portalFade, cameraRoll, perpendicular, floorBelow, floorUnderBox, drawShadows, colorFromString, boltImpact, ringStages, bulletStages, RING_TIME, followBolt, followOtherBolt, spriteExplosion, EXPLOSIONS } from '../src/scene.js';
-import { Renderer, tagTransform, animLerp, lerpFrames, nearFrame, autospriteQuads, fogST, fogFactor, md3Lod, entityFog, clipFace, polyFog, fogFade } from '../src/renderer.js';
+import { FrameState, firstPersonView, zoomedFov, fovY, wideFov, swingAngle, movementDir, playerAngles, mapTorsoToWeaponFrame, viewTorsoFrame, underwaterFov, sceneLights, gunFlashOrigin, litByDlights, MAX_DLIGHTS, drawRail, drawBolt, findPortals, portalView, mirrorView, portalFade, cameraRoll, perpendicular, floorBelow, floorUnderBox, drawShadows, colorFromString, boltImpact, ringStages, bulletStages, RING_TIME, followBolt, followOtherBolt, spriteExplosion, EXPLOSIONS } from '../src/scene.js';
+import { Renderer, tagTransform, mulAxis, anglesAxis, yawAxis, animLerp, lerpFrames, nearFrame, autospriteQuads, fogST, fogFactor, md3Lod, entityFog, clipFace, polyFog, fogFade } from '../src/renderer.js';
 import { parseDeform, waveValue, deformVertex, envTexCoords, parseShaderScript, surfaceLook, shellMesh, eyeInModel, stageBrightness, stageTcMatrix, stageColor, stageAlpha, shaderStages, fogAdjust, blendFogAdjust, specularAlpha, SPECULAR_LIGHT } from '../src/shader.js';
 import { Md3, parseAnimationCfg, parseSkin } from '../src/md3.js';
 import { postgameMedals, careerAfter, careerAwards } from '../src/hud.js';
@@ -105,6 +105,48 @@ assert(weak.pitch <= -9.9 && strong.pitch >= -10.01, `low on health the kick is 
   const y = fovY(22.5, 640, 480);
   assert(Math.abs(y - 16.97) < 0.05 && Math.abs(y / 75 - 0.226) < 0.002, `zoomed on 4:3, fov_y ${y.toFixed(2)}, the mouse at ${(y / 75).toFixed(3)} of its speed`);
   assert(Math.abs(fovY(90, 640, 480) - 73.74) < 0.05, 'fov_y of 90 on 4:3 is 73.74');
+  {
+    // CG_PlayerAngles: the body's parts turn apart
+    const near = (a, b, e = 1e-6) => Math.abs(((a - b + 540) % 360) - 180) < e;
+    // a swing starts only past its tolerance, goes at its speed (twice it far off), stops on arrival, and is clamped
+    const s = { angle: 0, swinging: false };
+    swingAngle(20, 25, 90, 0.3, s, 50);
+    const still = s.angle === 0 && !s.swinging;
+    swingAngle(60, 25, 90, 0.3, s, 50);      // 60 off: twice the speed, 30 degrees in 50 ms
+    const moved = near(s.angle, 30) && s.swinging;
+    swingAngle(60, 25, 90, 0.3, s, 50);      // 30 off: twice still (not under the tolerance), arrives
+    const there = near(s.angle, 60) && !s.swinging;
+    const c = { angle: 0, swinging: false };
+    swingAngle(170, 25, 90, 0.3, c, 1);      // 170 behind: brought to 89 of it at once
+    assert(still && moved && there && near(c.angle, 81), 'a part swings to its angle only past the tolerance, at twice the speed far off, stops there, and is never left more than 90 degrees behind');
+    assert(movementDir(300, 0, 0) === 0 && movementDir(0, 300, 0) === 2 && movementDir(-300, 0, 0) === 4 && movementDir(0, -300, 0) === 6
+      && movementDir(200, 200, 0) === 1 && movementDir(200, -200, 0) === 7 && movementDir(0, 300, 90) === 0 && movementDir(300, 0, 90) === 6
+      && movementDir(0, 0, 0, 2) === 1 && movementDir(5, 0, 0, 6) === 7 && movementDir(0, 0, 0, 4) === 4,
+      'the way a player moves by its facing, of eight, from its velocity; stopped, the last, a sideways one turned to its diagonal');
+    const pe = () => ({ torsoYaw: { angle: 90, swinging: false }, legsYaw: { angle: 90, swinging: false }, torsoPitch: { angle: 0, swinging: false } });
+    // standing, the head turned 20 degrees and looking 10 down: only the head shows it
+    const st = playerAngles(pe(), 10, 110, 22, 11, 0, [0, 0, 0], 50);
+    // running to its left (strafing), looking 40 down, for a second of frames
+    const p2 = pe(); let run;
+    for (let i = 0; i < 20; i++) run = playerAngles(p2, 40, 90, 15, 11, 2, [-320, 0, 0], 50);
+    // dead: the legs do not turn to the movement
+    const p3 = pe(); let dead;
+    for (let i = 0; i < 20; i++) dead = playerAngles(p3, 0, 90, 1, 1, 2, [0, 0, 0], 50, true);
+    assert(near(st.head[1], 110) && st.head[0] === 10 && near(st.legs[1], 90) && near(st.torso[1], 90) && st.torso[0] === 0
+      && near(run.legs[1], 135) && near(run.torso[1], 101.25) && near(run.torso[0], 30) && near(run.head[1], 90)
+      && run.legs[2] < -5 && Math.abs(run.legs[2] + run.legs[0] * 0) < 20 && near(dead.legs[1], 90) && dead.legs[2] === 0,
+      `a player's parts: standing, a small turn shows in the head only; strafing left the legs turn 45 degrees to it and the torso a quarter, the torso takes three quarters of the pitch, the legs lean (${run.legs[2].toFixed(1)} of roll, ${run.legs[0].toFixed(1)} of pitch); the dead do not twitch`);
+    // a part on its tag keeps its own turn (CG_PositionRotatedEntityOnTag)
+    const m = mulAxis(anglesAxis(0, 30, 0), yawAxis(60)), y90 = yawAxis(90);
+    assert([...m].every((v, i) => Math.abs(v - y90[i]) < 1e-9), 'a part turned 30 degrees on a parent at 60 faces 90');
+    // the scene keeps the swings per player, takes the velocity from the frames, and gives one answer a frame
+    const fs2 = new FrameState();
+    const e = { id: 7, x: 0, y: 0, z: 0, yaw: 0, pitch: 0 };
+    let a;
+    for (let i = 0; i <= 30; i++) a = fs2.playerPose({ ...e, y: i * 16 }, 15, 11, false, i * 0.05);   // 320 a second to its left
+    const again = fs2.playerPose({ ...e, y: 9999 }, 15, 11, false, 30 * 0.05);
+    assert(near(a.legs[1], 45, 0.5) && near(a.torso[1], 11.25, 0.5) && again === a, `the scene turns a strafing player's legs by what the frames show of it (${a.legs[1].toFixed(1)} degrees), once a frame`);
+  }
   const wide = wideFov(90, 640, 360);
   assert(Math.abs(wideFov(90, 640, 480) - 90) < 1e-9 && Math.abs(wide - 106.26) < 0.01 && Math.abs(fovY(wide, 640, 360) - fovY(90, 640, 480)) < 1e-9
     && Math.abs(fovY(wideFov(22.5, 640, 360), 640, 360) - fovY(22.5, 640, 480)) < 1e-9,

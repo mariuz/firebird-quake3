@@ -1349,7 +1349,14 @@ coordinates and triangles (`mesh`); a draw points two sets of attributes at the 
 is between and the vertex shader lerps them and unpacks the normals (`RB_SurfaceMesh`'s
 `LerpMeshVertexes`), so a model costs no upload and moves smoothly at any frame rate, where it stepped at
 the animation's 15 or 20 frames a second. `animLerp` gives the pair (`CG_RunLerpFrame`) and `tagTransform`
-lerps the tags the same way (`R_LerpTag`), so the torso rides the legs smoothly too. Only a powerup's
+lerps the tags the same way (`R_LerpTag`), so the torso rides the legs smoothly too. A player's three
+parts are turned apart as `CG_PlayerAngles` turns them (`playerAngles` in `src/scene.js`): the head looks
+exactly where the player does, the legs turn to the way it moves (22 or 45 degrees for the diagonals and
+the sides, `movementDir`) and the torso a quarter of that, each swinging there at `cg_swingSpeed` and,
+standing still, only once the head is 40 and 25 degrees off (`swingAngle`); the torso takes three quarters
+of the pitch and the legs lean into the run. The swings are cosmetic state kept per player by the scene
+(`FrameState.playerPose`), and the velocity is what the frames show: how far the player went since the
+frame before. `drawPlayer` turns each part on its parent's tag (`mulAxis`). Only a powerup's
 shell, whose vertices move every frame, is still built in JavaScript. The picture is the canvas's size on
 the page in the display's own pixels (`fitCanvas`: a device pixel ratio of 2 and 2560 across at most; the
 page's *WebGL* menu has half of that, 640×480 and 320×240), antialiased by the context's multisampling,
