@@ -68,7 +68,7 @@ let lastFxId = 0;
 let frameNo = 0;
 let scores = [];
 const state = new FrameState();
-const settings = { map: 'q3dm1', detail: 'medium', sfx: 70, music: 40, musicMode: 'tracks', skill: 2, bots: 3, fov: 90, renderer: 'fast', brightness: 4, predict: true, fraglimit: 20, timelimit: 10, rotate: true, name: 'Player', model: 'sarge/default', rail: 4, gametype: 'ffa', team: 'auto', botai: 0, botguns: 0, chatModel: false, llm: 0, llmModel: LLM_MODELS[0][0], llmUrl: SERVER_DEFAULT.url, llmName: SERVER_DEFAULT.model, binds: {} };
+const settings = { map: 'q3dm1', detail: 'medium', sfx: 70, music: 40, musicMode: 'tracks', skill: 2, bots: 3, fov: 90, renderer: 'gl', glres: 'native', brightness: 4, predict: true, fraglimit: 20, timelimit: 10, rotate: true, name: 'Player', model: 'sarge/default', rail: 4, gametype: 'ffa', team: 'auto', botai: 0, botguns: 0, chatModel: false, llm: 0, llmModel: LLM_MODELS[0][0], llmUrl: SERVER_DEFAULT.url, llmName: SERVER_DEFAULT.model, binds: {} };
 try { Object.assign(settings, JSON.parse(localStorage.getItem('firebird-quake3:settings') || '{}')); } catch { /* defaults */ }
 const saveSettings = () => { try { localStorage.setItem('firebird-quake3:settings', JSON.stringify(settings)); } catch { /* ignore */ } };
 const viewWidth = () => (settings.detail === 'high' ? 640 : settings.detail === 'low' ? 160 : 320);
@@ -599,6 +599,8 @@ function makeRenderer() {
   const isGl = renderer instanceof GLRenderer;
   overlayCanvas.hidden = !isGl; glCanvas.hidden = !isGl; canvas.hidden = isGl;
   renderer.setSize(viewWidth(), viewHeight());
+  if (isGl) renderer.setResolution(settings.glres);
+  overlayCanvas.style.imageRendering = 'auto';   // (the HUD's 640 by 480 is stretched over the picture smoothly, as Quake III scales its own)
   renderer.setBrightness(settings.brightness);
   renderer.setResources(res);
   if (map) renderer.setSky(map.sky);
@@ -674,6 +676,9 @@ $('detail').addEventListener('change', async (e) => {
   await setView(db, viewWidth(), viewHeight(), settings.fov);
   renderer.setSize(viewWidth(), viewHeight());
 });
+// the WebGL picture's resolution (the software painters' is Detail)
+$('glres').value = settings.glres;
+$('glres').addEventListener('change', (e) => { settings.glres = e.target.value; saveSettings(); renderer?.setResolution?.(settings.glres); });
 $('renderer').value = settings.renderer;
 $('renderer').addEventListener('change', (e) => {
   const wasGl = settings.renderer === 'gl';

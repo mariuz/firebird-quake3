@@ -8,7 +8,7 @@
 // vertex shader; the player parts hang on their tags as before. The HUD is
 // drawn by the software painter onto a transparent canvas laid over this one.
 
-import { Renderer, yawAxis, anglesAxis, tagTransform, animFrame, autospriteQuads, fogDefs, md3Lod, entityFog, polyFog } from './renderer.js';
+import { Renderer, yawAxis, anglesAxis, tagTransform, animFrame, lerpFrames, autospriteQuads, fogDefs, md3Lod, entityFog, polyFog } from './renderer.js';
 import { loadImage, powerOfTwo } from './image.js';
 import { shellMesh, eyeInModel, stageTcMatrix, stageColor, stageAlpha, fogAdjust, blendFogAdjust } from './shader.js';
 
@@ -220,22 +220,34 @@ void main() {
 
 const MODEL_VS = `#version 300 es
 precision highp float;
+// two frames of the model as the file has them (shorts of 1/64 unit, the normal's two angles in bytes), lerped
+// here (RB_SurfaceMesh's LerpMeshVertexes); a powerup's shell comes as floats, one frame, no normal (uPacked 0)
 layout(location=0) in vec3 aPos;
-layout(location=1) in vec3 aNormal;
+layout(location=1) in vec2 aLatLng;
 layout(location=2) in vec2 aSt;
+layout(location=3) in vec3 aPosB;
+layout(location=4) in vec2 aLatLngB;
 uniform mat4 uProj;
 uniform mat4 uView;
 uniform mat4 uModel;
 uniform vec3 uAmbient;
 uniform vec3 uDirected;
 uniform vec3 uLightDir;
+uniform float uLerp;
+uniform float uPosScale;
+uniform int uPacked;
 out vec2 vSt;
 out vec3 vLight;
 out vec3 vWorld;
+vec3 unpack(vec2 ll) {
+  float lng = ll.x * 0.0246399424, lat = ll.y * 0.0246399424;   // (2 pi / 255)
+  return vec3(cos(lat) * sin(lng), sin(lat) * sin(lng), cos(lng));
+}
 void main() {
-  vec4 w = uModel * vec4(aPos, 1.0);
+  vec4 w = uModel * vec4(mix(aPos, aPosB, uLerp) * uPosScale, 1.0);
   vWorld = w.xyz;
   gl_Position = uProj * uView * w;
+  vec3 aNormal = uPacked == 1 ? mix(unpack(aLatLng), unpack(aLatLngB), uLerp) : vec3(0.0, 0.0, 1.0);
   vec3 n = normalize(mat3(uModel) * aNormal);
   vLight = min(uAmbient + uDirected * max(0.0, dot(n, uLightDir)), vec3(1.0));
   vSt = aSt;
@@ -352,9 +364,14 @@ function compile(gl, vs, fs) {
 export class GLRenderer {
   constructor(canvas, res, overlayCanvas) {
     this.canvas = canvas;
-    const gl = canvas.getContext('webgl2', { alpha: false, antialias: false, depth: true, preserveDrawingBuffer: true });
+    // (antialiased by the browser's multisampling; no copy of every frame kept: nothing reads the canvas back)
+    const gl = canvas.getContext('webgl2', { alpha: false, antialias: true, depth: true, preserveDrawingBuffer: false, powerPreference: 'high-performance' });
     if (!gl) throw new Error('WebGL 2 is not available in this browser');
     this.gl = gl;
+    // anisotropic filtering (r_ext_texture_filter_anisotropic): floors keep their detail at a distance
+    this.aniso = gl.getExtension('EXT_texture_filter_anisotropic');
+    this.maxAniso = this.aniso ? Math.min(8, gl.getParameter(this.aniso.MAX_TEXTURE_MAX_ANISOTROPY_EXT)) : 0;
+    this.resolution = 'native';
     this.res = res;
     this.pak = res.pak;
     this.overlay = new Renderer(overlayCanvas, res, { alpha: true });   // the HUD painter, on the transparent canvas above
@@ -370,7 +387,7 @@ export class GLRenderer {
     this.particles = [];
     this.time = 0;
     this.skyLook = null;
-    this.meshCache = new Map();      // `${model}:${surface}:${frame}` → Float32Array pos+normal+st
+    this.meshCache = new Map();      // an MD3 surface → its buffers on the graphics card (mesh)
     this.proj = new Float32Array(16);
     this.viewM = new Float32Array(16);
     this.identity = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
@@ -380,17 +397,34 @@ export class GLRenderer {
     this.white = this.makeTexture(new Uint8Array([255, 255, 255, 255]), 1, 1, false);
     this.alphaGroups = [];
     this.zb = { fill: () => { gl.clear(gl.DEPTH_BUFFER_BIT); } };   // the view weapon's depth hack
-    this.setSize(320, 240);
+    this.setSize();
   }
 
   get w() { return this.overlay.w; }
   get h() { return this.overlay.h; }
 
-  setSize(w, h) {
-    this.canvas.width = w;
-    this.canvas.height = h;
-    this.overlay.setSize(w, h);
-    this.gl.viewport(0, 0, w, h);
+  /** The HUD is painted on Quake III's virtual screen of 640 by 480 whatever the picture's size; the picture's
+   *  own size is the canvas's on the page, in the display's pixels (fitCanvas) */
+  setSize() {
+    this.overlay.setSize(640, 480);
+    this.fitCanvas();
+  }
+
+  /** How many pixels the picture has: 'native' the display's own for the canvas as it is laid out (a device
+   *  pixel ratio of 2 at most, 2560 across at most), 'half' half of that each way, or 640 or 320 across */
+  setResolution(mode) { this.resolution = mode; this.fitCanvas(); }
+
+  fitCanvas() {
+    const c = this.canvas, mode = this.resolution;
+    let w;
+    if (mode === '640' || mode === '320') w = Number(mode);
+    else {
+      const css = c.clientWidth || 640, dpr = Math.min(2, (typeof window !== 'undefined' && window.devicePixelRatio) || 1);
+      w = Math.round(css * dpr * (mode === 'half' ? 0.5 : 1));
+      w = Math.max(320, Math.min(2560, w));
+    }
+    const h = Math.round((w * 3) / 4);
+    if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
   }
 
   setBrightness(scale) {
@@ -469,8 +503,11 @@ export class GLRenderer {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, repeat ? gl.REPEAT : gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, repeat ? gl.REPEAT : gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-    if (mip) { gl.generateMipmap(gl.TEXTURE_2D); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR); }
-    else gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    if (mip) {
+      gl.generateMipmap(gl.TEXTURE_2D);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+      if (this.maxAniso > 1) gl.texParameterf(gl.TEXTURE_2D, this.aniso.TEXTURE_MAX_ANISOTROPY_EXT, this.maxAniso);
+    } else gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
     return t;
   }
 
@@ -520,6 +557,7 @@ export class GLRenderer {
   beginFrame(view) {
     this.view = view;
     const gl = this.gl;
+    this.fitCanvas();   // (the page may have been resized, or moved to another display)
     const w = this.canvas.width, h = this.canvas.height;
     const yaw = (view.yaw * Math.PI) / 180, pitch = (view.pitch * Math.PI) / 180;
     const sy = Math.sin(yaw), cy = Math.cos(yaw), sp = Math.sin(pitch), cp = Math.cos(pitch);
@@ -893,25 +931,18 @@ export class GLRenderer {
   }
 
   // ── MD3 models ──────────────────────────────────────────────────────────
-  mesh(mdl, si, frame) {
-    const key = `${mdl.name}:${si}:${frame}`;
-    let m = this.meshCache.get(key);
+  /** A surface's buffers on the graphics card, made once: every frame's vertices as the file has them (8 bytes a
+   *  vertex), the texture coordinates, the triangles. A frame is an offset into the first. */
+  mesh(surf) {
+    let m = this.meshCache.get(surf);
     if (m) return m;
-    const surf = mdl.surfaces[si];
-    const nv = surf.numVerts;
-    const out = new Float32Array(nv * 8);
-    const base = frame * nv * 4;
-    for (let i = 0; i < nv; i++) {
-      const p = base + i * 4, o = i * 8;
-      out[o] = surf.xyz[p] / 64; out[o + 1] = surf.xyz[p + 1] / 64; out[o + 2] = surf.xyz[p + 2] / 64;
-      const packed = surf.xyz[p + 3] & 0xffff;
-      const lat = ((packed >> 8) & 255) * (2 * Math.PI / 255), lng = (packed & 255) * (2 * Math.PI / 255);
-      out[o + 3] = Math.cos(lat) * Math.sin(lng); out[o + 4] = Math.sin(lat) * Math.sin(lng); out[o + 5] = Math.cos(lng);
-      out[o + 6] = surf.st[i * 2]; out[o + 7] = surf.st[i * 2 + 1];
-    }
-    if (this.meshCache.size > 4000) this.meshCache.clear();
-    this.meshCache.set(key, out);
-    return out;
+    const gl = this.gl;
+    m = { xyz: gl.createBuffer(), st: gl.createBuffer(), tris: gl.createBuffer() };
+    gl.bindBuffer(gl.ARRAY_BUFFER, m.xyz); gl.bufferData(gl.ARRAY_BUFFER, surf.xyz, gl.STATIC_DRAW);
+    gl.bindBuffer(gl.ARRAY_BUFFER, m.st); gl.bufferData(gl.ARRAY_BUFFER, Float32Array.from(surf.st), gl.STATIC_DRAW);
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, m.tris); gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, Uint16Array.from(surf.tris), gl.STATIC_DRAW);
+    this.meshCache.set(surf, m);
+    return m;
   }
 
   /** A powerup's shell as the model program's vertices: the moved positions, an up normal (it is drawn full
@@ -930,7 +961,8 @@ export class GLRenderer {
   drawMd3(mdl, frame, origin, axis, skin, light, opts = {}) {
     const gl = this.gl, u = this.model.u;
     mdl = md3Lod(mdl, frame, origin, this.view, Math.tan((this.view.fov * Math.PI) / 360) * this.canvas.height / this.canvas.width);
-    const fr = Math.min(Math.max(frame | 0, 0), mdl.numFrames - 1);
+    // the frame, or the two it is between (animLerp): lerped on the graphics card
+    const lf = lerpFrames(frame, mdl.numFrames), fr = lf.t < 0.5 ? lf.a : lf.b;
     gl.useProgram(this.model.p);
     gl.uniformMatrix4fv(u.uProj, false, this.proj);
     gl.uniformMatrix4fv(u.uView, false, this.viewM);
@@ -966,24 +998,42 @@ export class GLRenderer {
     }
     this.setBlend(blend);
     if (opts.twoSided) gl.disable(gl.CULL_FACE); else gl.enable(gl.CULL_FACE);
-    gl.bindBuffer(gl.ARRAY_BUFFER, this.dynVbo);
-    gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 32, 0);
-    gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 3, gl.FLOAT, false, 32, 12);
-    gl.enableVertexAttribArray(2); gl.vertexAttribPointer(2, 2, gl.FLOAT, false, 32, 24);
-    gl.disableVertexAttribArray(3);
-    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.dynIbo);
     const shell = opts.shell ?? null, eye = shell ? eyeInModel(this.view, origin, axis) : null;
-    mdl.surfaces.forEach((surf, si) => {
+    gl.enableVertexAttribArray(0); gl.enableVertexAttribArray(2); gl.enableVertexAttribArray(3);
+    if (shell) { gl.disableVertexAttribArray(1); gl.disableVertexAttribArray(4); }
+    else { gl.enableVertexAttribArray(1); gl.enableVertexAttribArray(4); }
+    gl.uniform1i(u.uPacked, shell ? 0 : 1);
+    gl.uniform1f(u.uPosScale, shell ? 1 : 1 / 64);
+    gl.uniform1f(u.uLerp, shell ? 0 : lf.t);
+    gl.activeTexture(gl.TEXTURE0);
+    for (const surf of mdl.surfaces) {
       const img = skin ? skin(surf) : null;
-      if (img === false) return;
+      if (img === false) continue;
       const tex = this.texture(shell ? shell.look.image : this.modelImage(img ?? (surf.shaders[0] || '')));
-      gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, tex.tex);
+      gl.bindTexture(gl.TEXTURE_2D, tex.tex);
       gl.uniform1i(u.uAlphaTest, tex.hasAlpha && blend === 'opaque' ? 1 : 0);
-      gl.bufferData(gl.ARRAY_BUFFER, shell ? this.shellBuffer(surf, fr, eye, shell) : this.mesh(mdl, si, fr), gl.DYNAMIC_DRAW);
-      if (!surf.tris32) surf.tris32 = new Uint32Array(surf.tris);
-      gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, surf.tris32, gl.DYNAMIC_DRAW);
-      gl.drawElements(gl.TRIANGLES, surf.numTris * 3, gl.UNSIGNED_INT, 0);
-    });
+      const m = this.mesh(surf);
+      if (shell) {
+        // (a shell's vertices move every frame: deformVertexes wave and the environment map, made here)
+        gl.bindBuffer(gl.ARRAY_BUFFER, this.dynVbo);
+        gl.bufferData(gl.ARRAY_BUFFER, this.shellBuffer(surf, fr, eye, shell), gl.DYNAMIC_DRAW);
+        gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 32, 0);
+        gl.vertexAttribPointer(3, 3, gl.FLOAT, false, 32, 0);
+        gl.vertexAttribPointer(2, 2, gl.FLOAT, false, 32, 24);
+      } else {
+        const stride = surf.numVerts * 8, a = Math.min(lf.a, surf.numFrames - 1) * stride, b = Math.min(lf.b, surf.numFrames - 1) * stride;
+        gl.bindBuffer(gl.ARRAY_BUFFER, m.xyz);
+        gl.vertexAttribPointer(0, 3, gl.SHORT, false, 8, a);
+        gl.vertexAttribPointer(1, 2, gl.UNSIGNED_BYTE, false, 8, a + 6);
+        gl.vertexAttribPointer(3, 3, gl.SHORT, false, 8, b);
+        gl.vertexAttribPointer(4, 2, gl.UNSIGNED_BYTE, false, 8, b + 6);
+        gl.bindBuffer(gl.ARRAY_BUFFER, m.st);
+        gl.vertexAttribPointer(2, 2, gl.FLOAT, false, 0, 0);
+      }
+      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, m.tris);
+      gl.drawElements(gl.TRIANGLES, surf.numTris * 3, gl.UNSIGNED_SHORT, 0);
+    }
+    gl.disableVertexAttribArray(3); gl.disableVertexAttribArray(4);
     gl.disable(gl.BLEND);
     gl.depthMask(true);
     gl.enable(gl.CULL_FACE);

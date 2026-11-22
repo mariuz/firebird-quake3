@@ -7,7 +7,7 @@
 
 import fs from 'node:fs';
 import { FrameState, firstPersonView, zoomedFov, fovY, mapTorsoToWeaponFrame, viewTorsoFrame, underwaterFov, sceneLights, gunFlashOrigin, litByDlights, MAX_DLIGHTS, drawRail, drawBolt, findPortals, portalView, mirrorView, portalFade, cameraRoll, perpendicular, floorBelow, floorUnderBox, drawShadows, colorFromString, boltImpact, ringStages, bulletStages, RING_TIME, followBolt, followOtherBolt, spriteExplosion, EXPLOSIONS } from '../src/scene.js';
-import { Renderer, tagTransform, autospriteQuads, fogST, fogFactor, md3Lod, entityFog, clipFace, polyFog, fogFade } from '../src/renderer.js';
+import { Renderer, tagTransform, animLerp, lerpFrames, nearFrame, autospriteQuads, fogST, fogFactor, md3Lod, entityFog, clipFace, polyFog, fogFade } from '../src/renderer.js';
 import { parseDeform, waveValue, deformVertex, envTexCoords, parseShaderScript, surfaceLook, shellMesh, eyeInModel, stageBrightness, stageTcMatrix, stageColor, stageAlpha, shaderStages, fogAdjust, blendFogAdjust, specularAlpha, SPECULAR_LIGHT } from '../src/shader.js';
 import { Md3, parseAnimationCfg, parseSkin } from '../src/md3.js';
 import { postgameMedals, careerAfter, careerAwards } from '../src/hud.js';
@@ -808,7 +808,27 @@ if (fs.existsSync('public/pak/pak0.pk3')) {
   const z = (f) => tagTransform(hand, f, 'tag_weapon', [0, 0, 0], [1, 0, 0, 0, 1, 0, 0, 0, 1]).origin[2];
   const lowest = Math.min(...[6, 7, 8, 9, 10, 11, 12, 13, 14].map(z));
   assert(z(0) - lowest > 5, `the machinegun's hand lowers the gun while switching (${(z(0) - lowest).toFixed(1)} units at the bottom)`);
+  // between two frames the tag is between the two (R_LerpTag), its axes still unit
+  const id = [1, 0, 0, 0, 1, 0, 0, 0, 1];
+  const ta = tagTransform(hand, 7, 'tag_weapon', [0, 0, 0], id), tb = tagTransform(hand, 8, 'tag_weapon', [0, 0, 0], id);
+  const tm = tagTransform(hand, { a: 7, b: 8, t: 0.25 }, 'tag_weapon', [0, 0, 0], id);
+  assert([0, 1, 2].every((i) => Math.abs(tm.origin[i] - (ta.origin[i] * 0.75 + tb.origin[i] * 0.25)) < 1e-6)
+    && [0, 3, 6].every((i) => Math.abs(Math.hypot(tm.axis[i], tm.axis[i + 1], tm.axis[i + 2]) - 1) < 1e-6)
+    && tagTransform(hand, { a: 7, b: 8, t: 0 }, 'tag_weapon', [0, 0, 0], id).origin[2] === ta.origin[2],
+    'a tag between two frames is lerped between them, a quarter of the way here, its axes of length one');
   const anims = parseAnimationCfg(pak.text('models/players/sarge/animation.cfg'));
+  {
+    // the two frames an animation is between (CG_RunLerpFrame): within it, round its loop, held at the end of one that does not loop
+    const run = anims.findIndex((a) => a.loop > 0 && a.count > 3), a = anims[run], dead = anims[0];
+    const mid = animLerp(anims, run, 1.5 / a.fps), wrap = animLerp(anims, run, (a.count - 0.75) / a.fps), end = animLerp(anims, 0, 100);
+    assert(mid.a === a.first + 1 && mid.b === a.first + 2 && Math.abs(mid.t - 0.5) < 1e-9
+      && wrap.a === a.first + a.count - 1 && wrap.b === a.first + a.count - a.loop && Math.abs(wrap.t - 0.25) < 1e-9
+      && end.a === dead.first + dead.count - 1 && end.b === end.a,
+      `an animation is drawn between two of its frames: halfway from its second to its third, from its last back into its loop (${wrap.a} to ${wrap.b}), the death held on its last`);
+    const lf = lerpFrames({ a: 5, b: 999, t: 0.7 }, 10);
+    assert(lf.a === 5 && lf.b === 9 && nearFrame({ a: 5, b: 6, t: 0.7 }, 10) === 6 && nearFrame({ a: 5, b: 6, t: 0.2 }, 10) === 5 && nearFrame(3.9, 10) === 3 && lerpFrames(42, 10).b === 9,
+      'a frame is a number or a pair, kept within the model\'s frames; a painter that does not lerp takes the nearer');
+  }
   assert(anims[9].first + anims[9].count === anims[10].first && anims[9].count + anims[10].count === 9, 'sarge\'s drop and raise are the nine frames in a row the mapping expects');
   // the levels of detail's surfaces lose their _1 and _2 (R_LoadMD3), so they find the skin's entries
   // the point trace (CM_BoxTrace with no box) through q3dm1's brushes and facets: rays from every spawn point

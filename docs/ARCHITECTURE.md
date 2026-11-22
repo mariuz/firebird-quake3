@@ -1343,8 +1343,21 @@ directed × normal) and drawn through the same span code. Particles are points w
 each frame builds an index buffer from the face list grouped by shader and lightmap page and draws
 each group with the `WORLD` program (texture × lightmap page, or the shader's stages one by one, the sky
 by pixel direction), the `MODEL` program for MD3s (light grid colour in
-the vertex shader) and the `SPRITE` program. The HUD, messages and the 2D pictures are drawn by a
-software `Renderer` with `alpha: true` onto an overlay canvas on top; `#screen` (2D) and `#glscreen`
+the vertex shader) and the `SPRITE` program. An MD3 surface's frames go to the card once, as the file has
+them (8 bytes a vertex: three shorts of 1/64 unit and the normal's two angles in bytes), with its texture
+coordinates and triangles (`mesh`); a draw points two sets of attributes at the two frames the animation
+is between and the vertex shader lerps them and unpacks the normals (`RB_SurfaceMesh`'s
+`LerpMeshVertexes`), so a model costs no upload and moves smoothly at any frame rate, where it stepped at
+the animation's 15 or 20 frames a second. `animLerp` gives the pair (`CG_RunLerpFrame`) and `tagTransform`
+lerps the tags the same way (`R_LerpTag`), so the torso rides the legs smoothly too. Only a powerup's
+shell, whose vertices move every frame, is still built in JavaScript. The picture is the canvas's size on
+the page in the display's own pixels (`fitCanvas`: a device pixel ratio of 2 and 2560 across at most; the
+page's *WebGL* menu has half of that, 640×480 and 320×240), antialiased by the context's multisampling,
+the textures filtered anisotropically where the browser has the extension. It stays on WebGL 2, which
+Chrome, Firefox, Edge and Safari all ship: the painter spends 2 ms a frame in JavaScript and about ten
+draw calls on a view, so WebGPU, not yet on by default everywhere, would buy nothing the tic and the frame
+query do not dwarf. The HUD, messages and the 2D pictures are drawn by a
+software `Renderer` with `alpha: true` onto an overlay canvas on top, always Quake III's virtual screen of 640 by 480 scaled to the picture; `#screen` (2D) and `#glscreen`
 (WebGL) are separate canvases because a canvas can hold only one kind of context.
 
 ---

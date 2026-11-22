@@ -102,7 +102,7 @@ export const LOD_SCALE = 5;
 export function md3Lod(mdl, frame, origin, view, tanY) {
   const lods = mdl.lods;
   if (!lods || lods.length < 2 || !view?.fwd) return mdl;
-  const f = mdl.frames[Math.min(Math.max(frame | 0, 0), mdl.numFrames - 1)];
+  const f = mdl.frames[lerpFrames(frame, mdl.numFrames).b];
   if (!f) return mdl;
   // RadiusFromBounds
   let r2 = 0;
@@ -929,7 +929,7 @@ export class Renderer {
   drawMd3(mdl, frame, origin, axis, skin, light, opts = {}) {
     const view = this.view;
     mdl = md3Lod(mdl, frame, origin, view, Math.tan((view.fov * Math.PI) / 360) * this.h / this.w);
-    const fr = Math.min(Math.max(frame | 0, 0), mdl.numFrames - 1);
+    const fr = nearFrame(frame, mdl.numFrames);
     const near = opts.near ?? 4;
     const ox = origin[0] - view.x, oy = origin[1] - view.y, oz = origin[2] - view.z;
     const fwd = view.fwd, right = view.right, up = view.up;
@@ -1107,8 +1107,9 @@ export class Renderer {
     if (skinName === 'red') opts = { ...opts, red: true };   // (only the red team wears the red skin)
     const sk = (surf) => { const img = skin.get(surf.name.toLowerCase()); return img && img !== 'nodraw' ? img : surf.shaders[0] || null; };
     const axis = yawAxis(yaw);
-    const lf = animFrame(p.anims, legsAnim, time - legsTime);
-    const tf = animFrame(p.anims, torsoAnim < 0 ? legsAnim : torsoAnim, time - (torsoAnim < 0 ? legsTime : torsoTime));
+    // (the two frames each part is between: the WebGL painter and the tags lerp them, CG_RunLerpFrame)
+    const lf = animLerp(p.anims, legsAnim, time - legsTime);
+    const tf = animLerp(p.anims, torsoAnim < 0 ? legsAnim : torsoAnim, time - (torsoAnim < 0 ? legsTime : torsoTime));
     const pw = opts.powerups ?? 0;
     this.drawMd3Powered(p.lower, lf, origin, axis, sk, light, opts, pw, time);
     const torso = tagTransform(p.lower, lf, 'tag_torso', origin, axis);
@@ -1410,8 +1411,16 @@ export function anglesAxis(pitch, yaw, roll) {
 export function tagTransform(mdl, frame, tagName, origin, axis) {
   const ti = mdl.tagIndex(tagName);
   if (ti < 0) return null;
-  const fr = Math.min(Math.max(frame | 0, 0), mdl.numFrames - 1);
-  const tag = mdl.tags[fr][ti];
+  const lf = lerpFrames(frame, mdl.numFrames);
+  let tag = mdl.tags[lf.a][ti];
+  if (lf.t > 0 && lf.b !== lf.a) {
+    // R_LerpTag: the origin and the axes lerped between the two frames, the axes made unit again
+    const tb = mdl.tags[lf.b][ti], t = lf.t, mix = (x, y) => x + (y - x) * t;
+    const ax = new Float64Array(9);
+    for (let i = 0; i < 9; i++) ax[i] = mix(tag.axis[i], tb.axis[i]);
+    for (let i = 0; i < 9; i += 3) { const l = Math.hypot(ax[i], ax[i + 1], ax[i + 2]) || 1; ax[i] /= l; ax[i + 1] /= l; ax[i + 2] /= l; }
+    tag = { origin: [mix(tag.origin[0], tb.origin[0]), mix(tag.origin[1], tb.origin[1]), mix(tag.origin[2], tb.origin[2])], axis: ax };
+  }
   const o = tag.origin, ta = tag.axis;
   const out = new Float64Array(9);
   // out[i] = Σ_k tag.axis[i][k] · parent.axis[k]
@@ -1435,5 +1444,28 @@ export function animFrame(anims, index, elapsed) {
   }
   return a.first + f;
 }
+
+/** The two frames of an animation `elapsed` seconds in and how far between them: { a, b, t }, what a model is
+ *  drawn at (CG_RunLerpFrame's oldFrame, frame and backlerp). A painter that does not lerp takes the nearer. */
+export function animLerp(anims, index, elapsed) {
+  const a = anims[index];
+  if (!a) return 0;
+  const at = (f) => {
+    if (f >= a.count) f = a.loop > 0 ? a.count - a.loop + ((f - (a.count - a.loop)) % a.loop) : a.count - 1;
+    return a.first + f;
+  };
+  const x = Math.max(0, elapsed) * a.fps, k = Math.floor(x);
+  return { a: at(k), b: at(k + 1), t: x - k };
+}
+
+/** A frame as the painters are given it, a number or animLerp's pair, as a pair within the model's frames */
+export function lerpFrames(frame, numFrames) {
+  const clamp = (f) => Math.min(Math.max(f | 0, 0), numFrames - 1);
+  if (typeof frame === 'object' && frame) return { a: clamp(frame.a), b: clamp(frame.b), t: frame.t };
+  const f = clamp(frame);
+  return { a: f, b: f, t: 0 };
+}
+/** The one frame nearest to it */
+export function nearFrame(frame, numFrames) { const lf = lerpFrames(frame, numFrames); return lf.t < 0.5 ? lf.a : lf.b; }
 
 export { ANIM, SURF };

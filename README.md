@@ -213,7 +213,9 @@ renderer** does what tr_bsp.c and tr_shade.c did: the world's vertices sit on th
 the faces Firebird selected are grouped by shader and lightmap page and drawn with one call per group, a
 fragment shader multiplies the texture by the lightmap (with the overbright shift baked into the page) and
 adds the glow stages with their `blendFunc` and `tcMod`s, the sky is the shader's cloud layers by pixel
-direction, and the MD3 models are lit from the light grid in the vertex shader. The HUD is painted by the
+direction, and the MD3 models are lit from the light grid in the vertex shader, which also lerps them
+between two frames of their animation. It is the default, at your display's own resolution, antialiased,
+with anisotropic filtering (the **WebGL** menu has lower resolutions for a slow card or the look of 1999). The HUD is painted by the
 software painter onto a transparent canvas laid over it. It paints a frame in about a millisecond.
 
 The **software** painter is the one the headless screenshots and the tests use: a 32-bit framebuffer and a z-buffer. Polygons are scan-converted with perspective-correct spans — the

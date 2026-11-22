@@ -79,6 +79,8 @@ explosion sprites, beams) and nothing else. The renderers never query the databa
 | the tic entry point, think/physics dispatch, scoring, `init_map` | the end of `sql/bots.sql` |
 | what a frame returns | `sql/render.sql` (`frame_all`), read in `src/scene.js` `FrameState.parse` |
 | area portals (a shut door hides the areas behind it) | `area_flood`, `areas_connected`, `ent_areas`, `adjust_area_portal` in `sql/game.sql` (called by `door_go_up`/`door_hit_bottom`); `Bsp.boxAreas` in `src/bsp.js`; `mark_faces` in `sql/render.sql` |
+| the WebGL picture's resolution, antialiasing, texture filtering | `fitCanvas`, `setResolution`, the context's options and `makeTexture` in `src/renderer-gl.js`; `settings.glres` and the *WebGL* menu in `src/main.js` (the HUD's overlay is always 640×480) |
+| models on the graphics card, their animation between frames | `mesh` and `drawMd3` in `src/renderer-gl.js` (`MODEL_VS`: two frames' attributes, `uLerp`; a shell goes as floats, `uPacked` 0); `animLerp`, `lerpFrames`, `nearFrame` and the lerped `tagTransform` in `src/renderer.js`: a frame is a number or `{ a, b, t }` |
 | interpolation between tics, local prediction | `src/main.js`: `viewRow`, `interpolateFrame`, `poseOf`; the eye clamp in `view_setup` |
 | view kicks, landing dips, bob, gun sway, zoom | `src/scene.js` `firstPersonView`, `zoomedFov`; the zoom key and sensitivity in `src/main.js` (tested by `npm run test:view`); the hit's source in `t_damage`, the fall's size in `impact` |
 | shader features (chrome, deforms, autosprite) | `surfaceLook`, `parseDeform`, `deformVertex`, `envTexCoords`, `specularAlpha` in `src/shader.js`; the world shaders in `src/renderer-gl.js`; `chromeFace` and `autospriteQuads` in `src/renderer.js` |

@@ -50,7 +50,9 @@ the order a player notices them on the demo maps:
 | **Entity shadows, the rest** | the stencil shadows (`cg_shadows 2`) and the projected ones (3); the blob's floor is the 30-unit box's, sampled at nine points of it | `scene.js` `drawShadows` |
 | **Curved surface LOD** | `r_lodCurveError` | the patches are tessellated once at level 4 |
 | **Rail and lightning, the rest** | `cg_oldRail 0`'s spiral of rings (in `color2`; off by default, `cg_oldRail 1`, whose core and rings are drawn); the bots' beams go with the bots between tics in their tic's aim (`followOtherBolt`; the player's follows the view every frame: `followBolt`; both traced through the world, the impact flare, `crackle.md3`, drawn); the browser's trace sees the world, not the doors and players (the tic's hit stands in for those) | `scene.js` `drawRail`, `drawBolt` |
-| **Texture quality** | anisotropic filtering, `r_picmip` | the WebGL painter filters trilinearly (Quake III's default `GL_LINEAR_MIPMAP_NEAREST` is coarser); the software one picks one mip per polygon |
+| **Texture quality** | `r_picmip` | the WebGL painter filters trilinearly with anisotropic filtering (8 at most, `r_ext_texture_filter_anisotropic`) at the display's own resolution, multisampled; the software one picks one mip per polygon |
+| **Model animation** | the lerp from one animation's last frame into the next's first (`CG_SetLerpFrameAnimation` keeps the old frame), the legs' and torso's yaw swing | the WebGL painter lerps a player's vertices and tags between the two frames of the moment within an animation (`animLerp`); the software one draws the nearer frame |
+| **Wide screens** | any aspect, the field of view kept vertical | the picture is 4 by 3 at any size |
 | **Cinematics** | RoQ videos on `videoMap` surfaces and the intro | none |
 | **2D** | the full menu and HUD art (`gfx/2d/*`) with the `bigchars` font | the status bar, numbers, icons and the console font are drawn; menus are not |
 | **r_speeds-style stats** | | the stats line shows tic, query, paint and particles |

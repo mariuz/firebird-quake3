@@ -73,10 +73,16 @@
           <option value="30">30 min</option>
         </select></label>
         <label title="After the intermission, go on to the next arena of the pak instead of replaying this one">Rotate <input id="rotate" type="checkbox"></label>
-        <label>Detail <select id="detail">
+        <label title="The software painters' resolution (the WebGL painter has its own, next)">Detail <select id="detail">
           <option value="high">640×480</option>
           <option value="medium">320×240</option>
           <option value="low">160×120</option>
+        </select></label>
+        <label title="The WebGL painter's resolution: your display's own pixels, antialiased, or fewer for a slow graphics card or the look of 1999">WebGL <select id="glres">
+          <option value="native">Native</option>
+          <option value="half">Half</option>
+          <option value="640">640×480</option>
+          <option value="320">320×240</option>
         </select></label>
         <label title="The lightmaps' overbright shift: ×2 as a 1999 card showed them with hardware gamma, ×4 as ioquake3 shows them without">Brightness <select id="brightness">
           <option value="2">×2</option>
@@ -84,9 +90,9 @@
           <option value="4">×4</option>
         </select></label>
         <label title="How much of the renderer runs in SQL, and who paints: the software rasteriser or the WebGL port of Quake III's renderer">Renderer <select id="renderer">
+          <option value="gl">WebGL: a port of Quake III's renderer</option>
           <option value="fast">Software: SQL picks faces, JS projects</option>
           <option value="sql">Software: SQL projects every vertex</option>
-          <option value="gl">WebGL: a port of Quake III's renderer</option>
         </select></label>
         <label title="How the bots move in a fight: as Quake III's bots do, by what a small neural network learned from self-play (deep Q-learning; its forward pass runs in SQL), by a Q table learned the same way, or by the table while it goes on learning as you play (kept in this browser)">Bot AI <select id="botai">
           <option value="0">Quake III</option>
