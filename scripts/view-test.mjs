@@ -6,7 +6,7 @@
 //   node scripts/view-test.mjs
 
 import fs from 'node:fs';
-import { FrameState, firstPersonView, zoomedFov, fovY, wideFov, swingAngle, movementDir, playerAngles, runLerpFrame, mapTorsoToWeaponFrame, viewTorsoFrame, underwaterFov, sceneLights, gunFlashOrigin, litByDlights, MAX_DLIGHTS, drawRail, drawBolt, findPortals, portalView, mirrorView, portalFade, cameraRoll, perpendicular, floorBelow, floorUnderBox, drawShadows, colorFromString, boltImpact, ringStages, bulletStages, RING_TIME, followBolt, followOtherBolt, spriteExplosion, EXPLOSIONS } from '../src/scene.js';
+import { FrameState, firstPersonView, zoomedFov, fovY, wideFov, screenShape, swingAngle, movementDir, playerAngles, runLerpFrame, mapTorsoToWeaponFrame, viewTorsoFrame, underwaterFov, sceneLights, gunFlashOrigin, litByDlights, MAX_DLIGHTS, drawRail, drawBolt, findPortals, portalView, mirrorView, portalFade, cameraRoll, perpendicular, floorBelow, floorUnderBox, drawShadows, colorFromString, boltImpact, ringStages, bulletStages, RING_TIME, followBolt, followOtherBolt, spriteExplosion, EXPLOSIONS } from '../src/scene.js';
 import { Renderer, tagTransform, mulAxis, anglesAxis, yawAxis, animLerp, lerpFrames, nearFrame, autospriteQuads, fogST, fogFactor, md3Lod, entityFog, clipFace, polyFog, fogFade } from '../src/renderer.js';
 import { parseDeform, waveValue, deformVertex, envTexCoords, parseShaderScript, surfaceLook, shellMesh, eyeInModel, stageBrightness, stageTcMatrix, stageColor, stageAlpha, shaderStages, fogAdjust, blendFogAdjust, specularAlpha, SPECULAR_LIGHT } from '../src/shader.js';
 import { Md3, parseAnimationCfg, parseSkin } from '../src/md3.js';
@@ -194,6 +194,8 @@ assert(weak.pitch <= -9.9 && strong.pitch >= -10.01, `low on health the kick is 
     const again = fs2.playerPose({ ...e, y: 9999 }, 15, 11, false, 30 * 0.05);
     assert(near(a.legs[1], 45, 0.5) && near(a.torso[1], 11.25, 0.5) && again === a, `the scene turns a strafing player's legs by what the frames show of it (${a.legs[1].toFixed(1)} degrees), once a frame`);
   }
+  assert(Math.abs(screenShape(1920, 1080) - 16 / 9) < 1e-9 && screenShape(1080, 1920) === 4 / 3 && screenShape(5120, 1080) === 32 / 9 && screenShape(0, 0) === 4 / 3,
+    'the full screen\'s picture has the screen\'s own shape, 4 by 3 at the least and 32 by 9 at the most');
   const wide = wideFov(90, 640, 360);
   assert(Math.abs(wideFov(90, 640, 480) - 90) < 1e-9 && Math.abs(wide - 106.26) < 0.01 && Math.abs(fovY(wide, 640, 360) - fovY(90, 640, 480)) < 1e-9
     && Math.abs(fovY(wideFov(22.5, 640, 360), 640, 360) - fovY(22.5, 640, 480)) < 1e-9,

@@ -23,7 +23,7 @@ import { loadShaders } from './shader.js';
 import { Renderer } from './renderer.js';
 import { GLRenderer } from './renderer-gl.js';
 import { Hud, careerAfter, careerAwards } from './hud.js';
-import { FrameState, drawScene, firstPersonView, zoomedFov, fovY, wideFov, ZOOM_FOV, underwaterFov, findPortals, portalView, mirrorView, portalFade } from './scene.js';
+import { FrameState, drawScene, firstPersonView, zoomedFov, fovY, wideFov, screenShape, ZOOM_FOV, underwaterFov, findPortals, portalView, mirrorView, portalFade } from './scene.js';
 import { Q3Audio, weaponLoop } from './audio.js';
 import { exportDemo, importDemo, listDemos } from './demo.js';
 import { exportSave, importSave, saveMap } from './save.js';
@@ -74,7 +74,9 @@ const saveSettings = () => { try { localStorage.setItem('firebird-quake3:setting
 const viewWidth = () => (settings.detail === 'high' ? 640 : settings.detail === 'low' ? 160 : 320);
 // the picture's shape: the WebGL painter's is the page's Screen menu, the software ones' 4 by 3
 const ASPECTS = { '4:3': 4 / 3, '16:10': 16 / 10, '16:9': 16 / 9, '21:9': 21 / 9 };
-const viewAspect = () => (settings.renderer === 'gl' ? ASPECTS[settings.aspect] ?? 4 / 3 : 4 / 3);
+// (on the full screen it is the screen's own shape)
+const fullScreen = () => document.fullscreenElement === wrap;
+const viewAspect = () => (settings.renderer !== 'gl' ? 4 / 3 : fullScreen() ? screenShape(window.innerWidth, window.innerHeight) : ASPECTS[settings.aspect] ?? 4 / 3);
 const viewHeight = () => Math.round(viewWidth() / viewAspect());
 // cg_fov as the screen's shape shows it: the vertical view of 4 by 3 kept, more to the sides (wideFov)
 const screenFov = (fov) => wideFov(fov, viewWidth(), viewHeight());
@@ -115,7 +117,11 @@ function actionDown(a) {
   else if (a === 'scores') scoreboard = true;
   else if (a === 'zoom') zoom(true);
   else if (a === 'pause') paused = !paused;
-  else if (a === 'chat' && !demoPlaying) { keys.clear(); document.exitPointerLock?.(); $('chat').focus(); }
+  else if (a === 'chat' && !demoPlaying) {
+    keys.clear(); document.exitPointerLock?.();
+    // (the line to type on is the page's, under the picture: off the full screen for it)
+    if (fullScreen()) document.exitFullscreen().catch(() => {}).finally(() => $('chat').focus()); else $('chat').focus();
+  }
 }
 function actionUp(a) {
   keys.delete(a);
@@ -139,6 +145,22 @@ window.addEventListener('blur', () => { keys.clear(); zoom(false); });
 wrap.addEventListener('click', () => {
   if (running && document.pointerLockElement !== wrap) wrap.requestPointerLock?.()?.catch?.(() => {});
 });
+// the full screen (r_fullscreen; Alt+Enter as in the game, or the page's button): the picture takes the screen's
+// own shape, and gives it back on the way out (Escape)
+async function toggleFullScreen() {
+  try {
+    if (fullScreen()) await document.exitFullscreen();
+    else { await wrap.requestFullscreen({ navigationUI: 'hide' }); if (running) wrap.requestPointerLock?.()?.catch?.(() => {}); }
+  } catch (err) { setStatus(`No full screen: ${err.message}`, true); }
+}
+async function reshape() {
+  renderer?.setAspect?.(viewAspect());
+  if (db && renderer) await setView(db, viewWidth(), viewHeight(), screenFov(settings.fov));
+}
+document.addEventListener('fullscreenchange', () => { keys.clear(); reshape().catch((err) => console.error(err)); });
+window.addEventListener('resize', () => { if (fullScreen()) reshape().catch((err) => console.error(err)); });
+window.addEventListener('keydown', (e) => { if (e.code === 'Enter' && e.altKey && !e.repeat) { e.preventDefault(); e.stopImmediatePropagation(); toggleFullScreen(); } }, true);
+$('fullscreen').addEventListener('click', (e) => { e.target.blur(); toggleFullScreen(); });
 wrap.addEventListener('mousedown', (e) => {
   if (document.pointerLockElement !== wrap) return;
   const action = binds.get(mouseCode(e.button));
@@ -687,8 +709,7 @@ $('detail').addEventListener('change', async (e) => {
 $('aspect').value = ASPECTS[settings.aspect] ? settings.aspect : '4:3';
 $('aspect').addEventListener('change', async (e) => {
   settings.aspect = e.target.value; saveSettings();
-  renderer?.setAspect?.(viewAspect());
-  if (db) await setView(db, viewWidth(), viewHeight(), screenFov(settings.fov));
+  await reshape();
 });
 // the WebGL picture's resolution (the software painters' is Detail)
 $('glres').value = settings.glres;

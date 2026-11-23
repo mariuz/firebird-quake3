@@ -1009,6 +1009,10 @@ export function zoomedFov(fov, zoomed, sinceMs, zoomFov = ZOOM_FOV) {
  *  cuts the top and bottom off; this is what its descendants do). At 4 by 3 it is the fov itself. */
 export const wideFov = (fov, w, h) => (Math.atan(Math.tan((fov * Math.PI) / 360) * (w / h) * 0.75) * 360) / Math.PI;
 
+/** The shape (width over height) of the picture on a full screen of w by h: the screen's own, between 4 by 3
+ *  (a tall one keeps that, with bars) and 32 by 9 */
+export const screenShape = (w, h) => (w > 0 && h > 0 ? Math.min(32 / 9, Math.max(4 / 3, w / h)) : 4 / 3);
+
 /** The vertical field of view of a horizontal one on a w×h screen (CG_CalcFov's fov_y). */
 export const fovY = (fovX, w, h) => (Math.atan2(h, w / Math.tan((fovX * Math.PI) / 360)) * 360) / Math.PI;
 

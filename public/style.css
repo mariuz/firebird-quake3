@@ -55,6 +55,11 @@ kbd {
   pointer-events: none;
 }
 #overlay[hidden], #screen[hidden], #glscreen[hidden] { display: none; }
+/* the full screen: the WebGL picture fills it (its shape is the screen's), the software one stays 4 by 3 in the middle */
+.screen-wrap:fullscreen { width: 100vw; height: 100vh; background: #000; display: flex; align-items: center; justify-content: center; }
+.screen-wrap:fullscreen #glscreen { border: 0; height: 100%; width: auto; max-width: 100%; }
+.screen-wrap:fullscreen #screen { border: 0; height: 100%; width: auto; max-width: 100%; }
+.screen-wrap:fullscreen #overlay { inset: 0; margin: auto; width: auto; height: 100%; max-width: 100%; aspect-ratio: var(--shape, 4 / 3); }
 .status {
   position: absolute;
   inset: auto 12px 12px 12px;

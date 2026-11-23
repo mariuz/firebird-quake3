@@ -420,6 +420,7 @@ export class GLRenderer {
   setAspect(aspect) {
     this.aspect = aspect > 0 ? aspect : 4 / 3;
     if (this.canvas.style) this.canvas.style.aspectRatio = String(this.aspect);
+    this.canvas.parentElement?.style?.setProperty('--shape', String(this.aspect));   // (the HUD's overlay takes the same shape on the full screen)
     this.fitCanvas();
   }
 

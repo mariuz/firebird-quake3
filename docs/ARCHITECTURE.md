@@ -1368,7 +1368,9 @@ page's *WebGL* menu has half of that, 640×480 and 320×240), antialiased by the
 the textures filtered anisotropically where the browser has the extension. Its shape is the page's
 *Screen* (`setAspect`: 4:3, 16:10, 16:9, 21:9): `viewcfg` takes the same shape, so the faces Firebird
 selects are the wider frustum's, and `wideFov` widens `cg_fov` so that the view up and down stays that
-of 4 by 3; the HUD's 640 by 480 is stretched over it, as Quake III stretches its own. It stays on WebGL 2, which
+of 4 by 3; the HUD's 640 by 480 is stretched over it, as Quake III stretches its own. On the full screen (the
+Fullscreen API on the picture's wrapper: the page's button, Alt+Enter) the shape is the screen's own
+(`screenShape`). It stays on WebGL 2, which
 Chrome, Firefox, Edge and Safari all ship: the painter spends 2 ms a frame in JavaScript and about ten
 draw calls on a view, so WebGPU, not yet on by default everywhere, would buy nothing the tic and the frame
 query do not dwarf. The HUD, messages and the 2D pictures are drawn by a

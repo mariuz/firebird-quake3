@@ -216,7 +216,8 @@ adds the glow stages with their `blendFunc` and `tcMod`s, the sky is the shader'
 direction, and the MD3 models are lit from the light grid in the vertex shader, which also lerps them
 between two frames of their animation. It is the default, at your display's own resolution, antialiased,
 with anisotropic filtering (the **WebGL** menu has lower resolutions for a slow card or the look of 1999; **Screen** makes the picture
-16:9 or wider, seeing more to the sides). The HUD is painted by the
+16:9 or wider, seeing more to the sides, and **Full screen** (Alt+Enter) gives it the whole screen in the
+screen's own shape). The HUD is painted by the
 software painter onto a transparent canvas laid over it. It paints a frame in about a millisecond.
 
 The **software** painter is the one the headless screenshots and the tests use: a 32-bit framebuffer and a z-buffer. Polygons are scan-converted with perspective-correct spans — the
