@@ -21,7 +21,7 @@ CREATE TABLE map_list (
 CREATE TABLE game (
   id             SMALLINT NOT NULL PRIMARY KEY,
   tic            INTEGER DEFAULT 0 NOT NULL,
-  bot_rl         SMALLINT DEFAULT 0 NOT NULL,           -- the bots' fight moves: 0 Quake III's, 1 the learned table's (bot_q), 2 the table's, learning on, 3 the network's (bot_nn)
+  bot_rl         SMALLINT DEFAULT 0 NOT NULL,           -- the bots' fight moves: 0 Quake III's, 1 the learned table's (bot_q), 2 the table's, learning on, 3 the network's (bot_nn), 4 the network's, run by the page (LiteRT.js: bot_nn_ask, bot_nn_out)
   bot_wsel       SMALLINT DEFAULT 0 NOT NULL,           -- the gun a bot fights with: 0 its character's favourite (botlib), 1 the one that does the most at this distance by what was measured (bot_wdps), 2 measuring: a gun at random every 3 s, the shots and their damage counted
   rl_logging     SMALLINT DEFAULT 0 NOT NULL,           -- 1: every learned move is written to bot_rl_log (scripts/rl-train.mjs: the network's training data)
   demo_rec       INTEGER,                               -- the demo being recorded (demos.id), its next snapshot's number and
@@ -883,6 +883,20 @@ CREATE TABLE bot_nn (
   i SMALLINT NOT NULL,
   w DOUBLE PRECISION NOT NULL,
   PRIMARY KEY (l, i, j)
+);
+-- The network run outside the engine (game.bot_rl 4: LiteRT.js on the page, src/litert.js). A bot about to choose
+-- its move leaves its twelve features in bot_nn_ask (bot_nn_request); the page runs the network on every row
+-- and hands the six values back (bot_nn_answer), which leaves the move they mean in bot_nn_out for the bot to
+-- take at its next choice (bot_rl_move). The choice itself stays here: the page only does the arithmetic
+CREATE TABLE bot_nn_ask (
+  eid INTEGER NOT NULL PRIMARY KEY,
+  t   DOUBLE PRECISION NOT NULL,
+  f0 DOUBLE PRECISION NOT NULL, f1 DOUBLE PRECISION NOT NULL, f2 DOUBLE PRECISION NOT NULL, f3 DOUBLE PRECISION NOT NULL, f4 DOUBLE PRECISION NOT NULL, f5 DOUBLE PRECISION NOT NULL, f6 DOUBLE PRECISION NOT NULL, f7 DOUBLE PRECISION NOT NULL, f8 DOUBLE PRECISION NOT NULL, f9 DOUBLE PRECISION NOT NULL, f10 DOUBLE PRECISION NOT NULL, f11 DOUBLE PRECISION NOT NULL
+);
+CREATE TABLE bot_nn_out (
+  eid INTEGER NOT NULL PRIMARY KEY,
+  t   DOUBLE PRECISION NOT NULL,
+  a   SMALLINT NOT NULL
 );
 CREATE GLOBAL TEMPORARY TABLE nn_x (
   l SMALLINT NOT NULL,

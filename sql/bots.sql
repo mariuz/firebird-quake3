@@ -1913,6 +1913,42 @@ BEGIN
   RETURN COALESCE(a, 5);
 END^
 
+-- The move six values of the network mean: Quake III's (5) unless another's is 3 health points or more above it,
+-- then the highest of those (the first of equals), as bot_nn_best ends
+CREATE OR ALTER FUNCTION bot_nn_pick (q0 DOUBLE PRECISION, q1 DOUBLE PRECISION, q2 DOUBLE PRECISION, q3 DOUBLE PRECISION, q4 DOUBLE PRECISION, q5 DOUBLE PRECISION) RETURNS SMALLINT
+AS
+DECLARE a SMALLINT = 5; DECLARE best DOUBLE PRECISION;
+BEGIN
+  IF (q0 >= q5 + 3) THEN BEGIN a = 0; best = q0; END
+  IF (q1 >= q5 + 3 AND (a = 5 OR q1 > best)) THEN BEGIN a = 1; best = q1; END
+  IF (q2 >= q5 + 3 AND (a = 5 OR q2 > best)) THEN BEGIN a = 2; best = q2; END
+  IF (q3 >= q5 + 3 AND (a = 5 OR q3 > best)) THEN BEGIN a = 3; best = q3; END
+  IF (q4 >= q5 + 3 AND (a = 5 OR q4 > best)) THEN BEGIN a = 4; best = q4; END
+  RETURN a;
+END^
+
+-- A bot asks the network outside (game.bot_rl 4): its twelve features as bot_rl_move gives them to bot_nn_best,
+-- left in bot_nn_ask for the page to run
+CREATE OR ALTER PROCEDURE bot_nn_request (eid INTEGER, w INTEGER, ew INTEGER, d DOUBLE PRECISION, hp INTEGER, av INTEGER, dz DOUBLE PRECISION, quad SMALLINT)
+AS
+DECLARE wc SMALLINT; DECLARE ec SMALLINT;
+BEGIN
+  wc = IIF(w = 1, 0, IIF(w IN (2, 4, 32), 1, IIF(w = 64, 2, 3)));
+  ec = IIF(ew = 1, 0, IIF(ew IN (2, 4, 32, 64), 1, 2));
+  UPDATE OR INSERT INTO bot_nn_ask (eid, t, f0, f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11)
+  VALUES (:eid, now_(), IIF(:wc = 0, 1, 0), IIF(:wc = 1, 1, 0), IIF(:wc = 2, 1, 0), IIF(:wc = 3, 1, 0), IIF(:ec = 0, 1, 0), IIF(:ec = 1, 1, 0), IIF(:ec = 2, 1, 0),
+          MINVALUE(:d, 1500) / 1000, MINVALUE(MAXVALUE(:hp, 0), 200) / 100e0, MINVALUE(:av, 200) / 100e0, MAXVALUE(-300, MINVALUE(300, :dz)) / 200, :quad)
+  MATCHING (eid);
+END^
+
+-- The page's answer: the network's six values for a bot that asked. The move they mean waits in bot_nn_out
+CREATE OR ALTER PROCEDURE bot_nn_answer (eid INTEGER, q0 DOUBLE PRECISION, q1 DOUBLE PRECISION, q2 DOUBLE PRECISION, q3 DOUBLE PRECISION, q4 DOUBLE PRECISION, q5 DOUBLE PRECISION)
+AS
+BEGIN
+  DELETE FROM bot_nn_ask a WHERE a.eid = :eid;
+  UPDATE OR INSERT INTO bot_nn_out (eid, t, a) VALUES (:eid, now_(), bot_nn_pick(:q0, :q1, :q2, :q3, :q4, :q5)) MATCHING (eid);
+END^
+
 -- The move of a bot fighting an enemy in sight, learned: every 0.4 s it chooses among advance (0), strafe left (1),
 -- strafe right (2), back off (3), hold (4) and Quake III's own attack move (5: BotAttackMove as bot_think has it),
 -- and makes it each think until the next choice. `mode` 3 asks the network (bot_nn_best). `mode` 1 plays the
@@ -1920,7 +1956,9 @@ END^
 -- health points or more above it. Both make a move at random now and then by the skill (one in two at skill 1
 -- down to one in thirty at 5). `mode` 2 learns the table as it plays: the move just finished is scored
 -- (bot_rl_learn), two moves in five are tried at random, an untried one first; and with game.rl_logging on every
--- move is written to bot_rl_log. Returns 1 when it moved the bot, 0 for Quake III's move
+-- move is written to bot_rl_log. `mode` 4 is the network run by the page (LiteRT.js): a think before the choice is
+-- due the bot asks (bot_nn_request), and takes the answer if it is there and fresh (under 0.3 s); with none it
+-- asks, makes Quake III's move and chooses again at its next think. Returns 1 when it moved the bot, 0 for Quake III's move
 CREATE OR ALTER FUNCTION bot_rl_move (eid INTEGER, enemy INTEGER, vis SMALLINT, mode SMALLINT, d DOUBLE PRECISION, dz DOUBLE PRECISION,
                                       w INTEGER, spd DOUBLE PRECISION) RETURNS SMALLINT
 AS
@@ -1928,7 +1966,7 @@ DECLARE t DOUBLE PRECISION; DECLARE s INTEGER; DECLARE a SMALLINT; DECLARE until
 DECLARE skill SMALLINT; DECLARE eps DOUBLE PRECISION; DECLARE yaw DOUBLE PRECISION; DECLARE moved SMALLINT;
 DECLARE x DOUBLE PRECISION; DECLARE y DOUBLE PRECISION; DECLARE ex DOUBLE PRECISION; DECLARE ey DOUBLE PRECISION;
 DECLARE q5 DOUBLE PRECISION; DECLARE n5 INTEGER; DECLARE av INTEGER; DECLARE quad DOUBLE PRECISION; DECLARE lg INTEGER;
-DECLARE wc SMALLINT; DECLARE ec SMALLINT;
+DECLARE wc SMALLINT; DECLARE ec SMALLINT; DECLARE hold DOUBLE PRECISION = 0.4e0;
 BEGIN
   IF (vis = 0 OR mode = 0 OR enemy IS NULL) THEN RETURN 0;
   t = now_();
@@ -1936,6 +1974,9 @@ BEGIN
     INTO a, until_, hp, x, y, skill, av, quad;
   SELECT o.x, o.y, IIF(o.classname = 'player', (SELECT p.weapon FROM player p WHERE p.id = 1), o.weapon) FROM ents o WHERE o.id = :enemy INTO ex, ey, ew;
   IF (ex IS NULL) THEN RETURN 0;
+  -- (the network outside: asked a think ahead, so that its answer is there when the choice is due)
+  IF (mode = 4 AND a IS NOT NULL AND until_ > t AND until_ - t <= 0.15e0) THEN
+    EXECUTE PROCEDURE bot_nn_request(eid, w, ew, d, hp, av, dz, IIF(quad > t, 1, 0));
   IF (a IS NULL OR until_ <= t) THEN
   BEGIN
     s = bot_rl_state(w, ew, d, hp, dz);
@@ -1963,6 +2004,16 @@ BEGIN
     ELSE IF (mode = 3) THEN
       a = COALESCE(bot_nn_best(IIF(wc = 0, 1, 0), IIF(wc = 1, 1, 0), IIF(wc = 2, 1, 0), IIF(wc = 3, 1, 0), IIF(ec = 0, 1, 0), IIF(ec = 1, 1, 0), IIF(ec = 2, 1, 0),
             MINVALUE(d, 1500) / 1000, MINVALUE(MAXVALUE(hp, 0), 200) / 100e0, MINVALUE(av, 200) / 100e0, MAXVALUE(-300, MINVALUE(300, dz)) / 200, IIF(quad > t, 1, 0)), 5);
+    ELSE IF (mode = 4) THEN
+    BEGIN
+      SELECT o.a FROM bot_nn_out o WHERE o.eid = :eid AND o.t >= :t - 0.3e0 INTO a;
+      DELETE FROM bot_nn_out o WHERE o.eid = :eid;
+      IF (a IS NULL) THEN
+      BEGIN
+        EXECUTE PROCEDURE bot_nn_request(eid, w, ew, d, hp, av, dz, IIF(quad > t, 1, 0));
+        a = 5; hold = 0.1e0;
+      END
+    END
     ELSE
     BEGIN
       a = 5;
@@ -1975,7 +2026,7 @@ BEGIN
       INSERT INTO bot_rl_log (id, f0, f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, a)
       VALUES (:lg, IIF(:wc = 0, 1, 0), IIF(:wc = 1, 1, 0), IIF(:wc = 2, 1, 0), IIF(:wc = 3, 1, 0), IIF(:ec = 0, 1, 0), IIF(:ec = 1, 1, 0), IIF(:ec = 2, 1, 0),
               MINVALUE(:d, 1500) / 1000, MINVALUE(MAXVALUE(:hp, 0), 200) / 100e0, MINVALUE(:av, 200) / 100e0, MAXVALUE(-300, MINVALUE(300, :dz)) / 200, IIF(:quad > :t, 1, 0), :a);
-    UPDATE ents e SET e.rl_s = :s, e.rl_a = :a, e.rl_until = :t + 0.4e0, e.rl_g0 = e.rl_given, e.rl_t0 = e.rl_taken, e.rl_log = :lg WHERE e.id = :eid;
+    UPDATE ents e SET e.rl_s = :s, e.rl_a = :a, e.rl_until = :t + :hold, e.rl_g0 = e.rl_given, e.rl_t0 = e.rl_taken, e.rl_log = :lg WHERE e.id = :eid;
   END
   IF (a = 5) THEN RETURN 0;
   yaw = vectoyaw(ex - x, ey - y);

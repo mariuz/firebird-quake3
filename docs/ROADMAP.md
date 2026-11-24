@@ -129,7 +129,7 @@ decisions with what followed and its notes, as rows: `bot_llm_state`, `bot_llm_a
 and a small one in the browser is an experiment that chose no better than a fixed answer) key binding (the Controls menu's actions, each bound to keys, mouse buttons or the wheel in the page's *Keys* panel:
 `src/binds.js`), the gun for the distance (what each gun does at each distance in a bot's hands, measured in self-play: `bot_wdps`,
 `bot_pick_weapon`, the page's *Bot guns*; choosing by it played no better than botlib's favourite gun) and their learned fight moves (not Quake III's: six moves chosen by a
-network trained offline from self-play with Double DQN and CQL, its forward pass in SQL, or by a Q table learned in
+network trained offline from self-play with Double DQN and CQL, its forward pass in SQL or in LiteRT.js on the page (`src/litert.js`, `bot_nn_ask`, `bot_nn_answer`: the same moves, a way in for larger networks), or by a Q table learned in
 SQL: `bot_rl_move`, `bot_nn_best`, the page's *Bot AI*, `npm run test:rl`), demos (`record`, `demo`: every snapshot kept as rows, the
 entities delta-compressed against the last, played back into the tables the frame reads with the game not
 running, saved to a file and loaded back, paused (P), seeked (a slider, ← and →: `demo_seek`) and played at ¼× to 4×

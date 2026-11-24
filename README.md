@@ -45,7 +45,7 @@ npm run test:bots      # the bots: they see, chase, shoot, pick things up, die a
 npm run test:demo      # a demo recorded and played back: every snapshot as it was painted
 npm run test:chat      # what you type to the bots, understood by meaning (EmbeddingGemma 2) and obeyed
 npm run test:llm       # a bot led by a language model: what SQL tells it and does with the answer (no model asked)
-npm run test:rl        # the bots' learned fight moves: Q-learning in SQL, the network's forward pass in SQL
+npm run test:rl        # the bots' learned fight moves: Q-learning in SQL, the network's forward pass in SQL, its hand-off to LiteRT.js
 npm run test:save      # a game saved in a fight and loaded back on a fresh arena (F5 and F9 on the page)
 npm run serve          # http://localhost:8080/
 npm run screenshots    # headless frames to docs/ (node scripts/screenshot.mjs q3dm1 --at=x,y,z,yaw --bright=4)
@@ -146,7 +146,10 @@ every 0.4 s a bot chooses among advancing, strafing, backing off, holding and Qu
 small network trained offline from self-play (Double DQN with a conservative penalty, in plain
 JavaScript) whose forward pass is three `INSERT … SELECT SUM(w * x) … GROUP BY` in SQL. Measured over
 four twenty-minute matches against Quake III's moves it made 464 frags to 476: as good, not better, so
-Quake III's moves stay the default and the network is a choice in the menu. A Q table learned by
+Quake III's moves stay the default and the network is a choice in the menu. The same network can also be run
+by LiteRT.js on the page (*Learned: network on LiteRT.js*): the bots leave their questions in a table, the
+page answers them all at once and SQL still makes the choice. For a network this small it is a way in for
+larger ones, not a gain: 0.14 ms a pass against 2.3 in SQL and 0.008 for a plain loop. A Q table learned by
 tabular Q-learning in SQL is there too, and can go on learning as you play; it plays worse than either.
 
 The first step of pretraining the bots was to measure: three hours of fire in self-play give what each gun

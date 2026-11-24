@@ -95,6 +95,57 @@ for (let k = 0; k < 36; k++) {
   picks[best]++;
 }
 assert(worst < 1e-6 && same === 36, `the network's forward pass in SQL is the one written out in JavaScript: the six values within ${worst.toExponential(1)} on 36 inputs, the same move chosen on ${same} (${(ms / 36).toFixed(1)} ms a pass); it leaves Quake III's move on ${36 - picks[5]} of them`);
+{
+  // the network run outside the engine (mode 4: LiteRT.js on the page). Here the pass written out stands in for
+  // the library, through the same functions the page uses (src/litert.js): the hand-off is what is tested
+  const { denseLayers, forward, answerSql } = await import('../src/litert.js');
+  const net = denseLayers(BOT_NN);
+  let off = 0;
+  for (let k = 0; k < 12; k++) { const x = Array.from({ length: 12 }, (_, i) => ((i * 5 + k * 3) % 7) / 6); fwd(x).forEach((v, i) => { off = Math.max(off, Math.abs(v - forward(net, x)[i])); }); }
+  assert(net.length === 3 && net[0].m === 12 && net[2].n === 6 && off < 1e-4, `the weights' rows as dense layers (${net.map((L) => `${L.m} to ${L.n}`).join(', ')}) give the pass of the rows (within ${off.toExponential(1)}, the weights being 32-bit there)`);
+  const pick = async (...v) => (await q(`SELECT bot_nn_pick(${v.join(', ')}) a FROM rdb$database`))[0].A;
+  assert(await pick(0, 0, 0, 0, 0, 1) === 5 && await pick(3.9, 0, 0, 0, 0, 1) === 5 && await pick(4, 0, 0, 9, 0, 1) === 3 && await pick(9, 9, 0, 0, 0, 1) === 0 && await pick(0, 0, 0, 0, 4, 1) === 4,
+    'the move six values mean: Quake III\'s unless another is 3 or more above it, then the highest, the first of equals');
+  await db.exec('DELETE FROM bot_nn_ask'); await db.exec('DELETE FROM bot_nn_out');
+  const move = async () => { await q(`SELECT bot_rl_move(${b0}, ${b1}, 1, 4, 200, 0, 2, 20) m FROM rdb$database`); return (await q(`SELECT rl_a a, rl_until - now_() left_ FROM ents WHERE id = ${b0}`))[0]; };
+  // nothing answered yet: the bot asks, makes Quake III's move and chooses again at its next think
+  let asked = 0, quake = 0, soon = 0, taken = 0, stale = 0, ahead = 0, same = 0;
+  for (let i = 0; i < 20; i++) {
+    await place();
+    await db.exec('DELETE FROM bot_nn_out');
+    const m = await move();
+    const ask = await q(`SELECT a.* FROM bot_nn_ask a WHERE a.eid = ${b0}`);
+    if (ask.length === 1 && ask[0].F1 === 1 && ask[0].F5 === 1 && Math.abs(ask[0].F7 - 0.2) < 1e-9 && Math.abs(ask[0].F8 - 1) < 1e-9) asked++;
+    if (m.A === 5) quake++;
+    if (m.A !== 5 || Math.abs(m.LEFT_ - 0.1) < 1e-6) soon++;
+    // the page's part: the network on what was asked, handed back
+    const x = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11].map((k) => ask[0][`F${k}`]);
+    const values = forward(net, x);
+    for (const st of answerSql([b0], [values])) await db.exec(st);
+    const want = await pick(...values.map((v) => Math.round(v * 1e6) / 1e6));
+    const [out] = await q(`SELECT o.a FROM bot_nn_out o WHERE o.eid = ${b0}`);
+    if (out?.A === want && !(await q('SELECT 1 x FROM bot_nn_ask')).length) same++;
+    // an answer that says "back off": taken at the next choice, for the whole 0.4 s
+    await db.exec(answerSql([b0], [[0, 0, 0, 10, 0, 1]])[0]);
+    await db.exec(`UPDATE ents SET rl_until = 0 WHERE id = ${b0}`);
+    const t = await move();
+    if (t.A === 3 && Math.abs(t.LEFT_ - 0.4) < 1e-6 && !(await q('SELECT 1 x FROM bot_nn_out')).length) taken++;
+    // a think before the next choice the bot asks ahead
+    await db.exec('DELETE FROM bot_nn_ask');
+    await db.exec(`UPDATE ents SET rl_until = now_() + 0.1 WHERE id = ${b0}`);
+    const h = await move();
+    if (h.A === t.A && (await q('SELECT 1 x FROM bot_nn_ask')).length === 1) ahead++;
+    // an old answer is not taken
+    await db.exec(answerSql([b0], [[0, 0, 0, 10, 0, 1]])[0]);
+    await db.exec('UPDATE bot_nn_out SET t = t - 1');
+    await db.exec(`UPDATE ents SET rl_until = 0 WHERE id = ${b0}`);
+    if ((await move()).A !== 3) stale++;
+  }
+  // (skill 5 makes one move in thirty at random)
+  assert(asked === 20 && quake >= 17 && soon === 20 && same === 20 && taken >= 17 && ahead === 20 && stale >= 17,
+    `the network outside the engine (mode 4): a bot due to choose asks with its twelve features (${asked} of 20), makes Quake III's move meanwhile (${quake}) and chooses again a think later (${soon}); the values handed back become the move bot_nn_pick gives (${same}), taken for 0.4 s at the next choice (${taken}); a think before a choice it asks ahead (${ahead}); an answer a second old is left (${stale})`);
+  await db.exec('DELETE FROM bot_nn_ask'); await db.exec('DELETE FROM bot_nn_out');
+}
 const net3 = await choose(3, 10);
 assert(net3.reduce((a, n) => a + n, 0) === 10, `a bot asks the network in a fight (mode 3): moves ${net3.join(' ')}`);
 

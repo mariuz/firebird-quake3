@@ -833,7 +833,37 @@ first, eight matches gave 970 to 908, no more than one and a half times chance. 
 III's bots where the table falls short of them, and does not beat them; `game.bot_rl` is 0 unless the page's
 *Bot AI* says otherwise. What would be needed for more is in the numbers: the reward of one move is too noisy
 for 21,000 of them to rank six moves in a fight, and the bot's aim and gun, which decide a fight, are not
-the network's to choose. The script can also
+the network's to choose.
+
+The same network can be run by **LiteRT.js** (`@litertjs/core`, Google's browser runtime for LiteRT, once
+TensorFlow Lite, models: XNNPACK compiled to WebAssembly, or WebGPU) instead of by the join (*Bot AI: Learned:
+network on LiteRT.js*, `game.bot_rl` 4). `src/litert.js` writes the network from the same rows with the
+library's own tensor functions (`author`, `fullyConnected`, `relu`) and the runtime compiles it, so there is
+no `.tflite` file to keep in step with the weights; `BotNet.load` checks its answer against the pass written
+out before it is used. The choice stays in SQL, as the rule asks: a bot a think away from its choice leaves
+its twelve features in `bot_nn_ask` (`bot_nn_request`), the page runs every row through the network after
+the tic, eight at a time, and hands the six values back (`bot_nn_answer`), which leaves the move they mean
+(`bot_nn_pick`, the rule of `bot_nn_best`) in `bot_nn_out` for the bot to take at its choice if it is under
+0.3 s old; with no answer it asks, makes Quake III's move and chooses again a think later, so a page whose
+library did not load plays on (and falls back to the pass in SQL). Measured in headless Chromium on this
+network (12 to 32 to 32 to 6, 1,670 weights):
+
+| The forward pass | A pass |
+| --- | --- |
+| in SQL (`bot_nn_best`) | 2.3 to 3.3 ms |
+| LiteRT.js, WebAssembly, one state | 0.14 ms |
+| LiteRT.js, WebAssembly, eight states at once | 0.09 ms for the eight |
+| LiteRT.js, WebGPU (a software adapter here) | 3.3 ms |
+| a loop in plain JavaScript | 0.008 ms |
+
+The answers agree to 1e-5 (the runtime's weights are 32-bit floats). So for a network this small the library
+buys nothing a loop would not: it is 20 times faster than the join and 18 times slower than the loop, the
+cost being the call into the runtime, and its 11 MB of WebAssembly is fetched only by who picks it. In the
+page a round of answers takes about half a millisecond, with the query for the asks and the statements
+back. The moves are the network's either way (the play was not measured again: it is the same network a
+think late, and that network draws with Quake III's bots). What LiteRT.js opens is a network too large for
+a join or a loop, trained elsewhere and converted: the hand-off of `bot_nn_ask` and `bot_nn_answer` does not
+care how many layers answer it. The script can also
 train an ensemble (`ENSEMBLE=5`: bootstrapped DQN, Osband et al. 2016, each member on its own resample of the
 log) and distil into one network the lower confidence bound of each move's advantage over Quake III's, so that
 it leaves that move only where the members agree; that one kept Quake III's move in 79 percent of the logged

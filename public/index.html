@@ -101,9 +101,10 @@
           <option value="fast">Software: SQL picks faces, JS projects</option>
           <option value="sql">Software: SQL projects every vertex</option>
         </select></label>
-        <label title="How the bots move in a fight: as Quake III's bots do, by what a small neural network learned from self-play (deep Q-learning; its forward pass runs in SQL), by a Q table learned the same way, or by the table while it goes on learning as you play (kept in this browser)">Bot AI <select id="botai">
+        <label title="How the bots move in a fight: as Quake III's bots do, by what a small neural network learned from self-play (deep Q-learning; its forward pass runs in SQL, or in LiteRT.js on the page: the same network, the bots asking it a think ahead), by a Q table learned the same way, or by the table while it goes on learning as you play (kept in this browser)">Bot AI <select id="botai">
           <option value="0">Quake III</option>
           <option value="3">Learned: network</option>
+          <option value="4">Learned: network on LiteRT.js</option>
           <option value="1">Learned: table</option>
           <option value="2">Learning: table</option>
         </select></label>

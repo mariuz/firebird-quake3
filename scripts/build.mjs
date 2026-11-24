@@ -53,6 +53,23 @@ await build({
   logLevel: 'warning',
 });
 
+// LiteRT.js, for the bots' network run by it (src/litert.js): the library a file of its own, and beside it the two
+// builds of its WebAssembly a browser may take without threads (with relaxed SIMD, and the one for browsers without)
+await build({
+  entryPoints: [path.join(root, 'node_modules/@litertjs/core/dist/index.js')],
+  outfile: path.join(OUT, 'litert-core.js'),
+  bundle: true,
+  format: 'esm',
+  platform: 'browser',
+  target: 'es2022',
+  minify: true,
+  logLevel: 'warning',
+});
+fs.mkdirSync(path.join(OUT, 'litert'), { recursive: true });
+for (const f of ['litert_wasm_internal', 'litert_wasm_compat_internal']) for (const ext of ['.js', '.wasm']) {
+  fs.copyFileSync(path.join(root, 'node_modules/@litertjs/core/wasm', f + ext), path.join(OUT, 'litert', f + ext));
+}
+
 // The engine Worker: a classic script that loads the Emscripten glue first and
 // finds the .wasm next to itself, whatever path prefix the site is served from.
 const worker = await build({

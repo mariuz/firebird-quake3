@@ -30,6 +30,8 @@ import { exportSave, importSave, saveMap } from './save.js';
 import { loadEmbedder, embedderReady, embed } from './chat.js';
 import { loadBotQ } from './loader.js';
 import { ACTIONS, makeBinds, savedBinds, keysOf, bind, unbind, keyName, mouseCode, wheelCode } from './binds.js';
+import { BotNet, answerSql } from './litert.js';
+import { BOT_NN } from './botnn.js';
 import { Strategist, ServerStrategist, LocalStrategist, LLM_MODELS, LOCAL_MODELS, SERVER_DEFAULT, exportMemory, importMemory } from './llm.js';
 
 const $ = (id) => document.getElementById(id);
@@ -315,7 +317,7 @@ async function startMap(name) {
   fillModelMenu();
   await setPlayerModel();
   await setPlayerColor();
-  await db.exec(`UPDATE game SET bot_rl = ${settings.botai | 0}, bot_wsel = ${settings.botguns ? 1 : 0}`);
+  await db.exec(`UPDATE game SET bot_rl = ${rlMode()}, bot_wsel = ${settings.botguns ? 1 : 0}`);
   await leadBots();
   renderer.setResources(res);
   renderer.particles = [];
@@ -458,6 +460,7 @@ async function frame() {
         : (await db.query('SELECT * FROM q3_tic(?, ?, ?, ?, ?, ?, ?, ?, ?)', input, { rowMode: 'object' })).rows[0];
       perf.tic = performance.now() - t;
       ticked = tics;
+      if (botNet && settings.botai === 4 && !demoPlaying) await answerBots();
       // the match over (not a demo's): its frags go into the career once, and the postgame medals see the count before
       if (last.MATCH_OVER && !demoPlaying && !careerLogged) {
         careerLogged = true;
@@ -558,7 +561,7 @@ function updateStats(ticked) {
   fpsN++; ticN += ticked;
   const now = performance.now();
   if (now - fpsT > 500) { fps = (fpsN * 1000) / (now - fpsT); tps = (ticN * 1000) / (now - fpsT); fpsT = now; fpsN = 0; ticN = 0; }
-  statsEl.textContent = `${demoPlaying ? 'demo · ' : recording ? 'recording · ' : ''}${fps.toFixed(1)} fps · ${tps.toFixed(0)} tics/s · q3_tic ${perf.tic.toFixed(0)} ms · frame query ${perf.faces.toFixed(0)} ms (${perf.rows} faces) · paint ${perf.draw.toFixed(0)} ms · ${renderer.particles.length} particles${map?.unlinked > 0 ? ` · bots mapping the arena (${map.unlinked} to go, ${perf.graph.toFixed(0)} ms)` : ''}`;
+  statsEl.textContent = `${demoPlaying ? 'demo · ' : recording ? 'recording · ' : ''}${fps.toFixed(1)} fps · ${tps.toFixed(0)} tics/s · q3_tic ${perf.tic.toFixed(0)} ms · frame query ${perf.faces.toFixed(0)} ms (${perf.rows} faces) · paint ${perf.draw.toFixed(0)} ms${botNet && settings.botai === 4 ? ` · LiteRT.js ${(perf.net ?? 0).toFixed(2)} ms` : ''} · ${renderer.particles.length} particles${map?.unlinked > 0 ? ` · bots mapping the arena (${map.unlinked} to go, ${perf.graph.toFixed(0)} ms)` : ''}`;
 }
 
 /** A portal or a mirror on screen and near enough to see through: what its camera sees (FRAME_PORTAL), as drawScene takes it */
@@ -874,10 +877,31 @@ if (settings.chatModel) startEmbedder();
 // the bots' fight moves: Quake III's, the network's (sql/bots.sql bot_rl_move and bot_nn_best, the weights of
 // src/botnn.js), the table's (src/botq.js), or the table's and learning on while we play (the table then kept in
 // the browser's storage when a match ends)
+// With "the network on LiteRT.js" (4) the same network is run by LiteRT.js on the page (src/litert.js): the bots
+// that are about to choose leave their features (bot_nn_ask), the page runs them all at once after the tic and
+// hands the values back (bot_nn_answer). Until the library is there, and if it does not come, it is the pass in SQL
+let botNet = null, botNetLoading = null;
+const rlMode = () => (settings.botai === 4 ? (botNet ? 4 : 3) : settings.botai | 0);
+function startBotNet() {
+  botNetLoading ??= new BotNet(BOT_NN).load().then((net) => {
+    botNet = net;
+    console.log(`LiteRT.js runs the bots' network (within ${net.error.toExponential(1)} of the pass written out)`);
+    if (db && running) return db.exec(`UPDATE game SET bot_rl = ${rlMode()}`);
+  }).catch((err) => { console.error(err); setStatus(`LiteRT.js did not start (${err.message}): the network runs in SQL`, true); });
+}
+async function answerBots() {
+  const asks = (await db.query('SELECT a.eid, a.f0, a.f1, a.f2, a.f3, a.f4, a.f5, a.f6, a.f7, a.f8, a.f9, a.f10, a.f11 FROM bot_nn_ask a', [], arr)).rows;
+  if (!asks.length) return;
+  const values = await botNet.values(asks.map((r) => r.slice(1)));
+  perf.net = botNet.ms;
+  for (const s of answerSql(asks.map((r) => r[0]), values)) await db.exec(s);
+}
 $('botai').value = String(settings.botai);
+if (settings.botai === 4) startBotNet();
 $('botai').addEventListener('change', (e) => {
   settings.botai = Number(e.target.value); saveSettings();
-  if (db && running) db.exec(`UPDATE game SET bot_rl = ${settings.botai | 0}`).catch((err) => console.error(err));
+  if (settings.botai === 4) startBotNet();
+  if (db && running) db.exec(`UPDATE game SET bot_rl = ${rlMode()}`).catch((err) => console.error(err));
 });
 // the gun a bot fights with: its character's favourite, or by the distance as measured (bot_pick_weapon)
 $('botguns').value = String(settings.botguns ? 1 : 0);
