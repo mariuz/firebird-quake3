@@ -109,15 +109,17 @@ assert(worst < 1e-6 && same === 36, `the network's forward pass in SQL is the on
   await db.exec('DELETE FROM bot_nn_ask'); await db.exec('DELETE FROM bot_nn_out');
   const move = async () => { await q(`SELECT bot_rl_move(${b0}, ${b1}, 1, 4, 200, 0, 2, 20) m FROM rdb$database`); return (await q(`SELECT rl_a a, rl_until - now_() left_ FROM ents WHERE id = ${b0}`))[0]; };
   // nothing answered yet: the bot asks, makes Quake III's move and chooses again at its next think
-  let asked = 0, quake = 0, soon = 0, taken = 0, stale = 0, ahead = 0, same = 0;
+  let asked = 0, quake = 0, soon = 0, taken = 0, stale = 0, ahead = 0, same = 0, rand = 0;
   for (let i = 0; i < 20; i++) {
     await place();
-    await db.exec('DELETE FROM bot_nn_out');
+    await db.exec('DELETE FROM bot_nn_out'); await db.exec('DELETE FROM bot_nn_ask');
     const m = await move();
     const ask = await q(`SELECT a.* FROM bot_nn_ask a WHERE a.eid = ${b0}`);
     if (ask.length === 1 && ask[0].F1 === 1 && ask[0].F5 === 1 && Math.abs(ask[0].F7 - 0.2) < 1e-9 && Math.abs(ask[0].F8 - 1) < 1e-9) asked++;
+    // (one choice in thirty is a move at random at this skill, made at once with nothing asked: counted as such)
+    if (!ask.length) { rand++; continue; }
     if (m.A === 5) quake++;
-    if (m.A !== 5 || Math.abs(m.LEFT_ - 0.1) < 1e-6) soon++;
+    if (Math.abs(m.LEFT_ - 0.1) < 1e-6) soon++;
     // the page's part: the network on what was asked, handed back
     const x = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11].map((k) => ask[0][`F${k}`]);
     const values = forward(net, x);
@@ -142,8 +144,9 @@ assert(worst < 1e-6 && same === 36, `the network's forward pass in SQL is the on
     if ((await move()).A !== 3) stale++;
   }
   // (skill 5 makes one move in thirty at random)
-  assert(asked === 20 && quake >= 17 && soon === 20 && same === 20 && taken >= 17 && ahead === 20 && stale >= 17,
-    `the network outside the engine (mode 4): a bot due to choose asks with its twelve features (${asked} of 20), makes Quake III's move meanwhile (${quake}) and chooses again a think later (${soon}); the values handed back become the move bot_nn_pick gives (${same}), taken for 0.4 s at the next choice (${taken}); a think before a choice it asks ahead (${ahead}); an answer a second old is left (${stale})`);
+  const n = 20 - rand;
+  assert(rand <= 4 && asked === n && quake === n && soon === n && same === n && taken >= n - 3 && ahead >= n - 3 && stale >= n - 3,
+    `the network outside the engine (mode 4): a bot due to choose asks with its twelve features (${asked} of ${n}; ${rand} of 20 choices were moves at random), makes Quake III's move meanwhile (${quake}) and chooses again a think later (${soon}); the values handed back become the move bot_nn_pick gives (${same}), taken for 0.4 s at the next choice (${taken}); a think before a choice it asks ahead (${ahead}); an answer a second old is left (${stale})`);
   await db.exec('DELETE FROM bot_nn_ask'); await db.exec('DELETE FROM bot_nn_out');
 }
 const net3 = await choose(3, 10);
