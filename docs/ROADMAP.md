@@ -79,7 +79,7 @@ fuzzy logic from the botfiles. What that leaves out:
 | --- | --- |
 | **Networking** | none, by design: one player, local bots. Snapshots, prediction, delta compression, the master server do not apply |
 | **Console commands and cvars** | the SQL console replaces them; the keys are bound in the page's *Keys* panel (see §8), not by a `bind` typed; `cg_fov` and friends are settings in `localStorage` |
-| **Demos, the rest** | recorded and played back, paused, seeked and slowed or sped up (see §8); no free camera, and the file is the tables' rows as JSON, not a `.dm_68` |
+| **Demos, the rest** | recorded and played back, paused, seeked and slowed or sped up, and watched from a free camera (see §8; the camera does not fly while the demo is paused); the file is the tables' rows as JSON, not a `.dm_68` |
 | **Light styles** | not in the demo maps |
 | **File system** | the page stacks the demo's pak, the pk3s picked from disk and one hosted map pack (`PakSet`); the game searches every `pak*.pk3` in `baseq3` and a mod directory at once, and a picked pk3's models, sounds and bot files are not read again (its maps and shaders are) |
 | **The menu** | the page's controls do this, the name, the model, the rail's colour and the keys among them (*Name*, *Model*: every player model of the pak with its own skins, *Rail*: `color1`, *Keys*: the Controls menu's actions); the menu's own screens and art are not drawn |
@@ -101,7 +101,8 @@ screen's shape; the models on the graphics card, lerped between the frames of th
 legs, torso and head turning apart (`CG_PlayerAngles`: the legs to the way it moves, the torso pitching with
 the aim, the lean of the run), the torso's twitch when hit (`CG_AddPainTwitch`), the frames kept from frame
 to frame so that a change of animation is lerped too (`CG_RunLerpFrame`), the muzzle's light where the gun
-is drawn.
+is drawn. A demo watched from a free camera (jump takes it, fire gives the player's eyes back: flown with the
+move keys and the mouse, stopped by the walls, the player seen from outside).
 
 Collision against brushes and patch facets, brush models with their own leaf, rotated models;
 `PM_GroundTrace`, slide and step moves, water, the open-ground movement matching `bg_pmove.c` at 8 ms

@@ -1009,6 +1009,33 @@ export function zoomedFov(fov, zoomed, sinceMs, zoomFov = ZOOM_FOV) {
  *  cuts the top and bottom off; this is what its descendants do). At 4 by 3 it is the fov itself. */
 export const wideFov = (fov, w, h) => (Math.atan(Math.tan((fov * Math.PI) / 360) * (w / h) * 0.75) * 360) / Math.PI;
 
+/**
+ * A free camera flown for a time `dt` (a demo watched from outside its player's eyes; Quake III's spectator flight
+ * without its inertia): turned by `move.yaw` and `move.pitch` degrees, moved at `speed` units a second along the
+ * view by `move.fwd`, to its right by `move.side` and straight up by `move.up` (each -1 to 1). It does not go
+ * through the world: the way is traced (bsp.traceLine) and stops 8 units short of what it meets. `cam` is
+ * { x, y, z, yaw, pitch }, changed in place.
+ */
+export function flyCamera(cam, move, dt, bsp = null, speed = 400) {
+  cam.yaw = (((cam.yaw + (move.yaw || 0)) % 360) + 360) % 360;
+  cam.pitch = Math.max(-89, Math.min(89, cam.pitch + (move.pitch || 0)));
+  const ax = anglesAxis(cam.pitch, cam.yaw, 0);   // forward 0..2, left 3..5
+  const f = move.fwd || 0, s = move.side || 0, u = move.up || 0;
+  let d = [ax[0] * f - ax[3] * s, ax[1] * f - ax[4] * s, ax[2] * f - ax[5] * s + u];
+  const len = Math.hypot(d[0], d[1], d[2]);
+  if (!(len > 0) || !(dt > 0)) return cam;
+  const step = speed * dt * Math.min(1, len);
+  d = d.map((v) => v / len);
+  let go = step;
+  if (bsp) {
+    // (traced 8 units farther than the step, so that the eye keeps that from a wall)
+    const a = [cam.x, cam.y, cam.z], b = [cam.x + d[0] * (step + 8), cam.y + d[1] * (step + 8), cam.z + d[2] * (step + 8)];
+    go = Math.max(0, Math.min(step, bsp.traceLine(a, b) * (step + 8) - 8));
+  }
+  cam.x += d[0] * go; cam.y += d[1] * go; cam.z += d[2] * go;
+  return cam;
+}
+
 /** The shape (width over height) of the picture on a full screen of w by h: the screen's own, between 4 by 3
  *  (a tall one keeps that, with bars) and 32 by 9 */
 export const screenShape = (w, h) => (w > 0 && h > 0 ? Math.min(32 / 9, Math.max(4 / 3, w / h)) : 4 / 3);

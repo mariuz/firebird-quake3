@@ -545,6 +545,18 @@ if (pad) {
   const d = Math.hypot(clamped[6] - e.EX, clamped[7] - e.EY, clamped[8] - e.EZ);
   const cl = (await db.query(`SELECT cluster FROM leaves WHERE id = point_leaf(${clamped[6]}, ${clamped[7]}, ${clamped[8]})`)).rows[0].CLUSTER;
   assert(d < 3990 && cl >= 0, `an eye predicted through a wall stops inside the world (${d.toFixed(0)} of 4000 units, cluster ${cl})`);
+  // a free camera (a demo watched from outside, frame_all's mode 2): the eye is where the page says, 60 units behind
+  // the player here, and the player's own body comes with the frame as the others do
+  {
+    const cam = [e.EX - e.FX * 60, e.EY - e.FY * 60, e.EZ + 20];
+    const yawTo = (Math.atan2(e.FY, e.FX) * 180) / Math.PI;
+    const frameOf = async (mode) => (await db.query(`SELECT * FROM frame_all(${mode}, 2147483647, 2147483647, 0, ${cam[0]}, ${cam[1]}, ${cam[2]}, ${yawTo}, 0)`, [], { rowMode: 'array' })).rows;
+    const [me] = (await db.query('SELECT ent_id FROM player')).rows;
+    const free = await frameOf(2), own = await frameOf(0);
+    const eye = free.find((r) => r[0] === 10), seen = (rows) => rows.some((r) => r[0] === 2 && r[1] === me.ENT_ID);
+    assert(eye && Math.hypot(eye[6] - cam[0], eye[7] - cam[1], eye[8] - cam[2]) < 0.01 && seen(free) && !seen(own) && free.some((r) => r[0] === 1 || r[0] === 3 || r[0] === 4),
+      `a free camera: the frame is from where it is and has the player's own body in it (${seen(free)}); through the player's eyes it has not (${seen(own)})`);
+  }
   // the zoom: the page's field of view culls and projects (CG_CalcFov's cg_zoomFov)
   // (along the heading with the most to see: facing a wall close up, a narrow view keeps every face)
   let yaw = 0;

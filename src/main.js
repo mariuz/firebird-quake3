@@ -23,7 +23,7 @@ import { loadShaders } from './shader.js';
 import { Renderer } from './renderer.js';
 import { GLRenderer } from './renderer-gl.js';
 import { Hud, careerAfter, careerAwards } from './hud.js';
-import { FrameState, drawScene, firstPersonView, zoomedFov, fovY, wideFov, screenShape, ZOOM_FOV, underwaterFov, findPortals, portalView, mirrorView, portalFade } from './scene.js';
+import { FrameState, drawScene, firstPersonView, zoomedFov, fovY, wideFov, screenShape, flyCamera, ZOOM_FOV, underwaterFov, findPortals, portalView, mirrorView, portalFade } from './scene.js';
 import { Q3Audio, weaponLoop } from './audio.js';
 import { exportDemo, importDemo, listDemos } from './demo.js';
 import { exportSave, importSave, saveMap } from './save.js';
@@ -56,6 +56,7 @@ let running = false;
 let paused = false;
 let recording = false;     // a demo being recorded (sql/demo.sql: q3_tic keeps each snapshot)
 let demoPlaying = false;   // a demo playing: demo_play gives the tic rows, the game does not run
+let demoCam = null;        // a demo watched from a free camera: { x, y, z, yaw, pitch }, flown with the keys and the mouse
 let saving = false;
 let demoSpeed = 1;         // a demo's playback speed (timescale): the tics come that much faster or slower
 let demoInfo = null;
@@ -111,6 +112,9 @@ let binds = makeBinds(settings.binds);
 let binding = null;   // the action the Keys panel is waiting for a key for
 function actionDown(a) {
   keys.add(a);
+  // a demo: jump leaves the player's eyes for a free camera, fire goes back to them (as a spectator's keys do)
+  if (demoPlaying && a === 'moveup' && !demoCam) setDemoCam(true);
+  else if (demoPlaying && a === 'attack' && demoCam) setDemoCam(false);
   if (a.startsWith('weapon')) impulse = Number(a.slice(6));
   else if (a === 'weapnext') impulse = 12;
   else if (a === 'weapprev') impulse = 14;
@@ -218,6 +222,7 @@ wrap.addEventListener('touchend', (e) => {
 
 function readInput(tics) {
   const k = (c) => keys.has(c);
+  if (demoCam) { impulse = 0; return [tics, 0, 0, 0, 0, 0, 0, 1, 0]; }   // (the mouse and the keys are the camera's: flyDemoCam)
   let fwd = (k('forward') ? 1 : 0) - (k('back') ? 1 : 0);
   let side = (k('moveright') ? 1 : 0) - (k('moveleft') ? 1 : 0);
   const turnKeys = (k('left') ? 1 : 0) - (k('right') ? 1 : 0);
@@ -304,6 +309,7 @@ async function ensureMap(name) {
 async function startMap(name) {
   running = false;
   demoPlaying = false;
+  setDemoCam(false);
   careerLogged = false; careerFrags = null;
   $('demobar').hidden = true;
   if (recording) { recording = false; $('record').textContent = 'Record'; }
@@ -397,6 +403,22 @@ function interpolateFrame(fr, alpha) {
 /** The tic row as the painter sees it this frame: the eye predicted `alpha` of a tic past the last
  *  state along the last tic's motion, the clock between the two tics, the angles live. The frame
  *  query clamps a predicted eye with a trace and returns the eye it used (row kind 10). */
+// The free camera of a demo (the Demos bar's Camera, or jump and fire while one plays): it starts at the player's
+// eye and is flown by the move keys, jump and crouch for up and down, and the mouse, every frame; the frame is
+// then asked from where it is (frame_all's mode 2) and the player is seen from outside
+function setDemoCam(on) {
+  demoCam = on && demoPlaying && last ? { x: last.PX, y: last.PY, z: last.VIEW_Z, yaw: last.YAW, pitch: last.PITCH } : null;
+  mouseYaw = 0; mousePitch = 0;
+  $('democam').textContent = demoCam ? 'Camera: free' : 'Camera: player';
+}
+function flyDemoCam(dt) {
+  const k = (c) => keys.has(c);
+  flyCamera(demoCam, {
+    fwd: (k('forward') ? 1 : 0) - (k('back') ? 1 : 0), side: (k('moveright') ? 1 : 0) - (k('moveleft') ? 1 : 0), up: (k('moveup') ? 1 : 0) - (k('movedown') ? 1 : 0),
+    yaw: mouseYaw + ((k('left') ? 1 : 0) - (k('right') ? 1 : 0)) * 140 * dt, pitch: mousePitch + ((k('lookdown') ? 1 : 0) - (k('lookup') ? 1 : 0)) * 100 * dt,
+  }, dt, map.bsp, k('speed') ? 150 : 400);
+  mouseYaw = 0; mousePitch = 0;
+}
 function viewRow(alpha, now) {
   const k = (c) => keys.has(c);
   const frac = Math.min(1, (now - lastTic) / TIC_MS);
@@ -405,9 +427,16 @@ function viewRow(alpha, now) {
   if (demoPlaying) {
     // a demo: the recorded view between the two snapshots (CG_InterpolatePlayerState), no live mouse, no prediction
     const v = { ...last };
-    if (!prev || alpha >= 1 || Math.hypot(last.PX - prev.PX, last.PY - prev.PY, last.PZ - prev.PZ) >= SNAP) return v;
+    const between = prev && alpha < 1 && Math.hypot(last.PX - prev.PX, last.PY - prev.PY, last.PZ - prev.PZ) < SNAP;
+    if (between) v.TIME_ = lerp(prev.TIME_, last.TIME_, alpha);
+    if (demoCam) {
+      // the free camera's eye: no kicks, not dead nor under water whatever the player is (the status bar stays the player's)
+      return { ...v, PX: demoCam.x, PY: demoCam.y, PZ: demoCam.z - 26, VIEW_Z: demoCam.z, YAW: demoCam.yaw, PITCH: demoCam.pitch,
+        VX: 0, VY: 0, VZ: 0, DEAD: 0, DUCKED: 0, WATERLEVEL: 0, PUNCH: 0 };
+    }
+    if (!between) return v;
     v.PX = lerp(prev.PX, last.PX, alpha); v.PY = lerp(prev.PY, last.PY, alpha); v.PZ = lerp(prev.PZ, last.PZ, alpha);
-    v.VIEW_Z = lerp(prev.VIEW_Z, last.VIEW_Z, alpha); v.TIME_ = lerp(prev.TIME_, last.TIME_, alpha);
+    v.VIEW_Z = lerp(prev.VIEW_Z, last.VIEW_Z, alpha);
     v.YAW = lerpAngle(prev.YAW, last.YAW, alpha); v.PITCH = lerpAngle(prev.PITCH, last.PITCH, alpha);
     return v;
   }
@@ -489,6 +518,8 @@ async function frame() {
       }
     }
     const alpha = Math.max(0, Math.min(1, (now - lastTic) / ticMs));
+    if (demoCam && !demoPlaying) setDemoCam(false);
+    if (demoCam) flyDemoCam(dt);
     const view = viewRow(alpha, now);
 
     t = performance.now();
@@ -500,7 +531,7 @@ async function frame() {
     const fpv = firstPersonView(view, state, dt, curFov);   // the kicks, the dips, the bob, the zoom: the view that is painted
     // (its values bound, not written into the text: one statement the engine prepares once and keeps)
     const rows = (await db.query('SELECT * FROM frame_all(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      [settings.renderer === 'sql' ? 1 : 0, lastSoundId, lastFxId, wantSpeakers ? 1 : 0, fpv.x, fpv.y, fpv.z, fpv.yaw, fpv.pitch, curFov], arr)).rows;
+      [(settings.renderer === 'sql' ? 1 : 0) | (demoCam ? 2 : 0), lastSoundId, lastFxId, wantSpeakers ? 1 : 0, fpv.x, fpv.y, fpv.z, fpv.yaw, fpv.pitch, curFov], arr)).rows;
     const fr = state.parse(rows);
     fr.sqlProjected = settings.renderer === 'sql';
     if (fr.eye) {
@@ -539,7 +570,7 @@ async function frame() {
 
     t = performance.now();
     // the gun is put away past half-way into the zoom: drawn with the zoomed view it would fill the screen
-    const noWeapon = narrowFov < (settings.fov + ZOOM_FOV) / 2;
+    const noWeapon = narrowFov < (settings.fov + ZOOM_FOV) / 2 || !!demoCam;   // (zoomed in; or a free camera, which holds no gun)
     const portal = await portalFrame(fr, fpv, view.TIME_);
     const tint = drawScene(renderer, hud, res, map.bsp, view, fr, { fov: curFov, sqlProjected: fr.sqlProjected, state, dt, scoreboard, scores, view: fpv, noWeapon, portal, playerModel: settings.model.split('/')[0] });
     renderer.present(tint);
@@ -717,6 +748,7 @@ $('aspect').addEventListener('change', async (e) => {
 // the WebGL picture's resolution (the software painters' is Detail)
 $('glres').value = settings.glres;
 $('glres').addEventListener('change', (e) => { settings.glres = e.target.value; saveSettings(); renderer?.setResolution?.(settings.glres); });
+$('democam').addEventListener('click', (e) => { e.target.blur(); setDemoCam(!demoCam); });
 $('renderer').value = settings.renderer;
 $('renderer').addEventListener('change', (e) => {
   const wasGl = settings.renderer === 'gl';
@@ -759,6 +791,7 @@ async function playDemo(id) {
   $('demoseek').max = String(f.S); $('demoseek').value = '0';
   $('demobar').hidden = false;
   demoPlaying = true;
+  setDemoCam(false);
   running = true;
 }
 // seeking a demo (the slider, ← and →): to the snapshot at that time; the next tic shows it

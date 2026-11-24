@@ -19,8 +19,10 @@ SET TERM ^ ;
 -- position predicted a fraction of a tic ahead, the angles live from the mouse: see the loop in
 -- src/main.js). A predicted eye is traced from the player's real one with a small box, so a prediction
 -- that runs past a wall stops 8 units short of it instead of looking into the void
+-- (vfree 1: a free camera, a demo's: the eye is the page's wherever the player is, and upright)
 CREATE OR ALTER PROCEDURE view_setup (vx DOUBLE PRECISION DEFAULT NULL, vy DOUBLE PRECISION DEFAULT NULL, vz DOUBLE PRECISION DEFAULT NULL,
-                                      vyaw DOUBLE PRECISION DEFAULT NULL, vpitch DOUBLE PRECISION DEFAULT NULL, vfov DOUBLE PRECISION DEFAULT NULL)
+                                      vyaw DOUBLE PRECISION DEFAULT NULL, vpitch DOUBLE PRECISION DEFAULT NULL, vfov DOUBLE PRECISION DEFAULT NULL,
+                                      vfree SMALLINT DEFAULT 0)
 RETURNS (ex DOUBLE PRECISION, ey DOUBLE PRECISION, ez DOUBLE PRECISION,
          fx DOUBLE PRECISION, fy DOUBLE PRECISION, fz DOUBLE PRECISION,
          rx DOUBLE PRECISION, ry DOUBLE PRECISION, rz DOUBLE PRECISION,
@@ -42,7 +44,8 @@ BEGIN
   IF (vx IS NOT NULL) THEN
   BEGIN
     yaw = vyaw; pitch = vpitch;
-    IF (ex IS NULL OR ABS(vx - ex) + ABS(vy - ey) + ABS(vz - ez) < 0.5e0) THEN BEGIN ex = vx; ey = vy; ez = vz; END
+    IF (vfree = 1) THEN BEGIN ex = vx; ey = vy; ez = vz; dead = 0; END
+    ELSE IF (ex IS NULL OR ABS(vx - ex) + ABS(vy - ey) + ABS(vz - ez) < 0.5e0) THEN BEGIN ex = vx; ey = vy; ez = vz; END
     ELSE
     BEGIN
       EXECUTE PROCEDURE trace_move(NULL, -8, -8, -8, 8, 8, 8, ex, ey, ez, vx, vy, vz, 1)
@@ -157,7 +160,8 @@ END^
 
 -- FRAME_FACES: the visible faces, projected vertex by vertex in SQL.
 CREATE OR ALTER PROCEDURE frame_faces (vx DOUBLE PRECISION DEFAULT NULL, vy DOUBLE PRECISION DEFAULT NULL, vz DOUBLE PRECISION DEFAULT NULL,
-                                       vyaw DOUBLE PRECISION DEFAULT NULL, vpitch DOUBLE PRECISION DEFAULT NULL, vfov DOUBLE PRECISION DEFAULT NULL)
+                                       vyaw DOUBLE PRECISION DEFAULT NULL, vpitch DOUBLE PRECISION DEFAULT NULL, vfov DOUBLE PRECISION DEFAULT NULL,
+                                       vfree SMALLINT DEFAULT 0)
 RETURNS (face INTEGER, seq INTEGER, vf DOUBLE PRECISION, vr DOUBLE PRECISION, vu DOUBLE PRECISION,
          sx DOUBLE PRECISION, sy DOUBLE PRECISION, s DOUBLE PRECISION, t DOUBLE PRECISION, u DOUBLE PRECISION, v DOUBLE PRECISION, ent_id INTEGER)
 AS
@@ -175,7 +179,7 @@ DECLARE m00 DOUBLE PRECISION; DECLARE m01 DOUBLE PRECISION; DECLARE m02 DOUBLE P
 DECLARE m10 DOUBLE PRECISION; DECLARE m11 DOUBLE PRECISION; DECLARE m12 DOUBLE PRECISION;
 DECLARE m20 DOUBLE PRECISION; DECLARE m21 DOUBLE PRECISION; DECLARE m22 DOUBLE PRECISION;
 BEGIN
-  EXECUTE PROCEDURE view_setup(vx, vy, vz, vyaw, vpitch, vfov) RETURNING_VALUES ex, ey, ez, fx, fy, fz, rx, ry, rz, ux, uy, uz, w, h, sc, nearz, kx, ky, pvs, vcl, vleaf;
+  EXECUTE PROCEDURE view_setup(vx, vy, vz, vyaw, vpitch, vfov, vfree) RETURNING_VALUES ex, ey, ez, fx, fy, fz, rx, ry, rz, ux, uy, uz, w, h, sc, nearz, kx, ky, pvs, vcl, vleaf;
   hw = w / 2e0; hh = h / 2e0;
   qx = SQRT(1 + kx * kx); qy = SQRT(1 + ky * ky);
   EXECUTE PROCEDURE mark_faces(pvs, vcl, vleaf);
@@ -283,21 +287,25 @@ DECLARE qx DOUBLE PRECISION; DECLARE qy DOUBLE PRECISION; DECLARE world INTEGER;
 DECLARE eid INTEGER; DECLARE emid INTEGER; DECLARE cls VARCHAR(200) CHARACTER SET ASCII; DECLARE cl INTEGER; DECLARE rot SMALLINT;
 DECLARE vis SMALLINT; DECLARE vis_cl INTEGER; DECLARE varea INTEGER; DECLARE ea INTEGER;
 DECLARE pm VARCHAR(16); DECLARE ps VARCHAR(16); DECLARE la INTEGER; DECLARE ta INTEGER; DECLARE hp INTEGER; DECLARE cn VARCHAR(40); DECLARE alpha SMALLINT;
-DECLARE tn DOUBLE PRECISION; DECLARE fid INTEGER;
+DECLARE tn DOUBLE PRECISION; DECLARE fid INTEGER; DECLARE free_ SMALLINT;
 BEGIN
   SELECT g.world_model FROM game g WHERE g.id = 1 INTO world;
   pe = player_ent();
-  EXECUTE PROCEDURE view_setup(vx, vy, vz, vyaw, vpitch, vfov) RETURNING_VALUES ex, ey, ez, fx, fy, fz, rx, ry, rz, ux, uy, uz, w, h, sc, nearz, kx, ky, pvs, vcl, vleaf;
+  -- mode: 1 the vertices projected here too; 2 a free camera (a demo watched from outside): the eye as given, and
+  -- the player's own body drawn as the others are
+  free_ = IIF(BIN_AND(mode, 2) <> 0, 1, 0);
+  IF (free_ = 1) THEN pe = -1;
+  EXECUTE PROCEDURE view_setup(vx, vy, vz, vyaw, vpitch, vfov, free_) RETURNING_VALUES ex, ey, ez, fx, fy, fz, rx, ry, rz, ux, uy, uz, w, h, sc, nearz, kx, ky, pvs, vcl, vleaf;
   qx = SQRT(1 + kx * kx); qy = SQRT(1 + ky * ky);
   SELECT l.area FROM leaves l WHERE l.id = :vleaf INTO varea;
   -- the eye this frame was culled for (a predicted one may have been clamped): the page paints from it
   kind = 10; d1 = ex; d2 = ey; d3 = ez;
   SUSPEND;
   d1 = NULL; d2 = NULL; d3 = NULL;
-  IF (mode = 1) THEN
+  IF (BIN_AND(mode, 1) = 1) THEN
   BEGIN
     kind = 8;
-    FOR SELECT f.face, f.seq, f.ent_id, f.vf, f.vr, f.vu, f.sx, f.sy, f.s, f.t, f.u, f.v FROM frame_faces(:vx, :vy, :vz, :vyaw, :vpitch, :vfov) f INTO i1, i2, i3, d1, d2, d3, d4, d5, d6, d7, d8, d9 DO SUSPEND;
+    FOR SELECT f.face, f.seq, f.ent_id, f.vf, f.vr, f.vu, f.sx, f.sy, f.s, f.t, f.u, f.v FROM frame_faces(:vx, :vy, :vz, :vyaw, :vpitch, :vfov, :free_) f INTO i1, i2, i3, d1, d2, d3, d4, d5, d6, d7, d8, d9 DO SUSPEND;
     i3 = NULL; d4 = NULL; d5 = NULL; d6 = NULL; d7 = NULL; d8 = NULL; d9 = NULL;
   END
   ELSE
@@ -365,7 +373,10 @@ BEGIN
              e.x, e.y, e.z, e.pitch, e.yaw, e.roll, e.legs_time, e.torso_time,
              e.pmodel, e.pskin, e.legs_anim, e.torso_anim, e.health, e.classname, e.cluster, e.clusters, (SELECT l.area FROM leaves l WHERE l.id = e.leaf)
         FROM ents e LEFT JOIN models m ON m.id = e.model_id
-       WHERE (m.kind IN ('M', 'S') OR e.pmodel IS NOT NULL) AND e.id <> :pe AND e.id <> :fid AND e.alpha = 0
+       WHERE (m.kind IN ('M', 'S') OR e.pmodel IS NOT NULL) AND e.id <> :pe AND e.id <> :fid
+         -- (the player's own body is kept out of sight by its alpha: a free camera sees it, alive and in the match)
+         AND (e.alpha = 0 OR (:free_ = 1 AND e.classname = 'player' AND e.health > 0
+                              AND EXISTS (SELECT 1 FROM player p WHERE p.id = 1 AND p.spectator = 0)))
          -- the snapshot's entities light what is in view from outside it (R_AddLightToScene): a missile or a
          -- player (its flash, its quad) within a light's reach of the frustum, 300, comes too
          AND (e.x - :ex) * :fx + (e.y - :ey) * :fy + (e.z - :ez) * :fz + COALESCE(m.radius, 0) + IIF(e.movetype IN (9, 10) OR e.pmodel IS NOT NULL, 300, 64) >= :nearz

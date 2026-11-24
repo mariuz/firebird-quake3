@@ -1500,7 +1500,13 @@ interpolates the recorded view between two snapshots and the mouse moves nothing
 speed menu plays it at ¼× to 4× (`timescale`: the loop's tic interval divided by it, up to eight tics a call), and the
 slider, ← and → (5 s back or on) seek: `demo_seek(n)` puts the tables as the snapshot before `n` left them in one
 statement (each entity's last row up to there, by the `demo_ents (demo_id, id, n)` index, those gone left out, the
-console's last lines), and the next `demo_play(1)` shows `n` itself; a seek takes about 30 ms. *Save
+console's last lines), and the next `demo_play(1)` shows `n` itself; a seek takes about 30 ms. Since
+the snapshots are whole (every entity, the player too), a demo can be watched from anywhere: the bar's
+*Camera* (or jump while a demo plays; fire gives the player's eyes back) starts a free camera at the eye,
+flown every frame by the move keys, jump and crouch, and the mouse (`flyCamera`: 400 units a second, the
+way traced through the world so that it stops at the walls). The frame is asked from where it is with
+`frame_all`'s mode 2, which makes `view_setup` take the eye as given (no trace from the player's, no roll
+of the dead) and lets the player's own body through, which its alpha otherwise hides. *Save
 demo* writes the newest demo's rows to a JSON file, *Load demo* reads one back under a new id and plays it
 (`src/demo.js`; about 30 KB a second of play). `npm run test:demo` records six seconds of moving and firing with
 three bots, plays them back and checks every snapshot gives what was painted: the row, the models and poses in

@@ -6,7 +6,7 @@
 //   node scripts/view-test.mjs
 
 import fs from 'node:fs';
-import { FrameState, firstPersonView, zoomedFov, fovY, wideFov, screenShape, swingAngle, movementDir, playerAngles, runLerpFrame, mapTorsoToWeaponFrame, viewTorsoFrame, viewHandFrames, underwaterFov, sceneLights, gunFlashOrigin, litByDlights, MAX_DLIGHTS, drawRail, drawBolt, findPortals, portalView, mirrorView, portalFade, cameraRoll, perpendicular, floorBelow, floorUnderBox, drawShadows, colorFromString, boltImpact, ringStages, bulletStages, RING_TIME, followBolt, followOtherBolt, spriteExplosion, EXPLOSIONS } from '../src/scene.js';
+import { FrameState, firstPersonView, zoomedFov, fovY, wideFov, screenShape, flyCamera, swingAngle, movementDir, playerAngles, runLerpFrame, mapTorsoToWeaponFrame, viewTorsoFrame, viewHandFrames, underwaterFov, sceneLights, gunFlashOrigin, litByDlights, MAX_DLIGHTS, drawRail, drawBolt, findPortals, portalView, mirrorView, portalFade, cameraRoll, perpendicular, floorBelow, floorUnderBox, drawShadows, colorFromString, boltImpact, ringStages, bulletStages, RING_TIME, followBolt, followOtherBolt, spriteExplosion, EXPLOSIONS } from '../src/scene.js';
 import { Renderer, tagTransform, mulAxis, anglesAxis, yawAxis, animLerp, lerpFrames, nearFrame, autospriteQuads, fogST, fogFactor, md3Lod, entityFog, clipFace, polyFog, fogFade } from '../src/renderer.js';
 import { parseDeform, waveValue, deformVertex, envTexCoords, parseShaderScript, surfaceLook, shellMesh, eyeInModel, stageBrightness, stageTcMatrix, stageColor, stageAlpha, shaderStages, fogAdjust, blendFogAdjust, specularAlpha, SPECULAR_LIGHT } from '../src/shader.js';
 import { Md3, parseAnimationCfg, parseSkin } from '../src/md3.js';
@@ -196,6 +196,18 @@ assert(weak.pitch <= -9.9 && strong.pitch >= -10.01, `low on health the kick is 
   }
   assert(Math.abs(screenShape(1920, 1080) - 16 / 9) < 1e-9 && screenShape(1080, 1920) === 4 / 3 && screenShape(5120, 1080) === 32 / 9 && screenShape(0, 0) === 4 / 3,
     'the full screen\'s picture has the screen\'s own shape, 4 by 3 at the least and 32 by 9 at the most');
+  {
+    // a demo's free camera: flown along the view, to its right, straight up; stopped 8 units short of a wall
+    const c = flyCamera({ x: 0, y: 0, z: 0, yaw: 0, pitch: 0 }, { fwd: 1 }, 0.5);
+    const r = flyCamera({ x: 0, y: 0, z: 0, yaw: 0, pitch: 0 }, { side: 1, up: 1 }, 1);
+    const turned = flyCamera({ x: 0, y: 0, z: 0, yaw: 350, pitch: 80 }, { yaw: 20, pitch: 30, fwd: 1 }, 0.25, null, 400);
+    const wall = flyCamera({ x: 0, y: 0, z: 0, yaw: 90, pitch: 0 }, { fwd: 1 }, 1, { traceLine: () => 0.25 });       // a wall 102 units ahead
+    const close = flyCamera({ x: 0, y: 0, z: 0, yaw: 90, pitch: 0 }, { fwd: 1 }, 0.01, { traceLine: () => 0.25 });   // one 3 units ahead
+    const still = flyCamera({ x: 5, y: 6, z: 7, yaw: 10, pitch: 5 }, {}, 1);
+    assert(Math.abs(c.x - 200) < 1e-9 && c.y === 0 && Math.abs(r.y + 400 / Math.SQRT2) < 1e-6 && Math.abs(r.z - 400 / Math.SQRT2) < 1e-6
+      && turned.yaw === 10 && turned.pitch === 89 && turned.z < -99 && Math.abs(wall.y - 94) < 1e-6 && close.y === 0 && still.x === 5 && still.z === 7,
+      `a free camera flies 400 units a second along its view, to its right and up (a diagonal no faster), turns with the mouse (the pitch kept under 90), and stops 8 units short of a wall (${wall.y.toFixed(0)} of 102)`);
+  }
   const wide = wideFov(90, 640, 360);
   assert(Math.abs(wideFov(90, 640, 480) - 90) < 1e-9 && Math.abs(wide - 106.26) < 0.01 && Math.abs(fovY(wide, 640, 360) - fovY(90, 640, 480)) < 1e-9
     && Math.abs(fovY(wideFov(22.5, 640, 360), 640, 360) - fovY(22.5, 640, 480)) < 1e-9,
