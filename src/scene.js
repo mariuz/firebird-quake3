@@ -4,7 +4,7 @@
 // FrameState keeps what outlives a frame: explosions and beams in
 // flight, the pose of rotating brush models, the console lines.
 
-import { angleMatrix, yawAxis, anglesAxis, mulAxis, tagTransform, animFrame, WEAPON_DIRS } from './renderer.js';
+import { angleMatrix, yawAxis, anglesAxis, mulAxis, tagTransform, animFrame, animLerp, WEAPON_DIRS } from './renderer.js';
 import { ITEMS, WEAPONS, PLAYER_MODEL } from './gamedata.js';
 
 const WEAPON_DIR = { 1: 'gauntlet', 2: 'machinegun', 4: 'shotgun', 8: 'grenadel', 16: 'rocketl', 32: 'lightning', 64: 'railgun', 128: 'plasma', 256: 'bfg' };
@@ -1036,6 +1036,19 @@ export function viewTorsoFrame(anims, last, time) {
   return anims[11]?.first ?? 0;
 }
 
+/** The frames the view's hand is between, { a, b, t }: the torso's as viewTorsoFrame has it, taken between two
+ *  frames of the animation (animLerp) and each mapped to the hand's (CG_AddViewWeapon lerps the hand as any model),
+ *  so the gun goes down and comes up smoothly at any frame rate */
+export function viewHandFrames(anims, last, time, numFrames = 16) {
+  let lf;
+  if (last.WEAPONSTATE === 2) lf = animLerp(anims, 9, time - (last.WEAPON_TIME - 0.2));
+  else if (last.WEAPONSTATE === 3) lf = animLerp(anims, 10, time - (last.WEAPON_TIME - 0.25));
+  else if (last.ATTACK_START > 0 && time - last.ATTACK_START < 0.4) lf = animLerp(anims, last.WEAPON === 1 ? 8 : 7, time - last.ATTACK_START);
+  if (!lf) return { a: 0, b: 0, t: 0 };
+  const hand = (f) => Math.min(numFrames - 1, mapTorsoToWeaponFrame(anims, f));
+  return { a: hand(lf.a), b: hand(lf.b), t: lf.t };
+}
+
 /** The animations of the player model drawn for `pm` (drawPlayer's choice: the first there is when it is missing) */
 const playerAnims = (res, pm) => (res.players?.get(pm) ?? res.players?.values().next().value)?.anims ?? null;
 
@@ -1248,7 +1261,7 @@ function drawViewWeapon(r, res, bsp, last, time, view, lights = [], playerModel 
   if (hand) {
     // the hand plays the torso's frames of the model played (CG_AddViewWeapon, ps's model)
     const p = res.players.get(playerModel) ?? res.players.get(PLAYER_MODEL) ?? res.players.values().next().value;
-    const frame = p ? Math.min(hand.numFrames - 1, mapTorsoToWeaponFrame(p.anims, viewTorsoFrame(p.anims, last, time))) : 0;
+    const frame = p ? viewHandFrames(p.anims, last, time, hand.numFrames) : 0;
     const t = tagTransform(hand, frame, 'tag_weapon', org, axis);
     if (t) { gunOrigin = t.origin; gunAxis = t.axis; }
   } else {

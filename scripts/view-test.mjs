@@ -6,7 +6,7 @@
 //   node scripts/view-test.mjs
 
 import fs from 'node:fs';
-import { FrameState, firstPersonView, zoomedFov, fovY, wideFov, screenShape, swingAngle, movementDir, playerAngles, runLerpFrame, mapTorsoToWeaponFrame, viewTorsoFrame, underwaterFov, sceneLights, gunFlashOrigin, litByDlights, MAX_DLIGHTS, drawRail, drawBolt, findPortals, portalView, mirrorView, portalFade, cameraRoll, perpendicular, floorBelow, floorUnderBox, drawShadows, colorFromString, boltImpact, ringStages, bulletStages, RING_TIME, followBolt, followOtherBolt, spriteExplosion, EXPLOSIONS } from '../src/scene.js';
+import { FrameState, firstPersonView, zoomedFov, fovY, wideFov, screenShape, swingAngle, movementDir, playerAngles, runLerpFrame, mapTorsoToWeaponFrame, viewTorsoFrame, viewHandFrames, underwaterFov, sceneLights, gunFlashOrigin, litByDlights, MAX_DLIGHTS, drawRail, drawBolt, findPortals, portalView, mirrorView, portalFade, cameraRoll, perpendicular, floorBelow, floorUnderBox, drawShadows, colorFromString, boltImpact, ringStages, bulletStages, RING_TIME, followBolt, followOtherBolt, spriteExplosion, EXPLOSIONS } from '../src/scene.js';
 import { Renderer, tagTransform, mulAxis, anglesAxis, yawAxis, animLerp, lerpFrames, nearFrame, autospriteQuads, fogST, fogFactor, md3Lod, entityFog, clipFace, polyFog, fogFade } from '../src/renderer.js';
 import { parseDeform, waveValue, deformVertex, envTexCoords, parseShaderScript, surfaceLook, shellMesh, eyeInModel, stageBrightness, stageTcMatrix, stageColor, stageAlpha, shaderStages, fogAdjust, blendFogAdjust, specularAlpha, SPECULAR_LIGHT } from '../src/shader.js';
 import { Md3, parseAnimationCfg, parseSkin } from '../src/md3.js';
@@ -227,6 +227,11 @@ assert(weak.pitch <= -9.9 && strong.pitch >= -10.01, `low on health the kick is 
   assert(at(2, 10.2, 10.01) === 142 && at(2, 10.2, 10.12) === 144 && at(2, 10.2, 10.17) === 145, 'dropping: the drop from its start, 20 frames a second');
   assert(at(3, 10.25, 10.01) === 147 && at(3, 10.25, 10.17) === 150 && at(3, 10.25, 10.24) === 150, 'raising: the raise, held on its last frame');
   assert(at(0, 0, 10) === 151 && at(0, 0, 10.05, { ATTACK_START: 10 }) === 130 && at(0, 0, 10.05, { ATTACK_START: 10, WEAPON: 1 }) === 136, 'at rest standing; firing the attack, the gauntlet its own');
+  const hf = (state, wt, t, extra = {}) => viewHandFrames(anims, { WEAPONSTATE: state, WEAPON_TIME: wt, WEAPON: 2, ATTACK_START: 0, ...extra }, t);
+  const d = hf(2, 10.2, 10.125), r = hf(3, 10.25, 10.24), rest = hf(0, 0, 10), fire = hf(0, 0, 10.1, { ATTACK_START: 10 });
+  assert(d.a === 8 && d.b === 9 && Math.abs(d.t - 0.5) < 1e-6 && r.a === 14 && r.b === 14 && rest.a === 0 && rest.b === 0 && fire.a === 2 && fire.b === 3 && Math.abs(fire.t - 0.5) < 1e-6
+    && hf(2, 10.2, 10.125).a <= 15,
+    'the hand between two of its frames: halfway from 8 to 9 an eighth of a second into the drop, held on 14 at the raise\'s end, 0 at rest, between 2 and 3 a tenth of a second into a shot');
 }
 
 // the marks (CG_ImpactMark): a wall at x = 0 facing +x, 256 square, of two faces split at y = 0; a floor
