@@ -357,6 +357,33 @@ sound, the lead state. Each tic:
    `score_frag` announces the team lead instead ("red leads", "blue leads", "teams are tied",
    `game.team_lead`), the fraglimit is the team's ("Red hit the fraglimit."), and the time limit's
    tie is the teams'; the winner is "Red team" or "Blue team" and the win music plays for its side.
+   *Capture the flag* (`gametype` 4, `GT_CTF`, `sql/ctf.sql`) is `g_team.c`'s flags on top of the teams. Each
+   team's flag is an item at its base (`team_CTF_redflag`, `team_CTF_blueflag`, kind `F` in `item_defs`), and
+   where a flag is needs no state of its own: it is carried when a player's `effects` have its bit (131072
+   red, 262144 blue, which go with the entity to the painter and into a demo's snapshots), dropped when an
+   item of its class with an owner lies about, else at its base, the map's item being hidden meanwhile
+   (`ctf_status`, `ctf_carrier`, `ctf_dropped`, `ctf_base`). `item_touch` hands a flag's touch to
+   `ctf_touch_flag` (`Pickup_Team`) for the player and the bots alike: the enemy's flag is taken; one's own,
+   dropped, goes home for a frag (`CTF_RECOVERY_BONUS`), and at its base takes the enemy flag one carries
+   for a capture: a point for the team (`add_score` adds frags to a team's score in team deathmatch only),
+   five frags for the carrier, both flags home, "red leads" as the lead changes, and the match's end at
+   `game.capturelimit`. `toss_client_items` drops a dead carrier's flag as it drops a gun
+   (`ctf_drop_flag`), with `flag_return` for its think 30 seconds on (`Team_DroppedFlagThink`), and
+   `score_frag` gives who fragged a carrier two frags more (`ctf_frag_bonus`). `select_spawn` takes a
+   team's own spots (`team_CTF_redspawn`, `team_CTF_redplayer` and the blue ones), which `spawn_map_ents`
+   keeps in this game only. The team sounds are chosen by the listener's team where they are queued
+   (`ctf_sound`), as the client chooses them. `frame_all` adds a row of kind 13 with the two flags' states
+   and the flag the player carries, for the icons beside the HUD's scores and over the status bar; a
+   carrier is drawn with the flag behind it (`flagTrail`, `CG_TrailItem`) and lights its surroundings in
+   the flag's colour. The bots' part is `bot_ctf_goals`, each think: with the enemy flag, home (staying about
+   the base while their own flag is away); a flag lying dropped is gone for; else the team's bots are split,
+   one in two or three defending the base and the others going for the enemy flag, through the same
+   `get_id` and `def_id` an order of the player's uses (an order stands, `ents.ctf_goal` telling the two
+   apart); a defender whose flag was taken is after the carrier. The flags' models, icons and sounds are
+   not in the demo's pak: `scripts/fetch-maps.mjs` writes them from OpenArena into `public/pak/ctf.pk3`,
+   which the page and the tests put under the demo's pak, with eight of OpenArena's capture the flag arenas
+   in the map packs. Getting the bots to the flag found a fault in the waypoint builder: `wp_walkable`'s
+   stepped walk climbed a ledge 64 units up as four steps, and now a step up must get somewhere.
    `q3_tic` returns `gametype`, `red_score`, `blue_score` and the player's `team`; the HUD's corner
    shows the two scores with ours marked, and `scoreboard` returns each row's team so the page lists
    the teams under their names and scores. The bots play as a team (`ai_team.c`): `bot_team_ai`

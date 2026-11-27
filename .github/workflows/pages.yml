@@ -41,8 +41,8 @@ jobs:
         run: npm run fetch-pak
 
       # OpenArena 0.8.8 and its Community Map-Pack (GPLv2 game data, 440 MB, downloaded once): each of their
-      # deathmatch arenas becomes a small pk3 of what it uses, public/pak/maps/*.pk3, fetched by the page
-      # when it is picked
+      # deathmatch arenas, and eight of the capture the flag ones, becomes a small pk3 of what it uses,
+      # public/pak/maps/*.pk3, fetched by the page when it is picked; the flags' own files are public/pak/ctf.pk3
       - name: Cache OpenArena and the Community Map-Pack
         uses: actions/cache@v4
         with:
@@ -106,6 +106,10 @@ jobs:
 
       - name: Tournament
         run: npm run test:tourney
+
+      # Capture the flag on one of OpenArena's arenas (skipped, as the map packs' test is, when they were not built)
+      - name: Capture the flag
+        run: npm run test:ctf
 
       # Every hosted OpenArena and Community Map-Pack arena on top of the demo pak: its pictures, its spawns, a second of play
       - name: The OpenArena map packs

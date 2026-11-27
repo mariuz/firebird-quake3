@@ -25,7 +25,7 @@ has no ladders.
 
 | Gap | Notes |
 | --- | --- |
-| **Gametypes** | free-for-all, tournament and team deathmatch. Capture the flag (`team_CTF_*`, flags, `target_score`, the team overlay) is absent; the demo pak has no CTF maps, the full pak does. Teammates have no friend marker over their heads (`cg_drawFriend`: the demo pak lacks `sprites/friend1.tga`) |
+| **Gametypes** | free-for-all, tournament, team deathmatch and capture the flag (see §8). Of capture the flag: the smaller bonuses of `Team_FragBonuses` (defending the base or the carrier, the assists) and their medals (capture, assist, defend), the team overlay and `target_location`'s places, a flag dropped into a `nodrop` volume going home at once (it lies its 30 seconds), and of the bots' flag play all but the split into attackers and defenders (`BotCTFOrders`'s other cases, escorting the carrier, the retreat with the flag). The demo's pak has no capture the flag arena, the full game's has; eight of OpenArena's are hosted. Teammates have no friend marker over their heads (`cg_drawFriend`: the demo pak lacks `sprites/friend1.tga`) |
 | **`misc_model`** | skipped at spawn (q3map bakes the demo's into the BSP); the portal entities are read by the page from the map's entities, not spawned |
 | **`target_laser`** | not spawned (none in the demo maps nor the hosted arenas); `shooter_*` and `target_push` are here (OpenArena's oa_dm2 fires its shooters) |
 | **Grappling hook** | not in Quake III's arenas; nothing to do |
@@ -117,7 +117,12 @@ and the shot straight down, the flight steered with the air acceleration); team 
 `PickTeam`, the red and blue skins, no friendly fire, team scores through `AddScore`, the team's
 fraglimit and tied time limit, "red leads" / "blue leads" / "teams are tied", the bots leaving
 teammates alone and holding fire with one in the way, the HUD's two scores and the team scoreboard:
-`npm run test:team`); the tournament (`GT_TOURNAMENT`: two play and the rest wait as spectators in the
+`npm run test:team`); capture the flag (`GT_CTF`, `sql/ctf.sql`, on eight of OpenArena's arenas with OpenArena's flags: the
+flags at their bases and each team's spawn points, an enemy flag taken by touch and carried on the back with its glow, a capture
+at one's own flag for a point and five frags, a carrier's death dropping the flag for 30 seconds, a teammate's touch sending
+it home for a frag, two frags for fragging a carrier, the capturelimit, the announcer's team sounds, the flags' state beside
+the HUD's scores, and bots that split into a defender and attackers, fetch the flag and bring it home: `npm run test:ctf`);
+the tournament (`GT_TOURNAMENT`: two play and the rest wait as spectators in the
 order they came, "waiting for players" and the countdown when both are there, wins and losses, the
 loser to the back of the queue and the arena restarted for the next: `npm run test:tourney`); bots
 joining and leaving mid-game (`addbot` at a skill and `kick` from the page's menus: `G_AddBot`,

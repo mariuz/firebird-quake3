@@ -224,6 +224,9 @@ export function sceneLights(state, frame, last, view, time, res = null) {
       else add(e.x + Math.cos(yaw) * 24, e.y + Math.sin(yaw) * 24, e.z + 16, [300 + Math.random() * 32, ...fc]);
     }
     if (e.effects & 16) add(e.x, e.y, e.z, DL_ROCKET);
+    // a flag's carrier glows in the flag's colour (CG_PlayerPowerups: 200 + rand & 31 of 1 0.2 0.2, or 0.2 0.2 1)
+    if (e.effects & FLAG_RED) add(e.x, e.y, e.z, [200 + Math.random() * 32, 1, 0.2, 0.2]);
+    if (e.effects & FLAG_BLUE) add(e.x, e.y, e.z, [200 + Math.random() * 32, 0.2, 0.2, 1]);
     else if (e.effects & 64) add(e.x, e.y, e.z, DL_BFG);
     if (e.effects & 512 && e.pmodel) add(e.x, e.y, e.z, [200 + Math.random() * 32, 0.2, 0.2, 1]);
   }
@@ -367,6 +370,16 @@ export function playerAngles(pe, pitch, yaw, legsAnim, torsoAnim, dir, vel, ms, 
     legs[0] += k * (vel[0] * ax[0] + vel[1] * ax[1] + vel[2] * ax[2]);
   }
   return { legs, torso, head: [pitch, headYaw, 0] };
+}
+
+// capture the flag: the bits of a carrier's effects (sql/ctf.sql)
+export const FLAG_RED = 131072, FLAG_BLUE = 262144;
+
+/** CG_TrailItem: where the flag a player carries is drawn, 16 units behind it and 16 up, turned a quarter to its
+ *  facing: { origin, axis } */
+export function flagTrail(e) {
+  const yaw = (e.yaw * Math.PI) / 180;
+  return { origin: [e.x - 16 * Math.cos(yaw), e.y - 16 * Math.sin(yaw), e.z + 16], axis: yawAxis(e.yaw + 90) };
 }
 
 /** R_SetupEntityLighting's dynamic lights on a model: each adds 16 r² / d² (d at least 16) of its colour to the
@@ -631,7 +644,7 @@ export class FrameState {
   /** rows of FRAME_ALL (array mode): r = [kind, i1, i2, i3, i4, i5, d1..d9, s, lst] */
   parse(rows) {
     const faces = [], ents = [], sounds = [], fx = [];
-    let speakers = null, eye = null;
+    let speakers = null, eye = null, ctf = null;
     const messages = [], loopsAt = [], flying = [];
     this.brushAngles.clear();
     for (const r of rows) {
@@ -645,13 +658,15 @@ export class FrameState {
         case 7: speakers = r[16] ? r[16].split(',').map(Number) : []; break;
         case 9: messages.push({ id: r[1], time: r[6], text: r[15] }); break;
         case 10: eye = [r[6], r[7], r[8]]; break;
+        case 13: ctf = { red: r[1], blue: r[2], mine: r[3] }; break;   // capture the flag: where the flags are
         case 11: loopsAt.push([r[1], r[6], r[7], r[8]]); break;
         case 12: flying.push([r[1], r[6], r[7], r[8], r[15], r[9] ?? 0, r[10] ?? 0, r[11] ?? 0]); break;
         default: break;
       }
     }
     this.messages = messages;
-    return { faces, ents, sounds, fx, speakers, messages, eye, loopsAt, flying };
+    if (eye) this.ctf = ctf;   // (the picture's own frame, not a portal's)
+    return { faces, ents, sounds, fx, speakers, messages, eye, loopsAt, flying, ctf };
   }
 
   /** CG_BubbleTrail: a bubble every `spacing` units from a to b, drifting up with a little jitter, a second
@@ -1132,6 +1147,12 @@ export function drawScene(renderer, hud, res, bsp, last, frame, opts = {}) {
         { powerups: e.effects & POWERUP_BITS, flash: firing(e, time), angles: state.playerPose(e, +legs, +torso, isCorpse || +legs < 6, time, playerAnims(res, pm), isCorpse ? null : +hp) });
       // CG_PlayerPowerups: the haste's smoke behind a runner (LEGS_RUN, LEGS_BACK)
       if (e.effects & 2048 && (+legs === 15 || +legs === 16)) state.hasteTrail(e.id, [e.x, e.y, e.z], time);
+      // the flag it carries, behind it (CG_TrailItem)
+      if (e.effects & (FLAG_RED | FLAG_BLUE) && !isCorpse) {
+        const fid = res.byName.get(e.effects & FLAG_RED ? 'models/flags/r_flag.md3' : 'models/flags/b_flag.md3');
+        const at = flagTrail(e);
+        if (fid) r.drawMd3(res.models.get(fid).mdl, 0, at.origin, at.axis, null, light);
+      }
       // a fresh reward floats over the head (CG_PlayerSprites, CG_PlayerFloatSprite)
       const medal = e.effects & 8192 ? 'excellent' : e.effects & 32768 ? 'impressive' : e.effects & 16384 ? 'gauntlet' : null;
       if (medal && !isCorpse) r.drawSprite(`menu/medals/medal_${medal}`, [e.x, e.y, e.z + 48], 20, 'blend');
@@ -1262,7 +1283,7 @@ export function drawScene(renderer, hud, res, bsp, last, frame, opts = {}) {
   if (!last.DEAD && !last.MATCH_OVER && !(last.SPECTATOR && !last.FOLLOW_NAME) && last.WEAPON && !opts.noWeapon) drawViewWeapon(r, res, bsp, last, time, view, lights, opts.playerModel);
 
   // 2D
-  if (hud) hud.draw(r, last, time, state.messages, opts);
+  if (hud) hud.draw(r, last, time, state.messages, { ...opts, ctf: state.ctf });
   return screenTint(last, time);
 }
 

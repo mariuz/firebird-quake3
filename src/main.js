@@ -253,6 +253,13 @@ function readInput(tics) {
 let catalog = [];          // [{ map, title, pack, file, bytes }] from pak/maps/index.json
 const local = new Map();   // map → the pk3 file it came from (picked from disk)
 let basePak = null;        // the game's pak (the demo's pak0.pk3)
+let ctfPak = null;         // capture the flag's flags, icons and sounds (pak/ctf.pk3, from OpenArena), under the others
+const baseLayers = () => (ctfPak ? [basePak, ctfPak] : [basePak]);
+// an arena's game types as the packs' arena lists give them ("ffa tourney", "ctf" …): capture the flag is played
+// on the arenas that have the flags, and an arena with nothing but the flags' spawn points only as that
+const mapTypes = (name) => (catalog.find((m) => m.map === name)?.types ?? 'ffa tourney team').toLowerCase().split(/\s+/);
+const isCtfMap = (name) => !!ctfPak && mapTypes(name).includes('ctf');
+const gameTypeFor = (name) => (isCtfMap(name) && (settings.gametype === 'ctf' || !mapTypes(name).includes('ffa')) ? 4 : { team: 3, tourney: 1, ctf: 3 }[settings.gametype] ?? 0);
 const localPaks = [];      // the pk3s picked from disk, in the order picked
 const fetchedPaks = new Map();   // a hosted map pack's file → its Pk3, kept once fetched
 
@@ -260,7 +267,7 @@ const fetchedPaks = new Map();   // a hosted map pack's file → its Pk3, kept o
  *  a time, so one arena's shaders never dress another's). The shaders are read again (a later file wins) and
  *  the painters forget the pictures they have, which may be another pak's now. */
 function stackPaks(top = null) {
-  const layers = [basePak, ...localPaks, ...(top ? [top] : [])];
+  const layers = [...baseLayers(), ...localPaks, ...(top ? [top] : [])];
   if (layers.length === pak.paks.length && layers.every((p, i) => p === pak.paks[i])) return;
   pak.reset(layers);
   const shaders = loadShaders(pak);
@@ -276,8 +283,12 @@ function fillMapMenu() {
   const groups = [[basePak.label ?? 'pak0.pk3', base.map((m) => opt(m))]];
   const packs = new Map();
   for (const c of catalog) {
-    if (!packs.has(c.pack)) packs.set(c.pack, []);
-    packs.get(c.pack).push(opt(c.map, c.title));
+    // (the capture the flag arenas in a group of their own; without the flags' files they are not offered)
+    const ctf = (c.types ?? '').split(/\s+/).includes('ctf');
+    if (ctf && !ctfPak) continue;
+    const g = ctf ? `${c.pack}: capture the flag` : c.pack;
+    if (!packs.has(g)) packs.set(g, []);
+    packs.get(g).push(opt(c.map, c.title));
   }
   for (const [p, opts] of packs) groups.push([`${p} (fetched when picked)`, opts]);
   if (local.size) groups.push(['Your pk3s', [...local.keys()].map((m) => opt(m))]);
@@ -302,7 +313,8 @@ async function ensureMap(name) {
   }
   stackPaks(top);
   if (!pak.has(`maps/${name}.bsp`)) throw new Error(`no map ${name}`);
-  const rotation = c ? catalog.filter((m) => m.pack === c.pack).map((m) => m.map)
+  // (the rotation: the arenas of the same source and the same kind, capture the flag's or the others)
+  const rotation = c ? catalog.filter((m) => m.pack === c.pack && isCtfMap(m.map) === isCtfMap(name)).map((m) => m.map)
     : local.has(name) ? [...local.keys()] : basePak.mapNames();
   await setRotation(db, rotation);
 }
@@ -314,11 +326,17 @@ async function startMap(name) {
   careerLogged = false; careerFrags = null;
   $('demobar').hidden = true;
   if (recording) { recording = false; $('record').textContent = 'Record'; }
+  // capture the flag wants an arena with the flags: asked for on another, the first that has them is played
+  if (settings.gametype === 'ctf' && !isCtfMap(name)) {
+    const first = catalog.find((m) => isCtfMap(m.map));
+    if (first) { name = first.map; settings.map = name; saveSettings(); $('map').value = name; }
+    else setStatus('Capture the flag needs an arena with flags (npm run fetch-maps): team deathmatch here', true);
+  }
   await ensureMap(name);
   setStatus(`Loading ${name} into Firebird…`);
   const t0 = performance.now();
   const bsp = await loadMap(db, pak, res, name, { skill: settings.skill, bots: settings.bots, link: false, fraglimit: settings.fraglimit, timelimit: settings.timelimit, warmup: 4,
-    gametype: { team: 3, tourney: 1 }[settings.gametype] ?? 0, team: { red: 1, blue: 2 }[settings.team] ?? 0 });   // "prepare to fight", three, two, one, "fight!"
+    gametype: gameTypeFor(name), team: { red: 1, blue: 2 }[settings.team] ?? 0 });   // "prepare to fight", three, two, one, "fight!"
   map = { name, bsp, unlinked: 1, portals: findPortals(bsp, res.look) };
   await setPlayerName();
   fillModelMenu();
@@ -676,7 +694,7 @@ async function usePak(buffer, label) {
   setStatus(`Opening ${label}…`);
   basePak = new Pk3(buffer);
   basePak.label = label;
-  pak = new PakSet([basePak]);
+  pak = new PakSet(baseLayers());
   local.clear(); localPaks.length = 0;
   const maps = pak.mapNames();
   if (!maps.length) throw new Error(`${label} has no maps`);
@@ -702,6 +720,11 @@ async function boot() {
       const ix = await fetch(new URL('./pak/maps/index.json', location.href));
       if (ix.ok) catalog = await ix.json();
     } catch { catalog = []; }
+    try {
+      // capture the flag's own files, when the site has them: under every other pak, read with the demo's
+      const cf = await fetch(new URL('./pak/ctf.pk3', location.href));
+      if (cf.ok) { ctfPak = new Pk3(await cf.arrayBuffer()); ctfPak.label = 'OpenArena'; }
+    } catch { ctfPak = null; }
     setStatus('Downloading pak0.pk3 (the Quake III Arena demo, 45 MB)…');
     const resp = await fetch(new URL('./pak/pak0.pk3', location.href));
     if (!resp.ok) throw new Error(`could not fetch pak0.pk3 (${resp.status}); pick a PK3 file instead`);

@@ -96,7 +96,14 @@ export class Hud {
         const str = `${hud.TEAM === tm ? '>' : ''}${score ?? 0}`, y = Math.round(8 * k) + i * (fs + 2);
         if (hud.TEAM === tm) r.fillRect(w - Math.round(12 * k) - str.length * fs, y - 2, str.length * fs + Math.round(8 * k), fs + 4, 0xff000000, 0.5);
         r.drawString(this.font, str, w - Math.round(8 * k) - str.length * fs, y, fs, col);
+        // capture the flag: the team's flag beside its score, as it is (CG_DrawScores: at its base, taken, dropped)
+        const status = opts.ctf ? (tm === 1 ? opts.ctf.red : opts.ctf.blue) : null;
+        if (status !== null && status !== undefined) {
+          r.drawPic(this.pic(`icons/iconf_${tm === 1 ? 'red' : 'blu'}${Math.min(3, Math.max(1, status + 1))}`), w - Math.round(16 * k) - str.length * fs - fs - Math.round(8 * k), y - 2, fs + 4, fs + 4);
+        }
       }
+      // and the flag we carry, over the status bar (CG_DrawStatusBarFlag)
+      if (opts.ctf?.mine) r.drawPic(this.pic(`icons/iconf_${opts.ctf.mine === 1 ? 'red' : 'blu'}1`), Math.round(16 * k), yb - ih - Math.round(8 * k), ih, ih);
     } else {
       const frag = `${hud.FRAGS}`;
       r.drawString(this.font, frag, w - Math.round(8 * k) - frag.length * fs, Math.round(8 * k), fs, [1, 1, 1]);
