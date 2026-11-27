@@ -267,6 +267,8 @@ END^
 --   7 the looped speakers that are on (lst their ids), when want_speakers = 1
 --   9 a console line (i1 id, d1 time, s text)
 --  11 a mover's looping sound where it is now (i1 ent, d1..3 the middle of its brush: CG_SetEntitySoundPosition)
+--  13 capture the flag's flags (i1 the red one's status, i2 the blue one's: 0 at its base, 1 taken, 2 dropped; i3 the
+--     flag the player carries: 1 red, 2 blue). A carrier has the flag's bit in its effects (131072 red, 262144 blue)
 --  12 a missile's flight sound (i1 ent, d1..3 where it is, s the sound: CG_Missile's weapon missileSound), and a
 --     bot's gun's (CG_AddPlayerWeapon: its firingSound while it fires, else its readySound)
 CREATE OR ALTER PROCEDURE frame_all (mode SMALLINT, last_sound INTEGER, last_fx INTEGER, want_speakers SMALLINT,
@@ -302,6 +304,14 @@ BEGIN
   kind = 10; d1 = ex; d2 = ey; d3 = ez;
   SUSPEND;
   d1 = NULL; d2 = NULL; d3 = NULL;
+  -- capture the flag: where the two flags are (0 at its base, 1 taken, 2 dropped) and the one the player carries,
+  -- for the status bar (CG_DrawTeamInfo's flag icons)
+  IF ((SELECT g.gametype FROM game g WHERE g.id = 1) = 4) THEN
+  BEGIN
+    kind = 13; i1 = ctf_status(1); i2 = ctf_status(2); i3 = ctf_carried(player_ent());
+    SUSPEND;
+    i1 = NULL; i2 = NULL; i3 = NULL;
+  END
   IF (BIN_AND(mode, 1) = 1) THEN
   BEGIN
     kind = 8;

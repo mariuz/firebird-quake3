@@ -126,6 +126,7 @@ if (fs.existsSync(demoPak)) {
 }
 
 const imageFile = (name) => paks.imageName(name.replace(/\\/g, '/'));
+const CTF_MAPS = ['oa_ctf2', 'oa_ctf4ish', 'ctf_gate1', 'czest2ctf', 'mlctf1beta', 'ps37ctf2', 'ps9ctf', 'pul1ctf'];
 const all = process.argv.includes('--all');
 const wanted = process.argv.slice(2).filter((a) => !a.startsWith('--'));
 const index = [];
@@ -138,11 +139,18 @@ for (const map of paks.mapNames().sort()) {
   // a deathmatch arena: spawn points that free for all keeps
   const spawns = ents.filter((e) => (e.classname === 'info_player_deathmatch' || e.classname === 'info_player_start') && e.notfree !== '1'
     && (!e.gametype || e.gametype.toLowerCase().includes('ffa')));
-  if (spawns.length < 2) continue;
-  // by default the arenas the packs list for free for all or the tournament (the others are capture the flag's
-  // and the like, which this game has not); --all takes every map with spawn points
-  const types = arenas.get(map)?.type?.toLowerCase() ?? '';
-  if (!all && !wanted.length && !/\b(ffa|tourney)\b/.test(types)) continue;
+  // a capture the flag arena: both flags and a spawn point for each team
+  const has = (c) => ents.some((e) => e.classname === c);
+  const ctf = has('team_CTF_redflag') && has('team_CTF_blueflag') && (has('team_CTF_redspawn') || has('team_CTF_redplayer')) && (has('team_CTF_bluespawn') || has('team_CTF_blueplayer'));
+  if (spawns.length < 2 && !ctf) continue;
+  // by default the arenas the packs list for free for all, the tournament or capture the flag (the others are
+  // Team Arena's games, which this game has not); --all takes every map with spawn points
+  let types = arenas.get(map)?.type?.toLowerCase() ?? '';
+  if (!ctf) types = types.replace(/\bctf\b/g, '').trim();
+  if (spawns.length < 2) types = types.replace(/\b(ffa|tourney|team)\b/g, '').trim();
+  // (of the thirty that capture the flag can be played on, 170 MB, the eight of CTF_MAPS are hosted)
+  if (!all && !wanted.length && !CTF_MAPS.includes(map)) types = types.replace(/\bctf\b/g, '').trim();
+  if (!all && !wanted.length && !/\b(ffa|tourney|ctf)\b/.test(types)) continue;
   const files = new Set([bspName]);
   const shaders = new Set(), plain = [];
   const addImage = (name) => { const f = name && imageFile(name); if (f) files.add(f); };
@@ -182,10 +190,42 @@ for (const map of paks.mapNames().sort()) {
   const zip = writeZip(entries);
   fs.writeFileSync(path.join(outDir, `${map}.pk3`), zip);
   total += zip.length;
-  index.push({ map, title: arena.longname ?? ents[0]?.message ?? map, pack: label, file: `${map}.pk3`, bytes: zip.length, types: arena.type ?? null });
+  index.push({ map, title: arena.longname ?? ents[0]?.message ?? map, pack: label, file: `${map}.pk3`, bytes: zip.length, types: types || null });
   console.log(`${map}\t${label}\t${files.size} files\t${(zip.length / 1048576).toFixed(1)} MB\t${arena.longname ?? ents[0]?.message ?? ''}`);
 }
 if (!wanted.length) fs.writeFileSync(path.join(outDir, 'index.json'), JSON.stringify(index, null, 1));
+
+// capture the flag's own files, which the Quake III demo has not: the two flags' models with what they are drawn
+// with, the status bar's flag icons and the team sounds, in public/pak/ctf.pk3. The page and the tests put it
+// under the demo's pak when it is there (the models of a pak are read once, when it is opened).
+{
+  const { Md3 } = await import('../src/md3.js');
+  const files = new Set(), shaders = new Set();
+  const addImage = (name) => { const f = name && imageFile(name); if (f) files.add(f); };
+  for (const m of ['models/flags/r_flag.md3', 'models/flags/b_flag.md3']) {
+    if (!paks.has(m)) continue;
+    files.add(m);
+    for (const s of new Md3(toBuffer(read(m)), m).surfaces) for (const name of s.shaders) {
+      const n = name.toLowerCase().replace(/\.(tga|jpg)$/, '');
+      const sh = shaderText.get(n);
+      if (!sh) { addImage(n); continue; }
+      shaders.add(n);
+      for (const mm of sh.matchAll(/\b(?:map|clampmap)\s+(\S+)/gi)) if (!mm[1].startsWith('$')) addImage(mm[1]);
+      for (const mm of sh.matchAll(/\banimmap\s+[\d.]+\s+([^\n}]+)/gi)) for (const img of mm[1].trim().split(/\s+/)) addImage(img);
+    }
+  }
+  for (const i of ['iconf_red1', 'iconf_red2', 'iconf_red3', 'iconf_blu1', 'iconf_blu2', 'iconf_blu3']) addImage(`icons/${i}`);
+  for (const s of ['flagcapture_opponent', 'flagcapture_yourteam', 'flagreturn_opponent', 'flagreturn_yourteam', 'flagtaken_opponent', 'flagtaken_yourteam',
+    'voc_enemy_flag', 'voc_team_flag', 'voc_you_flag', 'voc_red_returned', 'voc_blue_returned', 'voc_red_scores', 'voc_blue_scores']) {
+    if (paks.has(`sound/teamplay/${s}.wav`)) files.add(`sound/teamplay/${s}.wav`);
+  }
+  const entries = [...files].sort().map((f) => [f, read(f)]);
+  entries.push(['scripts/zz_ctf.shader', Buffer.from([...shaders].sort().map((n) => shaderText.get(n)).join('\n'), 'latin1')]);
+  entries.push(['ctf.txt', Buffer.from('Capture the flag\'s flags, icons and team sounds: from OpenArena 0.8.8 (http://openarena.ws), GPLv2 game data.\n')]);
+  const zip = writeZip(entries);
+  fs.writeFileSync(path.join(root, 'public/pak/ctf.pk3'), zip);
+  console.log(`ctf.pk3\t${files.size} files\t${(zip.length / 1024).toFixed(0)} KB\t${[...files].join(' ')}`);
+}
 console.log(`${index.length} maps, ${(total / 1048576).toFixed(1)} MB`);
 
 // a zip of [name, bytes]: deflated where that is smaller (pk3s are plain zips)

@@ -1384,6 +1384,7 @@ BEGIN
   SELECT d.cls, d.kind, IIF(e.count_ > 0, e.count_, d.qty), d.respawn, d.bit, d.snd FROM ents e JOIN item_defs d ON d.cls = e.item WHERE e.id = :item AND e.solid = 1
     INTO cls, kind, qty, resp, bit_, snd_;
   IF (cls IS NULL) THEN EXIT;
+  IF (kind = 'F') THEN BEGIN EXECUTE PROCEDURE ctf_touch_flag(item, other); EXIT; END
   SELECT e.health, e.max_health, e.armor, e.weapons FROM ents e WHERE e.id = :other AND e.classname = 'bot' AND e.health > 0 INTO hp, mhp, av, have;
   IF (hp IS NULL) THEN EXIT;
   IF (kind = 'H') THEN
@@ -2277,9 +2278,12 @@ BEGIN
       IF (reached = 2 AND EXISTS (SELECT 1 FROM ents e JOIN ents g ON g.id = e.get_id WHERE e.id = :eid AND e.get_id = :goal AND g.solid = 1)) THEN reached = 0;
       IF (reached > 0) THEN
       BEGIN
-        IF (reached = 2 AND NOT EXISTS (SELECT 1 FROM ents g WHERE g.id = :goal AND g.think = 'remove')) THEN EXECUTE PROCEDURE bot_avoid_item(eid, goal);
-        -- (the item it was told to get: "I got the …", or it isn't there; the order is done)
-        IF (EXISTS (SELECT 1 FROM ents e WHERE e.id = :eid AND e.get_id = :goal)) THEN
+        IF (reached = 2 AND NOT EXISTS (SELECT 1 FROM ents g WHERE g.id = :goal AND (g.think = 'remove' OR g.item LIKE 'team_CTF_%'))) THEN EXECUTE PROCEDURE bot_avoid_item(eid, goal);
+        -- (the item it was told to get: "I got the …", or it isn't there; the order is done. A flag gone for in
+        -- its own play, bot_ctf_goals, is not said anything about)
+        IF (EXISTS (SELECT 1 FROM ents e WHERE e.id = :eid AND e.get_id = :goal AND e.ctf_goal = 1)) THEN
+          UPDATE ents e SET e.get_id = NULL WHERE e.id = :eid;
+        ELSE IF (EXISTS (SELECT 1 FROM ents e WHERE e.id = :eid AND e.get_id = :goal)) THEN
         BEGIN
           EXECUTE PROCEDURE bot_say(eid, TRIM(IIF(reached = 2, 'getitem_gotit', 'getitem_notthere')),
             (SELECT i.name FROM ents g JOIN item_defs i ON i.cls = g.item WHERE g.id = :goal), NULL, NULL, NULL, NULL, NULL, player_ent(), 0);
@@ -2289,6 +2293,8 @@ BEGIN
         UPDATE ents e SET e.goal_id = NULL WHERE e.id = :eid;
       END
     END
+    -- capture the flag: the flag play decides what it gets or defends (bot_ctf_goals)
+    IF (gt = 4) THEN EXECUTE PROCEDURE bot_ctf_goals(eid);
     -- an item it was told to get (LTG_GETITEM, chat.sql) is the goal until it has it or the 60 s are up
     IF (busy = 0) THEN
     BEGIN
@@ -2473,6 +2479,12 @@ BEGIN
   BEGIN
     tm = pick_team();
     UPDATE ents e SET e.pteam = :tm, e.pskin = IIF(:tm = 1, 'red', 'blue') WHERE e.id = :id;
+    IF ((SELECT g.gametype FROM game g WHERE g.id = 1) = 4) THEN
+    BEGIN
+      -- capture the flag: at one of its team's spawn points
+      EXECUTE PROCEDURE select_spawn(id) RETURNING_VALUES x, y, z, yaw;
+      UPDATE ents e SET e.x = :x, e.y = :y, e.z = :z + 9, e.yaw = COALESCE(:yaw, 0), e.ideal_yaw = COALESCE(:yaw, 0) WHERE e.id = :id;
+    END
   END
   EXECUTE PROCEDURE link_ent(id);
   EXECUTE PROCEDURE kill_box(id);   -- (G_KillBox: whoever stands where it spawns)
@@ -2802,14 +2814,14 @@ BEGIN
   UPDATE game g SET g.time_warnings = :warn WHERE g.id = 1 AND g.time_warnings <> :warn;
 END^
 
--- AddScore: the player's or the bot's frags, and in a team game its team's score with them
+-- AddScore: the player's or the bot's frags, and in team deathmatch its team's score with them
 CREATE OR ALTER PROCEDURE add_score (eid INTEGER, delta INTEGER)
 AS
 DECLARE tm SMALLINT;
 BEGIN
   IF (eid = player_ent()) THEN UPDATE player p SET p.frags = p.frags + :delta WHERE p.id = 1;
   ELSE UPDATE ents e SET e.frags = e.frags + :delta WHERE e.id = :eid;
-  IF ((SELECT g.gametype FROM game g WHERE g.id = 1) < 3) THEN EXIT;
+  IF ((SELECT g.gametype FROM game g WHERE g.id = 1) <> 3) THEN EXIT;   -- (capture the flag: the team's score is its captures)
   SELECT e.pteam FROM ents e WHERE e.id = :eid INTO tm;
   IF (tm = 1) THEN UPDATE game g SET g.red_score = g.red_score + :delta WHERE g.id = 1;
   ELSE IF (tm = 2) THEN UPDATE game g SET g.blue_score = g.blue_score + :delta WHERE g.id = 1;
@@ -2855,6 +2867,13 @@ BEGIN
     bot_ = NULL;
     SELECT FIRST 1 e.id FROM ents e WHERE e.classname = 'bot' AND e.enemy_id = :victim AND e.id <> :victim INTO bot_;
     IF (bot_ IS NOT NULL) THEN EXECUTE PROCEDURE bot_chat_event(bot_, 'enemy_suicide', victim, mod_);
+  END
+  -- capture the flag: the bonus for the enemy's flag carrier; the frags are the players' own, the team's score
+  -- and the match's end are the captures' (ctf_touch_flag)
+  IF (gt = 4) THEN
+  BEGIN
+    EXECUTE PROCEDURE ctf_frag_bonus(attacker, victim);
+    EXIT;
   END
   SELECT g.fraglimit, g.red_score, g.blue_score, g.team_lead FROM game g WHERE g.id = 1 INTO lim, rs, bs, otl;
   IF (gt >= 3) THEN
@@ -3148,6 +3167,7 @@ BEGIN
   ELSE IF (think = 'timer_think') THEN EXECUTE PROCEDURE timer_think(eid);
   ELSE IF (think = 'speaker_think') THEN EXECUTE PROCEDURE speaker_think(eid);
   ELSE IF (think = 'always_fire') THEN EXECUTE PROCEDURE always_fire(eid);
+  ELSE IF (think = 'flag_return') THEN EXECUTE PROCEDURE flag_return(eid);
   ELSE IF (think = 'multi_wait') THEN EXECUTE PROCEDURE multi_wait(eid);
   ELSE IF (think = 'delayed_use') THEN EXECUTE PROCEDURE delayed_use(eid);
   ELSE IF (think = 'missile_explode') THEN EXECUTE PROCEDURE missile_explode(eid, 0, 0, 1);
@@ -3322,7 +3342,8 @@ BEGIN
          g.fraglimit = COALESCE(:fraglimit, 20), g.timelimit = COALESCE(:timelimit, 0), g.time_warnings = 0,
          g.warmup_end = COALESCE(:warmup, 0), g.warmup_said = IIF(COALESCE(:warmup, 0) > 0, 4, 0),
          g.has_water = IIF(EXISTS (SELECT 1 FROM brushes b WHERE BIN_AND(b.contents, 32) <> 0), 1, 0),
-         g.gametype = IIF(COALESCE(:gametype, 0) >= 3, 3, IIF(:gametype = 1, 1, 0)), g.red_score = 0, g.blue_score = 0, g.team_lead = 0,
+         g.gametype = IIF(COALESCE(:gametype, 0) = 4, 4, IIF(COALESCE(:gametype, 0) >= 3, 3, IIF(:gametype = 1, 1, 0))), g.red_score = 0, g.blue_score = 0, g.team_lead = 0,
+         g.ctf_carrier = NULL, g.ctf_drop_time = 0,
          g.red_leader = NULL, g.blue_leader = NULL WHERE g.id = 1;
   -- the sky: the first sky shader the map's faces use
   SELECT FIRST 1 t.name FROM textures t WHERE BIN_AND(t.flags, 4) <> 0 INTO skyname;

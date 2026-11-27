@@ -17,6 +17,7 @@ import botsSql from '../sql/bots.sql';
 import renderSql from '../sql/render.sql';
 import saveSql from '../sql/save.sql';
 import chatSql from '../sql/chat.sql';
+import ctfSql from '../sql/ctf.sql';
 import { Pk3, PakSet } from './pk3.js';
 import { createSchema, loadResources, loadMap, buildWaypoints, setView, setRotation } from './loader.js';
 import { loadShaders } from './shader.js';
@@ -649,7 +650,7 @@ async function openDatabase() {
   const v = await instance.query("SELECT rdb$get_context('SYSTEM', 'ENGINE_VERSION') AS v FROM rdb$database");
   $('engine').textContent = `Firebird ${v.rows[0].V}`;
   setStatus('Creating the Quake III schema (PSQL)…');
-  await createSchema(instance, { schema: schemaSql, physics: physicsSql, game: gameSql, waypoints: waypointsSql, player: playerSql, demo: demoSql, bots: botsSql, chat: chatSql, render: renderSql, save: saveSql });
+  await createSchema(instance, { schema: schemaSql, physics: physicsSql, game: gameSql, waypoints: waypointsSql, player: playerSql, demo: demoSql, bots: botsSql, chat: chatSql, ctf: ctfSql, render: renderSql, save: saveSql });
   return instance;
 }
 

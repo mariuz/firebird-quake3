@@ -34,6 +34,11 @@ CREATE OR ALTER PROCEDURE score_frag (attacker INTEGER, victim INTEGER, mod_ SMA
 CREATE OR ALTER PROCEDURE set_anims (eid INTEGER, legs INTEGER, torso INTEGER) AS BEGIN END^
 CREATE OR ALTER PROCEDURE item_touch (item INTEGER, other INTEGER) AS BEGIN END^
 CREATE OR ALTER PROCEDURE bot_item_touch (item INTEGER, other INTEGER) AS BEGIN END^
+CREATE OR ALTER PROCEDURE ctf_touch_flag (item INTEGER, other INTEGER) AS BEGIN END^
+CREATE OR ALTER PROCEDURE ctf_drop_flag (eid INTEGER) AS BEGIN END^
+CREATE OR ALTER PROCEDURE ctf_frag_bonus (attacker INTEGER, victim INTEGER) AS BEGIN END^
+CREATE OR ALTER PROCEDURE bot_ctf_goals (eid INTEGER) AS BEGIN END^
+CREATE OR ALTER PROCEDURE flag_return (eid INTEGER) AS BEGIN END^
 
 -- ── utilities ─────────────────────────────────────────────────────────────
 CREATE OR ALTER PROCEDURE snd (eid INTEGER, chan SMALLINT, name VARCHAR(64), vol DOUBLE PRECISION, attn DOUBLE PRECISION)
@@ -1003,6 +1008,12 @@ DECLARE cls VARCHAR(40); DECLARE kind CHAR(1); DECLARE qty INTEGER; DECLARE resp
 DECLARE hp INTEGER; DECLARE mhp INTEGER; DECLARE t DOUBLE PRECISION; DECLARE have INTEGER; DECLARE cnt INTEGER; DECLARE av INTEGER; DECLARE w INTEGER;
 BEGIN
   IF (NOT EXISTS (SELECT 1 FROM ents e WHERE e.id = :item AND e.solid = 1)) THEN EXIT;
+  -- a team's flag (Pickup_Team, ctf.sql): the player's and the bots' alike
+  IF (EXISTS (SELECT 1 FROM ents e WHERE e.id = :item AND e.item IN ('team_CTF_redflag', 'team_CTF_blueflag'))) THEN
+  BEGIN
+    EXECUTE PROCEDURE ctf_touch_flag(item, other);
+    EXIT;
+  END
   IF (other <> player_ent()) THEN
   BEGIN
     EXECUTE PROCEDURE bot_item_touch(item, other);
@@ -1607,6 +1618,7 @@ DECLARE pw INTEGER; DECLARE fin DOUBLE PRECISION; DECLARE cls VARCHAR(40); DECLA
 DECLARE q DOUBLE PRECISION; DECLARE en DOUBLE PRECISION; DECLARE ha DOUBLE PRECISION; DECLARE iv DOUBLE PRECISION; DECLARE rg DOUBLE PRECISION; DECLARE fl DOUBLE PRECISION = 0;
 BEGIN
   t = now_();
+  EXECUTE PROCEDURE ctf_drop_flag(eid);   -- (the flag it carried, capture the flag's)
   IF (eid = player_ent()) THEN
   BEGIN
     SELECT p.weapon, p.weapons, p.pending_weapon, p.weaponstate, p.quad_finished, p.enviro_finished, p.haste_finished, p.invis_finished, p.regen_finished, p.flight_finished
@@ -1652,8 +1664,37 @@ END^
 CREATE OR ALTER PROCEDURE select_spawn (avoid INTEGER)
 RETURNS (x DOUBLE PRECISION, y DOUBLE PRECISION, z DOUBLE PRECISION, yaw DOUBLE PRECISION)
 AS
-DECLARE n INTEGER; DECLARE k INTEGER;
+DECLARE n INTEGER; DECLARE k INTEGER; DECLARE tm SMALLINT;
 BEGIN
+  -- capture the flag (SelectCTFSpawnPoint): one of the team's own spots, team_CTF_redspawn or team_CTF_bluespawn
+  -- (and the team_CTF_redplayer and blueplayer a match starts at), free and at random as below; an arena with
+  -- none of them falls back on the deathmatch spots
+  IF (avoid IS NOT NULL AND (SELECT g.gametype FROM game g WHERE g.id = 1) = 4) THEN
+  BEGIN
+    SELECT e.pteam FROM ents e WHERE e.id = :avoid INTO tm;
+    SELECT COUNT(*) FROM ents e WHERE e.classname IN (IIF(:tm = 1, 'team_CTF_redspawn', 'team_CTF_bluespawn'), IIF(:tm = 1, 'team_CTF_redplayer', 'team_CTF_blueplayer'))
+       AND NOT EXISTS (SELECT 1 FROM ents o WHERE o.classname IN ('player', 'bot') AND o.health > 0 AND o.id <> :avoid
+                          AND ABS(o.x - e.x) < 128 AND ABS(o.y - e.y) < 128 AND ABS(o.z - e.z) < 128) INTO n;
+    IF (tm IN (1, 2) AND n > 0) THEN
+    BEGIN
+      k = FLOOR(RAND() * n);
+      SELECT FIRST 1 SKIP (:k) e.x, e.y, e.z, e.yaw FROM ents e
+       WHERE e.classname IN (IIF(:tm = 1, 'team_CTF_redspawn', 'team_CTF_bluespawn'), IIF(:tm = 1, 'team_CTF_redplayer', 'team_CTF_blueplayer'))
+         AND NOT EXISTS (SELECT 1 FROM ents o WHERE o.classname IN ('player', 'bot') AND o.health > 0 AND o.id <> :avoid
+                            AND ABS(o.x - e.x) < 128 AND ABS(o.y - e.y) < 128 AND ABS(o.z - e.z) < 128)
+       ORDER BY e.id INTO x, y, z, yaw;
+      SUSPEND; EXIT;
+    END
+    SELECT COUNT(*) FROM ents e WHERE e.classname IN (IIF(:tm = 1, 'team_CTF_redspawn', 'team_CTF_bluespawn'), IIF(:tm = 1, 'team_CTF_redplayer', 'team_CTF_blueplayer')) INTO n;
+    IF (tm IN (1, 2) AND n > 0) THEN
+    BEGIN
+      k = FLOOR(RAND() * n);
+      SELECT FIRST 1 SKIP (:k) e.x, e.y, e.z, e.yaw FROM ents e
+       WHERE e.classname IN (IIF(:tm = 1, 'team_CTF_redspawn', 'team_CTF_bluespawn'), IIF(:tm = 1, 'team_CTF_redplayer', 'team_CTF_blueplayer'))
+       ORDER BY e.id INTO x, y, z, yaw;
+      SUSPEND; EXIT;
+    END
+  END
   SELECT COUNT(*) FROM ents e WHERE e.classname IN ('info_player_deathmatch', 'info_player_start')
      AND NOT EXISTS (SELECT 1 FROM ents o WHERE o.classname IN ('player', 'bot') AND o.health > 0 AND (:avoid IS NULL OR o.id <> :avoid)
                         AND ABS(o.x - e.x) < 128 AND ABS(o.y - e.y) < 128 AND ABS(o.z - e.z) < 128) INTO n;
@@ -1722,9 +1763,22 @@ BEGIN
     END
     -- G_SpawnGEntityFromSpawnVars: notteam in a team game, notfree otherwise; and with a "gametype" key, only
     -- in the game types it names (its words searched for "ffa", "tournament", "team" as strstr does)
-    IF (gt = 3 AND notteam = 1) THEN CONTINUE;
+    IF (gt >= 3 AND notteam = 1) THEN CONTINUE;
     IF (gt < 3 AND notfree = 1) THEN CONTINUE;
-    IF (gtypes IS NOT NULL AND POSITION(TRIM(CASE gt WHEN 1 THEN 'tournament' WHEN 3 THEN 'team' ELSE 'ffa' END) IN LOWER(gtypes)) = 0) THEN CONTINUE;
+    IF (gtypes IS NOT NULL AND POSITION(TRIM(CASE gt WHEN 1 THEN 'tournament' WHEN 3 THEN 'team' WHEN 4 THEN 'ctf' ELSE 'ffa' END) IN LOWER(gtypes)) = 0) THEN CONTINUE;
+    -- capture the flag: the teams' spawn points are kept (select_spawn), and the two flags are items (ctf.sql);
+    -- in the other games neither is there
+    IF (gt = 4 AND cls IN ('team_CTF_redplayer', 'team_CTF_blueplayer', 'team_CTF_redspawn', 'team_CTF_bluespawn')) THEN
+    BEGIN
+      EXECUTE PROCEDURE spawn_ent(cls, ox, oy, oz) RETURNING_VALUES eid;
+      UPDATE ents e SET e.solid = 0, e.yaw = COALESCE(:ang, :ay, 0) WHERE e.id = :eid;
+      CONTINUE;
+    END
+    IF (cls IN ('team_CTF_redflag', 'team_CTF_blueflag')) THEN
+    BEGIN
+      IF (gt = 4) THEN EXECUTE PROCEDURE spawn_item(cls, ox, oy, oz, IIF(BIN_AND(sf, 1) <> 0, 1, 0), 0, 0) RETURNING_VALUES eid;
+      CONTINUE;
+    END
     -- "angles" overrides "angle"
     IF (ay IS NOT NULL AND ang IS NULL) THEN ang = ay;
     IF (cls IN ('light', 'misc_model', 'func_group', 'target_location', 'info_player_intermission', 'team_CTF_redplayer', 'team_CTF_blueplayer', 'team_CTF_redspawn', 'team_CTF_bluespawn', 'item_botroam', 'misc_portal_surface', 'misc_portal_camera')) THEN CONTINUE;

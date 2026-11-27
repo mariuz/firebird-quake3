@@ -49,6 +49,10 @@ export const ITEMS = [
   { cls: 'ammo_bfg', kind: 'M', models: 'models/powerups/ammo/bfgam.md3', snd: 'sound/misc/am_pkup.wav', icon: 'icons/icona_bfg', name: 'Bfg Ammo', qty: 15, respawn: 40, bit: 9 },
   { cls: 'holdable_teleporter', kind: 'O', models: 'models/powerups/holdable/teleporter.md3', snd: 'sound/items/holdable.wav', icon: 'icons/teleporter', name: 'Personal Teleporter', qty: 60, respawn: 60, bit: 1 },
   { cls: 'holdable_medkit', kind: 'O', models: 'models/powerups/holdable/medkit.md3,models/powerups/holdable/medkit_sphere.md3', snd: 'sound/items/holdable.wav', icon: 'icons/medkit', name: 'Medkit', qty: 60, respawn: 60, bit: 2 },
+  // capture the flag's flags (bg_itemlist's team_CTF_redflag and team_CTF_blueflag, IT_TEAM): bit is the team.
+  // Their models, icons and sounds are not in the demo's pak: scripts/fetch-maps.mjs takes them from OpenArena
+  { cls: 'team_CTF_redflag', kind: 'F', models: 'models/flags/r_flag.md3', snd: '', icon: 'icons/iconf_red1', name: 'Red Flag', qty: 0, respawn: 0, bit: 1 },
+  { cls: 'team_CTF_blueflag', kind: 'F', models: 'models/flags/b_flag.md3', snd: '', icon: 'icons/iconf_blu1', name: 'Blue Flag', qty: 0, respawn: 0, bit: 2 },
   { cls: 'item_quad', kind: 'P', models: 'models/powerups/instant/quad.md3,models/powerups/instant/quad_ring.md3', snd: 'sound/items/quaddamage.wav', icon: 'icons/quad', name: 'Quad Damage', qty: 30, respawn: 120, bit: 1 },
   { cls: 'item_enviro', kind: 'P', models: 'models/powerups/instant/enviro.md3,models/powerups/instant/enviro_ring.md3', snd: 'sound/items/protect.wav', icon: 'icons/envirosuit', name: 'Battle Suit', qty: 30, respawn: 120, bit: 2 },
   { cls: 'item_haste', kind: 'P', models: 'models/powerups/instant/haste.md3,models/powerups/instant/haste_ring.md3', snd: 'sound/items/haste.wav', icon: 'icons/haste', name: 'Speed', qty: 30, respawn: 120, bit: 4 },

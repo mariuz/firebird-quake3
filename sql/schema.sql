@@ -50,10 +50,13 @@ CREATE TABLE game (
   warmup_end     DOUBLE PRECISION DEFAULT 0 NOT NULL,   -- the countdown before the match ends then (the clock counts from it)
   warmup_said    SMALLINT DEFAULT 0 NOT NULL,           -- the last of three, two, one said (0: done)
   has_water      SMALLINT DEFAULT 0 NOT NULL,           -- the map has water: the shots look for bubbles
-  gametype       SMALLINT DEFAULT 0 NOT NULL,           -- g_gametype: 0 free for all, 1 tournament (GT_TOURNAMENT), 3 team deathmatch (GT_TEAM)
+  gametype       SMALLINT DEFAULT 0 NOT NULL,           -- g_gametype: 0 free for all, 1 tournament (GT_TOURNAMENT), 3 team deathmatch (GT_TEAM), 4 capture the flag (GT_CTF)
   red_score      INTEGER DEFAULT 0 NOT NULL,            -- level.teamScores[TEAM_RED], [TEAM_BLUE]
   blue_score     INTEGER DEFAULT 0 NOT NULL,
   team_lead      SMALLINT DEFAULT 0 NOT NULL,           -- who leads, as last announced: 0 tied 1 red 2 blue
+  capturelimit   INTEGER DEFAULT 8 NOT NULL,            -- capture the flag (ctf.sql): the captures that win
+  ctf_carrier    INTEGER,                               -- who dropped a flag last and when, for the bonus of who fragged it
+  ctf_drop_time  DOUBLE PRECISION DEFAULT 0 NOT NULL,
   not_leader     SMALLINT DEFAULT 0 NOT NULL,           -- 1: the player said it will not lead its team (notleader[client]): the bots find a leader among themselves
   red_leader     INTEGER,                               -- each team's leader (bs->teamleader, heard by all its bots)
   blue_leader    INTEGER,
@@ -111,7 +114,7 @@ CREATE INDEX models_name ON models (name);
 -- bg_itemlist: what an item classname is
 CREATE TABLE item_defs (
   cls      VARCHAR(40) NOT NULL PRIMARY KEY,
-  kind     CHAR(1) NOT NULL,             -- H health A armor W weapon M ammo P powerup O holdable
+  kind     CHAR(1) NOT NULL,             -- H health A armor W weapon M ammo P powerup O holdable F a team's flag (bit: the team)
   model    VARCHAR(64) NOT NULL,         -- the first model (the renderer draws the others too)
   snd      VARCHAR(64) NOT NULL,
   name     VARCHAR(40) NOT NULL,
@@ -405,6 +408,7 @@ CREATE TABLE ents (
   acc_arrived SMALLINT DEFAULT 0 NOT NULL,
   get_id     INTEGER,                       -- a bot told to get an item (LTG_GETITEM, chat.sql): which, and until when
   get_until  DOUBLE PRECISION,
+  ctf_goal   SMALLINT DEFAULT 0 NOT NULL,   -- 1: its get_id or def_id is its own flag play (bot_ctf_goals), not an order
   -- a bot told to defend an item's place (LTG_DEFENDKEYAREA, chat.sql): which item, until when (teamgoal_time),
   -- and until when it is off about its own goals after coming within 70 units of it (defendaway_time)
   def_id     INTEGER,

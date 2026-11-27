@@ -31,6 +31,8 @@ BEGIN
   t = now_();
   IF (kind IN ('accompany', 'camp', 'dismiss', 'get', 'kill', 'defend')) THEN
   BEGIN
+    -- (capture the flag: what the bot was getting or defending in its own flag play gives way to the order)
+    UPDATE ents e SET e.get_id = NULL, e.def_id = NULL, e.ctf_goal = 0 WHERE e.id = :eid AND e.ctf_goal = 1;
     -- a new order ends the old one: the camp spot ordered before goes
     DELETE FROM ents c WHERE c.classname = 'camp_order' AND c.owner_id = :eid;
     UPDATE ents e SET e.acc_id = NULL, e.camp_id = NULL, e.camp_until = NULL, e.get_id = NULL, e.def_id = NULL, e.goal_id = NULL, e.nbg_id = NULL WHERE e.id = :eid;

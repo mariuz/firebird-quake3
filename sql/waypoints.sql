@@ -218,12 +218,15 @@ BEGIN
     climb = 0;
     WHILE (f < 0.9e0 AND climb < 3) DO
     BEGIN
-      -- a stair or a ramp: another step up from where it stopped
+      -- a stair or a ramp: another step up from where it stopped. A stair has a tread to go on over; a step up
+      -- that gets nowhere is against a wall higher than a step (a ledge 64 up was climbed here as four steps,
+      -- and the bots of a capture the flag arena were sent at the wall under their flag)
       climb = climb + 1;
       k = k * (1 - f);
       EXECUTE PROCEDURE trace_move(NULL, -15, -15, -24, 15, 15, 32, ex, ey, ez + 18, ex + dx * k, ey + dy * k, ez + 18, 65537)
         RETURNING_VALUES f, ex, ey, ez, nx, ny, nz, sf, ct, als, sts, hit;
       IF (sts = 1) THEN RETURN 0;
+      IF (f * k < 1) THEN RETURN 0;
     END
     IF (f < 0.9e0) THEN RETURN 0;
     px = ex; py = ey;
