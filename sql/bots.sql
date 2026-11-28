@@ -775,9 +775,11 @@ BEGIN
       prog_d = NULL; prog_t = t;
     END
     ELSE moved = step_direction(eid, yaw, dist);
-    IF (moved = 0 AND nz < z - 24 AND vlen(nx - x, ny - y, 0) < 320) THEN
+    IF (moved = 0 AND nz < z - 17 AND vlen(nx - x, ny - y, 0) < 320) THEN
     BEGIN
-      -- the next node is down a ledge (more than a step, 18, and the node 25 over its floor: 24) and the step "walked off an edge": jump down, as the AAS's
+      -- the next node is down a ledge (more than a step, 18; the node is 25 over its floor and the bot 24, so its
+      -- floor is that much higher when the node is 17 below it. This was 24, and a bot on a block 21 high, where a
+      -- fall had put it, could neither step down nor jump down: a flag carrier stood on one for good) and the step "walked off an edge": jump down, as the AAS's
       -- jump-down reachability does; gravity and fly_move take it from here (run_physics), steered in the air for
       -- the node below (BotFinishTravel_WalkOffLedge's air control) until it lands
       UPDATE ents e SET e.vx = COS(:yaw * 0.0174532925e0) * 320, e.vy = SIN(:yaw * 0.0174532925e0) * 320, e.vz = 40,
